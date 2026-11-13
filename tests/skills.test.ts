@@ -839,6 +839,24 @@ test("the ids a seat guesses under a pack's name are not answered with a note ab
     });
     await withSeat(t, [lin, lin2], async (seat) => {
       assert.match((await seat.skill("linux/accounts/users")).text, /^No skill "linux\/accounts\/users"/, "two packs the prefix names carry it: none is chosen");
+      assert.match((await seat.skill("linux:accounts/users")).text, /^No skill "linux:accounts\/users"/, "nor with a colon");
+    });
+    // The short names a pack goes by, as the Batman III runs wrote them (24 of 25 failed loads): a whole word of its id, or the namespace its
+    // router sits in (base/router is what an index over budget shows), with a slash or a colon in front of the id.
+    const base = await writePack(root, "computer-forensics-base", "1.0.0", { "base/router": { title: "Router", when: "None listed.", body: "r" }, "evidence/ad1": { title: "AD1", when: "An AD1 image.", body: "a" }, "data/documents-media": { title: "Documents", when: "Office files.", body: "d" } });
+    await withSeat(t, [win, base], async (seat) => {
+      const slash = await seat.skill("base/evidence/ad1");
+      assert.match(slash.text, /^Skill `evidence\/ad1` \(pack computer-forensics-base 1\.0\.0/);
+      assert.match(slash.text, /Asked as `base\/evidence\/ad1`: its id is `evidence\/ad1` \(pack computer-forensics-base\)/);
+      const colon = await seat.skill("base:data/documents-media");
+      assert.match(colon.text, /^Skill `data\/documents-media` \(pack computer-forensics-base/);
+      assert.match(colon.text, /Asked as `base:data\/documents-media`/);
+      assert.match((await seat.skill("windows:execution/prefetch")).text, /^Skill `execution\/prefetch` \(pack windows-forensics/);
+      // A short name that is no pack's, in front of an id one pack carries: that pack's note.
+      assert.match((await seat.skill("win:memory/windows")).text, /^Skill `memory\/windows` \(pack windows-forensics/);
+      // A short name whose pack does not carry the id, nor any other: no note, and the nearest ids.
+      assert.match((await seat.skill("base:evidence/e01")).text, /^No skill "base:evidence\/e01"|^No pack "base"/);
+      assert.match((await seat.skill("nosuch:evidence/e01")).text, /^No pack "nosuch"/);
     });
   } finally {
     await rm(root, { recursive: true, force: true });

@@ -394,28 +394,54 @@ export type Located = {
   prefix?: string;
 };
 
+/**
+ * The short names a pack goes by in what seats write: each whole word of its
+ * id ("base" of computer-forensics-base, "windows" of windows-forensics,
+ * "ransomware" of ransomware-response), its words up to a dash
+ * ("computer-forensics"), and the namespace its router sits in (base/router,
+ * windows/router), which is the name the index shows a seat when it is over
+ * budget. 24 of 25 failed loads in three Batman III runs were an id with one
+ * of these in front, as `base:evidence/ad1` or `base/evidence/ad1`. A part of a
+ * word ("lin", "comp") is no pack's name.
+ */
+async function packGoesBy(pack: PackRef, name: string): Promise<boolean> {
+  if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(name)) return false;
+  if (pack.id === name || pack.id.startsWith(`${name}-`)) return true;
+  if (pack.id.split("-").includes(name)) return true;
+  return exists(join(pack.dir, "skills", name, "router.md"));
+}
+
 export async function locateSkill(packs: PackRef[], wanted: Wanted): Promise<{ found: Located } | { missing: "no such pack" | "no such skill" }> {
   const has = (pack: PackRef, id = wanted.id) => exists(join(pack.dir, "skills", `${id}.md`));
   if (wanted.pack) {
     const pack = packs.find((p) => p.id === wanted.pack);
-    if (!pack) return { missing: "no such pack" };
-    return (await has(pack)) ? { found: { pack, id: wanted.id, others: [] } } : { missing: "no such skill" };
+    if (pack) return (await has(pack)) ? { found: { pack, id: wanted.id, others: [] } } : { missing: "no such skill" };
+    // A pack's short name in front ("base:evidence/ad1", "windows:execution/prefetch"): the one pack that goes by it and carries the id; else the
+    // one pack of the run that carries the id at all. Two that carry it: none is chosen, the seat is told the ids.
+    const named: PackRef[] = [];
+    for (const p of packs) if ((await packGoesBy(p, wanted.pack)) && (await has(p))) named.push(p);
+    if (named.length === 1) return { found: { pack: named[0]!, id: wanted.id, others: [], prefix: `${wanted.pack}:` } };
+    if (!named.length) {
+      const carrying: PackRef[] = [];
+      for (const p of packs) if (await has(p)) carrying.push(p);
+      if (carrying.length === 1) return { found: { pack: carrying[0]!, id: wanted.id, others: [], prefix: `${wanted.pack}:` } };
+    }
+    return { missing: named.length ? "no such skill" : "no such pack" };
   }
   const carrying: PackRef[] = [];
   for (const pack of packs) if (await has(pack)) carrying.push(pack);
   if (carrying.length) return { found: { pack: carrying[0]!, id: wanted.id, others: carrying.slice(1) } };
   // The id with its pack in front, slash separated ("windows/execution/prefetch", 17 of 143 calls; the
-  // first microVM case run asked for "linux/accounts/users"): a leading segment that is a pack id of
-  // this run, or its words up to a dash ("linux" of linux-forensics, "computer-forensics" of
-  // computer-forensics-base), is taken off, and the rest is looked up in those packs only. Carried by
-  // exactly one of them, it is that note; otherwise there is none. A part of a word ("lin", "comp") is
-  // no pack's name: a misspelt id is not sent to some other pack's note.
+  // first microVM case run asked for "linux/accounts/users"; "base/evidence/ad1" after the index showed
+  // base/router): a leading segment that is a name the pack goes by (packGoesBy) is taken off, and the
+  // rest is looked up in those packs only. Carried by exactly one of them, it is that note; otherwise
+  // there is none. A misspelt id is not sent to some other pack's note.
   const cut = wanted.id.indexOf("/");
   if (cut >= 3) {
     const prefix = wanted.id.slice(0, cut);
     const rest = wanted.id.slice(cut + 1);
     const named: PackRef[] = [];
-    for (const pack of packs) if ((pack.id === prefix || pack.id.startsWith(`${prefix}-`)) && (await has(pack, rest))) named.push(pack);
+    for (const pack of packs) if ((await packGoesBy(pack, prefix)) && (await has(pack, rest))) named.push(pack);
     if (named.length === 1) return { found: { pack: named[0]!, id: rest, others: [], prefix } };
   }
   return { missing: "no such skill" };

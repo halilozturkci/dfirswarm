@@ -13,3 +13,10 @@ arguments (`{limit: 12}`), so the sweep could not tell what they read and held t
 answer made a new hit for the answer's own strings; the coverage record that had to name it made the next. In one run a question's answer was
 written 18 times in an hour and the finish loop never settled. Those outputs are now echoes (`REGISTER_READERS`), and a sweep line written
 under the earlier rules is read again when the hub starts (sweep rules version 2).
+
+### Fixed: a skill asked for with a pack's short name in front is that pack's note
+
+24 of 25 failed skill loads in three runs named the pack by a short name: `base:evidence/ad1`, `base/evidence/ad1`,
+`windows:execution/prefetch`. The index over budget shows each pack as its router (`base/router`), so a seat wrote that namespace in front.
+`skill()` now takes a whole word of a pack's id, its words up to a dash, or its router's namespace as the pack, with a slash or a colon, and
+answers with the id to use; `x:id` where no pack goes by `x` is the one pack that carries `id`. Two packs that carry it: none is chosen.
