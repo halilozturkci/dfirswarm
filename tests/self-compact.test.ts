@@ -77,7 +77,9 @@ test("defaults resolve to 40 / 50 / 60 percent of the ceiling with room to the w
   const grok = resolveThresholds(DEFAULT_SPECS, "azure-foundry/grok-4.6", 500_000, { fromDefaults: true });
   assert.ok(grok.ok && grok.thresholds.compactTokens === 120_000, "every grok call stays in the cheap tier");
   const big = resolveThresholds(DEFAULT_SPECS, "deepseek/deepseek-v4-pro", 1_000_000, { fromDefaults: true });
-  assert.ok(big.ok && big.thresholds.compactTokens === 180_000);
+  // A million-token model: the hand-off (warning) line at 200k, the hard line at 240k, so a seat has about 123k to work in
+  // after a 77k hand-off, not 73k (41 to 138 compactions a run at the old 150k line).
+  assert.ok(big.ok && big.thresholds.warnTokens === 200_000 && big.thresholds.compactTokens === 240_000, JSON.stringify(big));
 });
 
 test("a default compact line raised to an explicit warning or notice line lands above it, so the warning still fires first", () => {

@@ -2995,6 +2995,22 @@ fs.renameSync(file + ".tmp", file);
   }
 }
 
+# The memory and vCPUs the other microVM runs going on this host may ask for, as arguments of `vm.ts capacity`:
+# each running run's seats (n x its VM size) and its tool-job workers. A run is counted only while its hub lives.
+other_runs_load() { # <this run's id, or empty>
+  local self="${1:-}"
+  [[ -f "$REGISTRY" ]] || { echo ""; return 0; }
+  local mem=0 cpus=0 runs=0 id sb m c pid
+  while IFS=$'\t' read -r id sb m c; do
+    [[ -n "$id" && "$id" != "$self" ]] || continue
+    pid="$(cat "$sb/hub.pid" 2>/dev/null || true)"
+    [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null || continue
+    mem=$((mem + m)); cpus=$((cpus + c)); runs=$((runs + 1))
+  done < <(jq -r '.runs | (if type == "array" then .[] else (.[]) end) | select(.state == "running" and ((.isolation | type) == "object") and .isolation.mode == "microvm")
+      | [.id, (.sandbox // ""), ((.n // 0) * (.isolation.memory_mib // 0) + ((.isolation.jobs.workers // 0) * (.isolation.jobs.memory_mib // 0))), ((.n // 0) * (.isolation.cpus // 0) + ((.isolation.jobs.workers // 0) * (.isolation.jobs.cpus // 0)))] | @tsv' "$REGISTRY" 2>/dev/null)
+  if [[ "$runs" -gt 0 ]]; then echo "--others-memory $mem --others-cpus $cpus --others-runs $runs"; else echo ""; fi
+}
+
 # A swarm with no definition of done is the failure mode the incident write-up
 # describes: agents pushed at an impossible task with no way to say "done" and
 # no way to bail. Refuse to start one.
@@ -4880,6 +4896,9 @@ sys.exit(0 if t(sys.argv[1]) < t(sys.argv[2]) else 1)' "$_have" "$_ship" 2>/dev/
     # default, and says so; none fitting leaves the run without jobs, said.
     # An operator's own --workers N is kept or refused, never lowered.
     local vm_capacity cap_n cap_cpus cap_mem try_workers fitted=""
+    # What the other microVM runs going on this host may take (their seats and their workers): a run fits beside them or it does not.
+    local others_args=()
+    read -r -a others_args <<<"$(other_runs_load "${swarm_id:-}")"
     for try_workers in $(seq "$([[ "$jobs" -eq 1 ]] && echo "$workers" || echo 0)" -1 0); do
       cap_n="$n" cap_cpus="$vm_cpus" cap_mem="$vm_memory"
       if [[ "$try_workers" -gt 0 ]]; then
@@ -4887,7 +4906,7 @@ sys.exit(0 if t(sys.argv[1]) < t(sys.argv[2]) else 1)' "$_have" "$_ship" 2>/dev/
         [[ "$worker_cpus" -gt "$cap_cpus" ]] && cap_cpus="$worker_cpus"
         [[ "$worker_memory" -gt "$cap_mem" ]] && cap_mem="$worker_memory"
       fi
-      if vm_capacity="$(vm_cli capacity --n "$cap_n" --cpus "$cap_cpus" --memory "$cap_mem")"; then
+      if vm_capacity="$(vm_cli capacity --n "$cap_n" --cpus "$cap_cpus" --memory "$cap_mem" ${others_args[@]+"${others_args[@]}"})"; then
         fitted="$try_workers"
         break
       fi

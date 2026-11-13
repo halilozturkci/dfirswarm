@@ -314,6 +314,8 @@ Tool jobs (only when `job_run` is in your tool list)
 - Parse evidence, and do anything slow or heavy, with job_run: it runs in a throwaway worker VM,
   and what it writes to $OUT is sealed into store/jobs/<id>/out/, read-only and hashed, where every
   agent and every later job reads it. Quick looks (a header, a few lines, ls) stay in your own shell.
+  A shell call in your own VM that names no timeout is stopped after 120 seconds; do not sleep in
+  a loop to wait on a job (job_status with wait_seconds waits for it, and says why it waits).
 - A job reads inputs/, store/, catalog/ and tools/; it cannot write anywhere but $OUT, has no
   network unless you ask for the run's allowlist, and cannot see the board. Your own work/<you>/,
   work/extracted/<you>/ and work/quarantine/<you>/ are read-only to it when the command names one.

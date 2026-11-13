@@ -292,11 +292,14 @@ export const SWARM_TOOLS = new Set([
 
 /**
  * The limit of one shell call in a seat's own VM, in seconds: a call that names
- * none gets SWARM_SHELL_TIMEOUT_S (900), and one that names more than
+ * none gets SWARM_SHELL_TIMEOUT_S (120; it was 900, and the open-weight seats,
+ * which name a timeout on 1 to 10% of their calls where the GPT seats name
+ * one on every call, spent 50 to 347 seat-minutes a run inside shell calls of
+ * up to 25 minutes), and one that names more than
  * SWARM_SHELL_TIMEOUT_MAX_S (1800) gets that. A job (job_run) is where longer
  * work goes: it has a limit of its own and the seat goes on working meanwhile.
  */
-export const SHELL_TIMEOUT_DEFAULT_S = 900;
+export const SHELL_TIMEOUT_DEFAULT_S = 120;
 export const SHELL_TIMEOUT_MAX_S = 1800;
 export type ShellLimit = { seconds: number; why: "default" | "capped" | null; asked?: number };
 export function shellTimeout(asked: unknown, env: NodeJS.ProcessEnv = process.env): ShellLimit {
@@ -310,9 +313,20 @@ export function shellTimeout(asked: unknown, env: NodeJS.ProcessEnv = process.en
   if (asked > max) return { seconds: max, why: "capped", asked };
   return { seconds: asked, why: null };
 }
+/**
+ * A shell command that waits on a job by sleeping in a loop over the store or a job's files: 42 such loops cost one run
+ * 117 seat-minutes. job_status waits for a job, and `wait` wakes on its result post. Returns why it is refused, or null.
+ */
+export function sleepLoopOverJobs(command: unknown): string | null {
+  const c = typeof command === "string" ? command : "";
+  if (!/\b(while|until|for)\b[\s\S]*\bsleep\s+\d/.test(c)) return null;
+  if (!/store\/jobs\/|job_status|\bj\d{6}\b/.test(c)) return null;
+  return "this command sleeps in a loop to wait on a job. Do not poll from the shell: job_status(job_id, wait_seconds: 100) waits for it and says why it waits (queued behind what, or finished and being sealed), and wait wakes on the post tagged result that says it is done. Meanwhile take other work";
+}
+
 export function shellTimeoutNote(l: ShellLimit): string {
   const was = l.why === "capped" ? `the ${l.asked} s it asked for is over the harness's limit of ${l.seconds} s for one shell call in your VM` : `a shell call in your VM that names no timeout has the harness's limit of ${l.seconds} s`;
-  return `The call was stopped at its limit: ${was}. Run longer work as a job (job_run with command, or a tool): it has a limit of its own, its output is kept in the store, and you go on working while it runs (job_status, or wait for its post).`;
+  return `The call was stopped at its limit: ${was}. Run longer work as a job (job_run with the same command, and timeout_seconds for what it needs): it has a limit of its own, its output is kept in the store and can be cited, and you go on working while it runs (job_status, or wait for its post). A call that must run in your own VM for longer names its own timeout, up to ${SHELL_TIMEOUT_MAX_S} s.`;
 }
 
 /**
@@ -1594,6 +1608,11 @@ export default function (pi: ExtensionAPI) {
       const limited = shellTimeout((event.input as { timeout?: unknown }).timeout);
       (event.input as { timeout?: number }).timeout = limited.seconds;
       if (callId && limited.why) shellLimits.set(callId, limited);
+      const loop = sleepLoopOverJobs((event.input as { command?: unknown }).command);
+      if (loop) {
+        if (agentId) await logEvent(ctx.cwd, agentId, "shell_timeout", { tool: event.toolName, kind: "sleep_loop" }, { ok: false, refused: true }).catch(() => undefined);
+        return { block: true, reason: loop };
+      }
     }
 
     // Once the sentinel exists the run is over by definition, and the only

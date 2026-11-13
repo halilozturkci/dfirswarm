@@ -48,10 +48,14 @@ export const KEEP_RECENT_TOKENS = 20_000;
 export const HEADROOM_TOKENS = 32_000;
 /**
  * Where a million-token model is held for the sake of quality rather than
- * cost: nothing in the archive ever went past 262k, and the reference build
- * puts its own hard line at 30% of 1M.
+ * cost: nothing in the archive ever went past 262k. It was 300k, which put
+ * the warning line (where a seat hands off) at 150k; with a static prompt
+ * of 45k and a hand-off of 77k that left a seat about 73k tokens to work
+ * in, and 41 to 138 compactions a run (13 to 19% of seat time in the note
+ * and the summary wait, eight runs). At 400k the hand-off comes at 200k and
+ * the hard line at 240k, still under what was ever measured.
  */
-export const ROT_CEILING_TOKENS = 300_000;
+export const ROT_CEILING_TOKENS = 400_000;
 /** What to assume when Pi does not know the window at all. */
 export const FALLBACK_WINDOW_TOKENS = 128_000;
 

@@ -2890,15 +2890,24 @@ export function hostCapacity(): { mem_mib: number; cpus: number } {
  * memory is the host's, and a host out of it kills something); vCPUs are
  * shared, so only a count far past the cores is refused.
  */
-export function capacityVerdict(n: number, cpusEach: number, memEach: number, host: { mem_mib: number; cpus: number }): { blockers: string[]; warnings: string[] } {
+export function capacityVerdict(
+  n: number,
+  cpusEach: number,
+  memEach: number,
+  host: { mem_mib: number; cpus: number },
+  others: { mem_mib: number; cpus: number; runs: number } = { mem_mib: 0, cpus: 0, runs: 0 },
+): { blockers: string[]; warnings: string[] } {
   const blockers: string[] = [];
   const warnings: string[] = [];
+  // What the other runs that are going on this host may ask for counts too: three runs started together each fitted
+  // alone, their workers took 2.7 to 26 s to create where one run's take 0.3 s, and their figures could not be compared.
+  const beside = others.runs > 0 ? ` beside the ${others.mem_mib} MiB and ${others.cpus} vCPUs that ${others.runs} other run(s) going on this host may take` : "";
   const mem = n * memEach;
-  if (mem > host.mem_mib * 0.85) blockers.push(`${n} VMs of ${memEach} MiB need ${mem} MiB, and this host has ${host.mem_mib} MiB: lower --vm-memory or --n`);
-  else if (mem > host.mem_mib * 0.6) warnings.push(`${n} VMs of ${memEach} MiB take ${mem} of this host's ${host.mem_mib} MiB; whatever else it runs shares the rest`);
+  if (mem + others.mem_mib > host.mem_mib * 0.85) blockers.push(`${n} VMs of ${memEach} MiB need ${mem} MiB${beside}, and this host has ${host.mem_mib} MiB: lower --vm-memory or --n${others.runs > 0 ? ", or wait for the other run(s) to end" : ""}`);
+  else if (mem + others.mem_mib > host.mem_mib * 0.6) warnings.push(`${n} VMs of ${memEach} MiB take ${mem} of this host's ${host.mem_mib} MiB${beside}; whatever else it runs shares the rest`);
   const cpus = n * cpusEach;
-  if (cpus > host.cpus * 4) blockers.push(`${n} VMs of ${cpusEach} vCPU are ${cpus} vCPUs on ${host.cpus} cores: lower --vm-cpus or --n`);
-  else if (cpus > host.cpus) warnings.push(`${cpus} vCPUs on ${host.cpus} cores: the agents' tools will share them`);
+  if (cpus + others.cpus > host.cpus * 4) blockers.push(`${n} VMs of ${cpusEach} vCPU are ${cpus} vCPUs${beside} on ${host.cpus} cores: lower --vm-cpus or --n`);
+  else if (cpus + others.cpus > host.cpus) warnings.push(`${cpus + others.cpus} vCPUs on ${host.cpus} cores${others.runs > 0 ? ` (${cpus} of this run, ${others.cpus} of ${others.runs} other run(s))` : ""}: the agents' tools will share them${others.runs > 0 && cpus + others.cpus > host.cpus * 2 ? ", and runs started together on one host are not a fair comparison" : ""}`);
   return { blockers, warnings };
 }
 
@@ -3012,8 +3021,9 @@ async function main(): Promise<void> {
     case "capacity": {
       // n cpus-each mem-each: the kickoff's question, answered with this host's numbers.
       const [n, cpus, mem] = [opt("--n"), opt("--cpus"), opt("--memory")].map((v) => Number(v));
-      const verdict = capacityVerdict(n, cpus, mem, hostCapacity());
-      console.log(JSON.stringify({ ok: verdict.blockers.length === 0, host: hostCapacity(), ...verdict }));
+      const others = { mem_mib: Number(opt("--others-memory") ?? 0) || 0, cpus: Number(opt("--others-cpus") ?? 0) || 0, runs: Number(opt("--others-runs") ?? 0) || 0 };
+      const verdict = capacityVerdict(n, cpus, mem, hostCapacity(), others);
+      console.log(JSON.stringify({ ok: verdict.blockers.length === 0, host: hostCapacity(), others, ...verdict }));
       process.exit(verdict.blockers.length ? 2 : 0);
     }
     case "check-allow": {

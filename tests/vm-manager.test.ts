@@ -487,6 +487,15 @@ test("a host msb does not run on is refused by name, before msb is asked", () =>
 test("N VMs of a size are refused past 85% of the host's memory or four times its cores, and warned about past 60% or its cores", () => {
   const host = { mem_mib: 16384, cpus: 8 };
   assert.deepEqual(capacityVerdict(4, 2, 2048, host), { blockers: [], warnings: [] });
+  // The other runs going on the host count: three runs that each fit alone do not fit together (the runs s01a4f4, s17fdfe, s5d814f).
+  const big = { mem_mib: 131072, cpus: 16 };
+  assert.deepEqual(capacityVerdict(14, 2, 4096, big).blockers, [], "one run of 8 seats and 6 workers fits a 128 GiB host");
+  const third = capacityVerdict(14, 2, 4096, big, { mem_mib: 80000, cpus: 56, runs: 2 });
+  assert.equal(third.blockers.length, 1, "a third beside two does not");
+  assert.match(third.blockers[0]!, /beside the 80000 MiB and 56 vCPUs that 2 other run\(s\) going on this host may take.*wait for the other run\(s\) to end/);
+  const second = capacityVerdict(14, 2, 4096, big, { mem_mib: 40000, cpus: 28, runs: 1 });
+  assert.deepEqual(second.blockers, []);
+  assert.ok(second.warnings.some((w) => /56 vCPUs on 16 cores \(28 of this run, 28 of 1 other run\(s\)\).*not a fair comparison/.test(w)), second.warnings.join(" | "));
   const warm = capacityVerdict(5, 2, 2048, host);
   assert.equal(warm.blockers.length, 0);
   assert.match(warm.warnings.join("\n"), /10240 of this host's 16384 MiB/);

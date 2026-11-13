@@ -61,6 +61,8 @@ export const tableLockTiming = {
   waitMs: TABLE_LOCK_WAIT_MS,
   staleMs: TABLE_LOCK_STALE_MS,
   heartbeatMs: TABLE_LOCK_HEARTBEAT_MS,
+  /** How long a call waits in this process's own line for a lock before it gives up (the line is in order; see withNamedLock). */
+  queueMs: 120_000,
 };
 export const DEFAULT_SWARM_ID = "hello-n2";
 export const DEFAULT_AGENT_IDS = ["agent00", "agent01"] as const;
@@ -1227,7 +1229,65 @@ export async function withNamedLock<T>(
   fn: (lock: HeldLock) => Promise<T>,
 ): Promise<T> {
   const lockDir = join(sandboxRoot, "locks", name);
-  await mkdir(join(sandboxRoot, "locks"), { recursive: true });
+  // The place in the line is taken before anything is awaited, so the line is in the order of the calls.
+  const turn = inProcessTurn(lockDir, name);
+  turn.catch(() => undefined);
+  await mkdir(join(sandboxRoot, "locks"), { recursive: true }).catch(async (err) => {
+    (await turn.catch(() => () => undefined))();
+    throw err;
+  });
+  // The calls of one process take a lock in the order they asked, in a line of their own, and only the head of the
+  // line goes for the lock on disk. In a VM run the hub is the only writer, so every call that "timed out waiting for
+  // locks/.table.lock" (216 in the run s01a4f4, 110 in s5d814f) had lost a 20 ms poll to another call of the same
+  // process for ten seconds. waitMs now bounds only the wait for another process's lock.
+  const release = await turn;
+  try {
+    return await withLockOnDisk(sandboxRoot, name, lockDir, fn);
+  } finally {
+    release();
+  }
+}
+
+/** The line of this process's calls for each lock, by lock directory: the tail's promise, and how many wait. */
+const lockLines = new Map<string, { tail: Promise<void>; waiting: number }>();
+
+async function inProcessTurn(lockDir: string, name: string): Promise<() => void> {
+  const line = lockLines.get(lockDir) ?? { tail: Promise.resolve(), waiting: 0 };
+  lockLines.set(lockDir, line);
+  const before = line.tail;
+  let done!: () => void;
+  const mine = new Promise<void>((r) => (done = r));
+  line.tail = before.then(() => mine);
+  line.waiting += 1;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const ahead = line.waiting - 1;
+  let gaveUp = false;
+  try {
+    await Promise.race([
+      before,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`Timed out waiting for locks/${name} (${ahead} call(s) of this process were ahead for ${tableLockTiming.queueMs} ms)`)), tableLockTiming.queueMs);
+        timer.unref?.();
+      }),
+    ]);
+  } catch (err) {
+    // The turn is given up: when it comes it is passed on at once, so the line does not stop behind a call that left.
+    gaveUp = true;
+    line.waiting -= 1;
+    void before.then(done, done);
+    throw err;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+  void gaveUp;
+  return () => {
+    line.waiting -= 1;
+    done();
+    if (line.waiting === 0 && lockLines.get(lockDir) === line) lockLines.delete(lockDir);
+  };
+}
+
+async function withLockOnDisk<T>(sandboxRoot: string, name: string, lockDir: string, fn: (lock: HeldLock) => Promise<T>): Promise<T> {
   const deadline = Date.now() + tableLockTiming.waitMs;
   const token = `${process.pid}-${randomUUID()}`;
   const probe = join(sandboxRoot, "locks", `.probe.${token}`);
