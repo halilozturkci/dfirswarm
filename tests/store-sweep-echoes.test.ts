@@ -327,3 +327,26 @@ test("a job that read a whole job read what is accounted for when the record nam
   assert.deepEqual(sw.hits.map((h) => h.ref).sort(), ["job:j000105/c.txt", "job:j000469/hits.txt"], "c.txt holds it unnamed: what read the whole of j000105 holds, and so does c.txt");
   assert.equal(SW.SWEEP_RULES, 3);
 });
+
+test("a sweep hit examined in place: an entry for the question naming the hit object, written after the sweep, clears it once another seat attests it, with no new coverage record; unattested, or attested by its author, it holds", async () => {
+  const { S, a0, a1, a2 } = await run();
+  await jobFiles(S, "j000201", { "hits.txt": "b.log: alice logged on\n" }, { kind: "command", scope: "declared", inputs: ["input:logs/b.log"], network: "off", command: "grep -H alice" });
+  await planned(a0, "2");
+  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
+  const cov = ok(await rec(a0, coverage("2", ["input:disk.E01"], [`E-${abs.seq}`, "job:j000001/hits.txt"], { looked_for: ["alice"] }))).entry;
+  ok(await rec(a1, { kind: "answer", section: "question:2", value: "No evidence of a remote tool was found on the disk", reasoning: `E-${cov.seq}`, ...A, result: "bounded_negative" }));
+  await SW.awaitSweeps(S);
+  assert.deepEqual(SW.sweepOf(cov, await SW.readSweeps(S))!.hits.map((h) => h.ref), ["job:j000201/hits.txt"]);
+  await attested(a2, { seq: cov.seq, how: "ran the search again", review: REVIEW });
+  assert.deepEqual(codes(await checkLedgerAnswers(S, ["2"], ["2"]), "question:2"), ["sweep_hits"]);
+  // What the object showed, for the question: alice's logon is not a remote tool.
+  const f = ok(await rec(a0, { kind: "finding", ...F, value: "b.log's alice line is an interactive logon, no remote tool", source: "b.log", evidence: "line 1", refs: ["job:j000201/hits.txt"], answers: ["2"] })).entry;
+  let r = await checkLedgerAnswers(S, ["2"], ["2"]);
+  assert.deepEqual(codes(r, "question:2"), ["sweep_hits"], "unattested, the hit holds");
+  assert.match(r.defects.find((d) => d.code === "sweep_hits")!.fix, /Another seat's attest on that entry clears the hit where it stands/);
+  await attested(a2, { seq: f.seq, how: "read line 1 of the hit file" });
+  r = await checkLedgerAnswers(S, ["2"], ["2"]);
+  assert.deepEqual(codes(r, "question:2"), [], "attested by another seat, the hit is examined in place");
+  const entries = (await P.readLedger(S)) as P.LedgerEntry[];
+  assert.equal(entries.filter((e) => e.kind === "coverage").length, 1, "no new coverage record");
+});

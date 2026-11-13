@@ -41,7 +41,7 @@ import { fileURLToPath } from "node:url";
 import * as NB from "./negative-bar.ts";
 import * as PM from "./premises.ts";
 import * as PR from "./preparation.ts";
-import { importHitExamined, importHitsFor, importHitWords, unexaminedHits, type ImportSweepRecord, type SweepRecord, type UnexaminedHit } from "./store-sweep.ts";
+import { importHitExamined, importHitsFor, importHitWords, INTERPRETING_KINDS, unexaminedHits, type ImportSweepRecord, type SweepHit, type SweepRecord, type UnexaminedHit } from "./store-sweep.ts";
 import type { LedgerAlternative, LedgerEdge, LedgerEntry, LedgerKind, LedgerLocator, LedgerMethod, LedgerQualify, LedgerRel, SwarmContext } from "./protocol-core.ts";
 import { ANSWER_ONLY_REL_KINDS, DELTA_REL_KINDS, LEDGER_ACT_MAX_CHARS, LEDGER_ALTERNATIVE_STATUS, LEDGER_ANSWER_ID, LEDGER_ANSWER_RESULTS, LEDGER_ATTESTATIONS, LEDGER_BASIS, LEDGER_BECAUSE_MAX_CHARS, LEDGER_CLOCK_MAX_CHARS, LEDGER_COMPLETION, LEDGER_CONFIDENCE, LEDGER_DIR, LEDGER_DISPUTES, LEDGER_ENTRIES, LEDGER_EVIDENCE_MAX_CHARS, LEDGER_HYPOTHESIS_STATUS, LEDGER_INDICATES_MAX_CHARS, LEDGER_KINDS, LEDGER_LIMITATION_REASONS, LEDGER_LOCATOR_MAX_CHARS, LEDGER_MAX_ALTERNATIVES, LEDGER_MAX_ANSWERS, LEDGER_MAX_CITATIONS, LEDGER_MAX_ENTRIES, LEDGER_MAX_LOCATORS, LEDGER_MAX_QUALIFIES, LEDGER_MAX_REFS, LEDGER_MAX_REL, LEDGER_MD, LEDGER_PRECISION, LEDGER_REASONING_MAX_CHARS, LEDGER_REF_MAX_CHARS, LEDGER_REL_KINDS, LEDGER_SECTION_SPECIAL, LEDGER_SOURCE_CLASSES, LEDGER_SOURCE_MAX_CHARS, LEDGER_SUBJECT_MAX_CHARS, LEDGER_SUBJECT_TYPES, LEDGER_VALUE_MAX_CHARS, LEDGER_VERSION, LEDGER_WHY_MAX_CHARS, REGISTER_LOCK, canonicalValue, ledgerContent, ledgerHash, sha256Hex, traceHarnessEntry, withNamedLock, withTableLock } from "./protocol-core.ts";
 
@@ -4336,8 +4336,45 @@ export function coverageNamesAreas(c: LedgerEntry): boolean {
  * For a negative the bar holds, a partial answer on a material question,
  * and an answer that says the event did not happen; empty for any other.
  */
-export type SweepHold = { code: "sweep_pending" | "sweep_hits" | "sweep_partial"; coverage: LedgerEntry; sweep: SweepRecord | null; unexamined?: UnexaminedHit[] };
-export function sweepHolds(answer: LedgerEntry, entries: LedgerEntry[], sweeps: readonly SweepRecord[], disputes: LedgerDispute[] = [], material = true): SweepHold[] {
+export type SweepHold = {
+  code: "sweep_pending" | "sweep_hits" | "sweep_partial";
+  coverage: LedgerEntry;
+  sweep: SweepRecord | null;
+  unexamined?: UnexaminedHit[];
+  /** The sweep's hits that hold: those not examined in place (examinedInPlace). Absent when every hit holds as the sweep found it. */
+  hits?: SweepHit[];
+  /** The sweep's hits examined in place, each with the entry that examined it. */
+  examined?: Array<{ ref: string; term: string; by: number }>;
+};
+
+/**
+ * A sweep hit examined in place, without the coverage record being written
+ * again (the run sf4406b's finish loop: each revision of a record to name
+ * what its sweep found was swept anew, and the revision's own outputs were
+ * found in turn): a standing finding, event, absence or limitation for one of
+ * the record's questions, written at or after the sweep, whose refs name the
+ * hit object (any name of its bytes), and which a seat other than its authors
+ * attested, says what the object showed. The entry that examined it, or null.
+ * With no attestations given, none is: the hit holds until the record names
+ * it with what it showed, as before.
+ */
+export function examinedInPlace(hit: SweepHit, cov: LedgerEntry, sw: SweepRecord, entries: readonly LedgerEntry[], replaced: ReadonlyMap<number, number>, attests: readonly LedgerAttestation[] | undefined, disputes: readonly LedgerDispute[]): LedgerEntry | null {
+  if (!attests?.length) return null;
+  const questions = new Set((cov.answers ?? []).map((x) => sectionKey(x)));
+  const names = new Set([hit.ref, ...(hit.also ?? [])].map((n) => n.replace(/^(job:[^/]+)\/out\//, "$1/").replace(/\/+$/, "")));
+  const inForce = disputesInForce(entries as LedgerEntry[], disputes as LedgerDispute[]);
+  for (const e of entries) {
+    if (!INTERPRETING_KINDS.has(e.kind) || replaced.has(e.seq) || Date.parse(e.at) < Date.parse(sw.at)) continue;
+    if (!(e.answers ?? []).some((x) => questions.has(sectionKey(x)))) continue;
+    if (!(e.refs ?? []).some((r) => names.has(r.replace(/^(job:[^/]+)\/out\//, "$1/").replace(/\/+$/, "")))) continue;
+    const h = e.hash ?? ledgerHash(e, "genesis");
+    if (inForce.some((d) => d.target === h)) continue;
+    if (attests.some((x) => attestationAct(x) === "attest" && x.target === h && !e.authors.includes(x.by))) return e;
+  }
+  return null;
+}
+
+export function sweepHolds(answer: LedgerEntry, entries: LedgerEntry[], sweeps: readonly SweepRecord[], disputes: LedgerDispute[] = [], material = true, attests?: readonly LedgerAttestation[]): SweepHold[] {
   if (answer.kind !== "answer" || !answer.section?.startsWith("question:")) return [];
   const bySeq = new Map(entries.map((e) => [e.seq, e]));
   const replaced = supersededBy(entries);
@@ -4355,7 +4392,14 @@ export function sweepHolds(answer: LedgerEntry, entries: LedgerEntry[], sweeps: 
     const h = c.hash ?? ledgerHash(c, "genesis");
     const sw = c.looked_for?.length ? (sweeps.filter((x) => x.target === h).at(-1) ?? null) : null;
     if (c.looked_for?.length && !sw) out.push({ code: "sweep_pending", coverage: c, sweep: null });
-    if (sw?.hits.length || unexamined.length) out.push({ code: "sweep_hits", coverage: c, sweep: sw, ...(unexamined.length ? { unexamined } : {}) });
+    // A hit another seat attested an entry examining in place no longer holds (examinedInPlace); the rest do.
+    const examined: NonNullable<SweepHold["examined"]> = [];
+    const holding = (sw?.hits ?? []).filter((h) => {
+      const by = sw ? examinedInPlace(h, c, sw, entries, replaced, attests, disputes) : null;
+      if (by) examined.push({ ref: h.ref, term: h.term, by: by.seq });
+      return !by;
+    });
+    if (holding.length || unexamined.length) out.push({ code: "sweep_hits", coverage: c, sweep: sw, ...(unexamined.length ? { unexamined } : {}), ...(examined.length ? { hits: holding, examined } : {}) });
     if (sw?.unsearched.length) out.push({ code: "sweep_partial", coverage: c, sweep: sw });
   }
   return out;
@@ -4713,13 +4757,13 @@ export function ledgerGate(o: { entries: LedgerEntry[]; attestations: LedgerAtte
     // record is revised to name it, or the answer is; a partial sweep holds
     // until the operator accepts the question's limits.
     if (bar && result && o.sweeps) {
-      for (const hold of sweepHolds(a, entries, o.sweeps, o.disputes, bar.material)) {
+      for (const hold of sweepHolds(a, entries, o.sweeps, o.disputes, bar.material, o.attestations)) {
         const c = hold.coverage;
         const sw = hold.sweep;
         if (hold.code === "sweep_pending") {
           defects.push({ code: "sweep_pending", section: sec.section, seqs: [a.seq, c.seq], what: `answer #${a.seq} (${sec.section}) rests on coverage record E-${c.seq}, whose store sweep for ${c.looked_for!.map((t) => `"${t}"`).join(", ")} has not finished (pending)`, fix: "wait for the sweep: the hub runs it when the record is written and records it in ledger/sweeps.jsonl (the finish line runs one lost with its process); then examine what it found", named_by: [] });
         } else if (hold.code === "sweep_hits") {
-          const words = (sw?.hits ?? []).map((h) => `"${h.term}" in ${h.ref}${h.also?.length ? ` (also ${h.also.join(", ")})` : ""} (${h.count} time${h.count === 1 ? "" : "s"}, first at byte ${h.first_offset}${h.encodings.includes("utf-16le") ? `, ${h.encodings.join(" and ")}` : ""})`);
+          const words = (hold.hits ?? sw?.hits ?? []).map((h) => `"${h.term}" in ${h.ref}${h.also?.length ? ` (also ${h.also.join(", ")})` : ""} (${h.count} time${h.count === 1 ? "" : "s"}, first at byte ${h.first_offset}${h.encodings.includes("utf-16le") ? `, ${h.encodings.join(" and ")}` : ""})`);
           const unexamined = hold.unexamined ?? [];
           const named = unexamined.map((u) => `${u.ref}${u.also.length ? ` (also ${u.also.join(", ")})` : ""} (${u.terms.map((t) => `"${t}"`).join(", ")}, found by the sweep of E-${u.found_by})`);
           const said = [
@@ -4731,7 +4775,7 @@ export function ledgerGate(o: { entries: LedgerEntry[]; attestations: LedgerAtte
             section: sec.section,
             seqs: [a.seq, c.seq],
             what: `answer #${a.seq} (${sec.section}) is ${NB.resultWords(result)}, and ${said.join("; and ")}`,
-            fix: `examine each object the sweep names and record what it showed: one entry per object (a finding, an event or a limitation whose refs name the object itself), or one absence whose refs list several (a search that found nothing that bears on the question in them), written after the sweep; then record the coverage again with supersedes=${c.seq} naming each object (in refs, which hold 20, or in result_refs, which hold 200 and where an object named counts the same: put them there rather than drop one named before), with what it showed: those entries in result_refs (and coverage_actual), and leave the answer as it is when its value and the coverage stay the same (it stands on the revised record); record it again with supersedes=${a.seq} only when what those objects show changes it`,
+            fix: `examine each object the sweep names and record what it showed: one entry per object (a finding, an event or a limitation whose refs name the object itself), or one absence whose refs list several (a search that found nothing that bears on the question in them), written after the sweep and naming the question in answers. Another seat's attest on that entry clears the hit where it stands, and the coverage record is not written again; without one, record the coverage again with supersedes=${c.seq} naming each object (in refs, which hold 20, or in result_refs, which hold 200 and where an object named counts the same: put them there rather than drop one named before), with what it showed: those entries in result_refs (and coverage_actual), and leave the answer as it is when its value and the coverage stay the same (it stands on the revised record); record it again with supersedes=${a.seq} only when what those objects show changes it`,
             named_by: [],
           });
         } else {

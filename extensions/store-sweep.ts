@@ -1109,6 +1109,7 @@ export function holdKeyWords(h: SweepHoldKey): string {
 export async function sweepHoldKeys(sandboxRoot: string, entries: readonly LedgerEntry[], sweeps: readonly SweepRecord[]): Promise<SweepHoldKey[]> {
   const P = await import("./protocol.ts");
   const disputes = await P.readDisputes(sandboxRoot).catch(() => []);
+  const attests = await P.readAttestations(sandboxRoot).catch(() => []);
   const snap = await import("./questions.ts").then((Q) => Q.questionsSnapshot(sandboxRoot)).catch(() => null);
   const goal = new Set((snap?.goal.questions ?? []).map((x) => P.sectionKey(x)));
   const bars = (id: string) => {
@@ -1123,7 +1124,7 @@ export async function sweepHoldKeys(sandboxRoot: string, entries: readonly Ledge
   const out: SweepHoldKey[] = [];
   for (const [section, a] of standing) {
     const material = bars(P.sectionAnswersId(section)).material;
-    for (const h of P.sweepHolds(a, all, sweeps, disputes, material)) out.push({ section, answer: a.seq, code: h.code, coverage: h.coverage.seq });
+    for (const h of P.sweepHolds(a, all, sweeps, disputes, material, attests)) out.push({ section, answer: a.seq, code: h.code, coverage: h.coverage.seq });
   }
   return out.sort((x, y) => x.section.localeCompare(y.section, undefined, { numeric: true }) || x.coverage - y.coverage || x.code.localeCompare(y.code));
 }

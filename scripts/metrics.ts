@@ -503,7 +503,7 @@ function sweepsOf(c: Context, scope: RunMetrics["questions"]): RunMetrics["sweep
   const held: RunMetrics["sweeps"]["held"] = [];
   for (const [section, e] of standingAnswers(c)) {
     if (!live.has(section)) continue;
-    for (const h of P.sweepHolds(e, c.entries, c.sweeps, c.disputes, isMaterial(section, c))) held.push({ section, id: c.qs?.bySection.get(section)?.id ?? null, answer: `E-${e.seq}`, code: h.code, coverage: `E-${h.coverage.seq}` });
+    for (const h of P.sweepHolds(e, c.entries, c.sweeps, c.disputes, isMaterial(section, c), c.attestations)) held.push({ section, id: c.qs?.bySection.get(section)?.id ?? null, answer: `E-${e.seq}`, code: h.code, coverage: `E-${h.coverage.seq}` });
   }
   let released = 0;
   for (const e of records) {

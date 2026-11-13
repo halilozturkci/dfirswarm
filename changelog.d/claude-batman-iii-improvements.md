@@ -152,3 +152,10 @@ A job that declared a whole job as its input (`job:j000104`) read nothing the re
 the record named the one file under that job that held the string (one run's j000468, held on E-414). A whole job or a directory of one is
 now accounted for when the record names an object under it in which the sweep found the string and no object under it holds the string
 unnamed; one that does keeps the hit standing. Sweep rules version 3: recorded sweeps are read again under it.
+
+### Changed: a sweep hit another seat attested an examination of no longer holds, and the coverage record is not written again for it
+
+A hit the store sweep found outside a coverage record held until the record was written again naming the object, and each new record was
+swept anew, finding the seats' own outputs of the last round (one run's finish loop). A hit is now examined in place when a standing
+finding, event, absence or limitation for one of the record's questions, written after the sweep, names the object and a seat other than
+its authors attested it. Unattested, or attested only by its author, the hit holds as before. The `sweep_hits` fix says so.
