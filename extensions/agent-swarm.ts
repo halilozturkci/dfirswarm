@@ -314,6 +314,27 @@ export const SWARM_TOOLS = new Set([
  * work goes: it has a limit of its own and the seat goes on working meanwhile.
  */
 export const SHELL_TIMEOUT_DEFAULT_S = 120;
+
+/** After this many waits in a row that nothing woke, a wait's answer leads with the work nobody holds. */
+export const IDLE_WAITS = 3;
+
+/**
+ * What a wait's answer leads with after IDLE_WAITS unwoken waits: the open lead nobody holds, or the question nobody
+ * holds a lead for, taken from the header the answer already carries (leads.ts: "Open, unheld, by priority" and
+ * "Questions nobody holds a lead for"). Null when there is neither: a seat with nothing to take is waiting rightly.
+ * In eight runs seats waited through 110 to 427 calls while a question had no lead; the header said so on its fifth line.
+ */
+export function idleWaitHint(header: string, waits: number): string | null {
+  const line = (head: string) => header.split("\n").find((l) => l.startsWith(head))?.slice(head.length).trim().replace(/\.$/, "") ?? "";
+  const open = line("Open, unheld, by priority:");
+  const questions = line("Questions nobody holds a lead for, with no answer yet:");
+  const cut = (t: string) => (t.length > 300 ? `${t.slice(0, 280)}\u2026` : t);
+  const parts: string[] = [];
+  if (open && open !== "none") parts.push(`open and held by nobody: ${cut(open)} (lead_claim takes one)`);
+  if (questions && questions !== "none") parts.push(`with no lead and no answer: ${cut(questions)} (lead_open with answers: [the question] takes one)`);
+  if (!parts.length) return null;
+  return `You have waited ${waits} times in a row and nothing woke you, while there is work nobody holds: ${parts.join("; ")}. Take one before you wait again.`;
+}
 export const SHELL_TIMEOUT_MAX_S = 1800;
 export type ShellLimit = { seconds: number; why: "default" | "capped" | null; asked?: number };
 export function shellTimeout(asked: unknown, env: NodeJS.ProcessEnv = process.env): ShellLimit {
@@ -2386,6 +2407,9 @@ export default function (pi: ExtensionAPI) {
    * awaiting an interpretation, the questions nobody covers, and each notice
    * since the last delivery. Whole; a register that cannot be read says so.
    */
+  /** How many of this seat's waits in a row ended with nothing having woken them. */
+  let waitsUnwoken = 0;
+
   async function leadsHeader(cwd: string): Promise<{ leads?: string }> {
     try {
       const d = await leadsDigest(ctxFrom(cwd, agentId), { mark: true });
@@ -2708,7 +2732,12 @@ export default function (pi: ExtensionAPI) {
       // Hand back what woke us, so the agent does not need a second call.
       const box = result.reason === "post" ? await readInbox(ctx) : null;
       const remaining = box?.remaining ?? 0;
+      // Three waits in a row that nothing woke: the answer leads with the work nobody holds, when there is any.
+      waitsUnwoken = result.reason === "timeout" ? waitsUnwoken + 1 : 0;
+      const header = await leadsHeader(toolCtx.cwd);
+      const idle = waitsUnwoken >= IDLE_WAITS ? idleWaitHint(header.leads ?? "", waitsUnwoken) : null;
       const payload = {
+        ...(idle ? { first: idle } : {}),
         ...result,
         swarm_done: box?.swarm_done ?? (await swarmDoneExists(toolCtx.cwd)),
         posts:
@@ -2723,7 +2752,7 @@ export default function (pi: ExtensionAPI) {
           })) ?? [],
         remaining,
         ...(box && remaining > 0 ? { note: pageNote(remaining, box.page_chars) } : {}),
-        ...(await leadsHeader(toolCtx.cwd)),
+        ...header,
       };
       await logEvent(
         toolCtx.cwd,
