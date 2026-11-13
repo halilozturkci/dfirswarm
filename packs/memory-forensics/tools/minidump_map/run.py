@@ -216,7 +216,7 @@ import signal
 import sys
 
 PARSER = "minidump_map/3"
-TOOL = 5
+TOOL = 6
 
 
 def _before_start(signum, _frame):
@@ -256,6 +256,7 @@ MAX_ADDRESSES = 256
 READ_MAX = 64 << 20
 MODULE_MAX = 512 << 20
 MAX_STREAMS = 4096
+HEADER_BYTES = 32                  # the MINIDUMP_HEADER: no location that points into it is read as a record or as memory
 MAX_RANGES = 250_000
 MAX_REGIONS = 250_000
 MAX_MODULES = 16_384
@@ -1739,7 +1740,7 @@ class Dump:
           none                   no bytes are declared (size 0); nothing to read, and no fault
           read                   every declared byte is in the file
           cut_by_file            the record begins in the file and its declared end is past it; in_file bytes of it are there
-          declared_not_readable  bytes are declared at RVA 0 (where the header is), at or past the end of the file, or fewer than
+          declared_not_readable  bytes are declared inside the header (RVA 0 to 31), at or past the end of the file, or fewer than
                                  `minimum`, the smallest record of its `kind`; nothing of it is read as that record
 
         cut_by_file and declared_not_readable are recorded in problems under `stream` (at the RVA, or at `at`, the place of the location
@@ -1751,12 +1752,12 @@ class Dump:
                    "0 bytes are declared (at file offset %d), so there is no record to read" % rva)
             return {"state": "none", "in_file": 0, "why": why}
         need = size if size is not None else minimum
-        if not rva:
-            self.problem(stream, at if at is not None else 0, "%s: %s declared at file offset 0, where the file's header is; it was not read"
-                         % (what, declared))
+        if rva < HEADER_BYTES:
+            self.problem(stream, at if at is not None and not rva else rva, "%s: %s declared at file offset %d, where the file's header is (its "
+                         "first %d bytes); it was not read" % (what, declared, rva, HEADER_BYTES))
             return {"state": "declared_not_readable", "in_file": 0,
-                    "why": "%s declared at file offset 0, where the file's header is: not read (problems). A record is declared, so this "
-                           "is not an entry without one" % declared}
+                    "why": "%s declared at file offset %d, where the file's header is: not read (problems). A record is declared, so this "
+                           "is not an entry without one" % (declared, rva)}
         if rva >= self.size:
             self.problem(stream, rva, "%s: %s declared at file offset %d, at or past the end of the file (%d bytes); it was not read"
                          % (what, declared, rva, self.size))
@@ -1824,7 +1825,12 @@ class Dump:
         if count > MAX_STREAMS:
             self.problem("directory", directory, "the header declares %d streams; the first %d directory entries are read" % (count, MAX_STREAMS))
             take = MAX_STREAMS
-        raw = self.read(directory, take * 12)
+        if take and directory < HEADER_BYTES:
+            # The directory is a location too: one inside the header would read the header's own fields as stream entries.
+            self.problem("directory", directory, "the header puts the stream directory at file offset %d, inside the header (its first %d "
+                         "bytes); no entry is read from it" % (directory, HEADER_BYTES))
+            take = 0
+        raw = self.read(directory, take * 12) if take else b""
         if len(raw) < take * 12:
             self.problem("directory", directory, "the directory of %d entries (12 bytes each) at file offset %d runs past the end of the file "
                          "(%d bytes): %d whole entries are in the file" % (take, directory, self.size, len(raw) // 12))
@@ -2062,7 +2068,7 @@ class Dump:
                 # The ranges' data lie one after another from BaseRva: a BaseRva of 0 (the header's place) with bytes declared is a
                 # location that is not read, and none of those bytes is taken for the process's memory.
                 total = sum(length for _va, length in listed)
-                if base_rva or not total:
+                if base_rva >= HEADER_BYTES or not total:
                     at = base_rva
                     for va, length in listed:
                         if not len(raw) & 4095:
@@ -2084,7 +2090,7 @@ class Dump:
                 for n, (va, length, at) in enumerate(struct.iter_unpack("<QII", data[:take * 16])):
                     if not len(raw) & 4095:
                         tick("the MemoryList was read")
-                    if length and not at:
+                    if length and at < HEADER_BYTES:
                         # Bytes declared at RVA 0 are the file's header, not the process's memory: said, and the range is not mapped. A
                         # range past the file or cut by it is mapped for the bytes the file holds and said once, below, for all of them.
                         self.locate("MemoryList", length, at, "the memory range at %s" % hx(va), 1, rva + 4 + n * 16 + 12)
@@ -2693,8 +2699,8 @@ def module_row(dump, module, state):
            "timestamp": {"raw": module["stamp"], "utc": iso(module["stamp"]), "epoch": "seconds since 1970-01-01 UTC (the PE header's TimeDateStamp as the loader recorded it)"},
            "checksum": hx(module["checksum"]), "entry_file_offset": module["entry_offset"]}
     if not name:
-        row["name_why_not"] = ("the entry's name RVA is 0, where the file's header is: the name was not read (problems), and this is not a "
-                               "module without a name" if not module["name_rva"] else
+        row["name_why_not"] = ("the entry's name RVA is %d, where the file's header is: the name was not read (problems), and this is not a "
+                               "module without a name" % module["name_rva"] if module["name_rva"] < HEADER_BYTES else
                                "the name string at file offset %d is empty (0 characters)" % module["name_rva"] if name == "" else
                                "the name string at file offset %d could not be read (problems)" % module["name_rva"])
     if state == "loaded":

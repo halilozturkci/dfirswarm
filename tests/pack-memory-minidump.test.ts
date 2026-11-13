@@ -1178,6 +1178,33 @@ test("the exception's context location and NumberParameters, memory descriptors 
   const d0 = await sum("dir-rva0.dmp", dirRva0);
   declaredFault(d0, "ModuleList", /the ModuleList stream \(directory entry 0\): 112 bytes declared at file offset 0/);
   assert.deepEqual([d0.streams[0].bytes_in_file, d0.streams[0].location, d0.counts.modules], [0, "declared_not_readable", 0]);
+
+  // an RVA inside the header that is not 0 is the header too: a stream at 4, a name at 12, memory at 4, and the directory itself
+  const dirRva4 = assemble((put) => [{ type: 4, body: Buffer.concat([u32(1), moduleEntry({ base: 0x10000n, size: 0x1000, nameRva: put(mdString("a.dll")) })]) }]).file;
+  dirRva4.writeUInt32LE(4, dirRva4.readUInt32LE(12) + 8);
+  const d4 = await sum("dir-rva4.dmp", dirRva4);
+  declaredFault(d4, "ModuleList", /the ModuleList stream \(directory entry 0\): 112 bytes declared at file offset 4, where the file's header is/);
+  assert.deepEqual([d4.streams[0].bytes_in_file, d4.streams[0].location], [0, "declared_not_readable"]);
+  const n12 = await sum("modname-rva12.dmp", assemble(() => [{ type: 4, body: Buffer.concat([u32(1), moduleEntry({ base: 0x10000n, size: 0x1000, nameRva: 12 })]) }]).file, { view: "modules" });
+  declaredFault(n12, "ModuleList", /the name of module 0: a MINIDUMP_STRING declared at file offset 12, where the file's header is/);
+  assert.match(n12.modules[0].name_why_not, /name RVA is 12, where the file's header is/);
+  const list32at4 = Buffer.from(list32);
+  list32at4.writeUInt32LE(4, list32at4.indexOf(Buffer.concat([u64(0x10000n), u32(0x40)])) + 12);
+  const mem4 = await sum("mem-rva4.dmp", list32at4, { view: "memory" });
+  declaredFault(mem4, "MemoryList", /the memory range at 0x10000: 64 bytes declared at file offset 4, where the file's header is/);
+  assert.deepEqual(mem4.ranges.map((x: any) => x.va), ["0x20000"]);
+  const list64at4 = assemble(() => [{ type: 9, body: Buffer.concat([u64(1), u64(4), u64(0x10000n), u64(0x20)]) }], { flags: 2n }).file;
+  const mem64at4 = await sum("mem64-rva4.dmp", list64at4, { view: "memory" });
+  declaredFault(mem64at4, "Memory64List", /32 bytes declared at file offset 4, where the file's header is/);
+  assert.deepEqual(mem64at4.ranges, []);
+  for (const at of [0, 4, 31]) {
+    const moved = Buffer.from(dirRva0);
+    moved.writeUInt32LE(at, 12);                                  // StreamDirectoryRva
+    const m = await sum(`dir-at-${at}.dmp`, moved);
+    assert.equal(m.status, "partial", `directory at ${at}`);
+    assert.deepEqual(m.streams, [], `no entry is read from the header (directory at ${at})`);
+    assert.ok(m.problems.some((x: any) => x.stream === "directory" && /inside the header \(its first 32 bytes\); no entry is read from it/.test(x.problem)), JSON.stringify(m.problems));
+  }
 });
 
 test("lossy decoding is said and partial; an empty handle type name has its own key; a clean dump is complete in every view", async () => {
