@@ -95,6 +95,7 @@ import { bindJobGrants, checkJobGrants, fetchForSeat, netTick, netViewFor, reque
 import { readCasePolicy } from "./case-policy.ts";
 import { resolveScope, scopeKindOf } from "./job-scope.ts";
 import { commandNames, libraryHint, shortHint, type ShortHint } from "./library-hint.ts";
+import { boundRpcAnswer } from "./reply-bound.ts";
 import { sensitiveIndex } from "./output-hygiene.ts";
 import { ACCESS_RULES, apiPageHit, classifyTraceRow, type AccessHit } from "./sensitive-access.ts";
 
@@ -2009,7 +2010,14 @@ export class Hub {
             return;
           }
           try {
-            const result = await this.callOnce(agent, String(msg.fn ?? ""), args, controller.signal, msg.rid);
+            const fn = String(msg.fn ?? "");
+            const raw = await this.callOnce(agent, fn, args, controller.signal, msg.rid);
+            // The wall behind every bounded source (reply-bound.ts): an answer past it is kept whole and named, never sent.
+            const { answer: result, cut } = await boundRpcAnswer(fn, raw, async (text) => {
+              const kept = await P.keepToolOutput(this.cfg.sandbox, P.toolOutputRel("harness", `answer-${fn}`, "text"), text);
+              return kept.write_error ? { write_error: kept.write_error } : { path: kept.path, bytes: kept.bytes, sha256: kept.sha256 };
+            });
+            if (cut) void this.refused(agent, "answer_too_large", `${cut.fn}: ${cut.bytes} bytes over ${cut.max}${cut.kept ? `, kept at ${cut.kept}` : ""}`);
             this.replyRpc(agent, socket, id, result);
           } finally {
             running.delete(id);

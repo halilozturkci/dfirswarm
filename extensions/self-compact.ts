@@ -449,6 +449,29 @@ export function nowPrompt(saved?: string): string {
 }
 
 /** The header the harness puts in front of the returned note. */
+/** How much of the lead register a hand-off carries. */
+export const HANDOFF_LEADS_MAX = 2000;
+
+/**
+ * The lead register for a hand-off: what is the seat's own (its leads, what is blocked on it, the jobs that wait for its
+ * reading, its stuck jobs), the questions nobody holds, and the finish as a count. Not the other seats' backlog: a
+ * hand-off of the run s01a4f4 named 76 jobs of other seats and ten leads the seat did not hold (17,486 characters),
+ * and one of s5d814f was 38 MB. Bounded at HANDOFF_LEADS_MAX characters.
+ */
+export function handoffLeads(digest: string): string {
+  const keep = /^(Leads:|Yours:|Blocked on you:|Awaiting your interpretation:|Questions nobody holds|Your running jobs)/;
+  const out: string[] = [];
+  for (const line of digest.split("\n")) {
+    if (keep.test(line)) out.push(line.length > 600 ? `${line.slice(0, 560)}\u2026 (cut: leads gives it whole)` : line);
+    else if (line.startsWith("Finish: ")) {
+      const m = /^Finish: (READY by the registers|not ready \(\d+(?:, \d+ of them yours)?\))/.exec(line);
+      out.push(`${m ? `Finish: ${m[1]}` : "Finish: see finish status"}; finish status lists what holds it.`);
+    }
+  }
+  const text = out.join("\n");
+  return text.length > HANDOFF_LEADS_MAX ? `${text.slice(0, HANDOFF_LEADS_MAX - 40)}\u2026 (cut: leads gives it whole)` : text;
+}
+
 export function handoffHeader(agentId: string, cycle: number, facts: HandoffFacts, hadNote: boolean, reason: string): string {
   const who = facts.name ? `you are ${agentId} "${facts.name}"${facts.doing ? ` (${facts.doing})` : ""}` : `you are ${agentId}; you have not named yourself yet (call name)`;
   const claims = facts.claims.length ? facts.claims.join(", ") : "none";
@@ -462,7 +485,7 @@ export function handoffHeader(agentId: string, cycle: number, facts: HandoffFact
     ...(facts.unknown
       ? ["Live claims, unread posts, the ledger, the sentinel and spend: unknown (the hub could not be reached when this was written). Call inbox and check done/SWARM_DONE before acting."]
       : [`Live claims: ${claims}.`, `Unread posts: ${unread}`, `Ledger: ${facts.ledgerTotal} entries, ${facts.ledgerMine} yours. Sentinel: ${sentinel}. Spend: ${spend}.`]),
-    ...(facts.leads ? [`The lead register now (your leads are yours: go on with them, or release them):\n${facts.leads}`] : []),
+    ...(facts.leads ? [`The lead register now (your leads are yours: go on with them, or release them; leads and finish status give the rest):\n${handoffLeads(facts.leads)}`] : []),
     ...(facts.skills ? [facts.skills] : []),
     ...(facts.capHit ? [facts.capHit] : []),
     ...(facts.forged ? [facts.forged] : []),

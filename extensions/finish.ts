@@ -60,6 +60,7 @@ import { join } from "node:path";
 import * as L from "./leads.ts";
 import * as NB from "./negative-bar.ts";
 import * as P from "./protocol.ts";
+import { boundItems } from "../scripts/reply-bound.ts";
 
 export const FINISH_LOG = "leads/finish.jsonl";
 /** How a done that is not the coordinator's is answered: quietly, never as a refusal. */
@@ -1605,16 +1606,38 @@ export async function syncPhase(sandboxRoot: string, p: FinishPhase): Promise<bo
   }).catch(() => false);
 }
 
+/**
+ * Readiness for the header, shared: eight seats that wake on one post ask at once, and each call walked every
+ * register. One computation serves the calls of the next READINESS_SHARE_MS; a gate decision (prepare, done, status)
+ * never reads it.
+ */
+const READINESS_SHARE_MS = 2000;
+const readinessHeld = new Map<string, { at: number; value: Promise<Awaited<ReturnType<typeof readiness>>> }>();
+function readinessShared(sandboxRoot: string): Promise<Awaited<ReturnType<typeof readiness>>> {
+  const had = readinessHeld.get(sandboxRoot);
+  if (had && Date.now() - had.at < READINESS_SHARE_MS) return had.value;
+  const value = readiness(sandboxRoot);
+  readinessHeld.set(sandboxRoot, { at: Date.now(), value });
+  value.catch(() => readinessHeld.delete(sandboxRoot));
+  return value;
+}
+
 /** The finish in the header (A4): readiness, the coordinator, and what this seat does about it. */
 export async function finishHeader(sandboxRoot: string, me: string): Promise<string | null> {
   if (await P.swarmDoneExists(sandboxRoot)) return null;
-  const r = await readiness(sandboxRoot);
+  const r = await readinessShared(sandboxRoot);
   await syncReadiness(sandboxRoot, r).catch(() => false);
   const st = await readFinish(sandboxRoot);
   const lease = st.lease;
   const mine = lease?.holder === me;
   const who = lease ? `${lease.holder}${mine ? " (you)" : ""} coordinates it (generation ${lease.generation})` : "nobody coordinates it yet: the first prepare or done takes it (normally the report's publisher, who prepares it with finish prepare once the report is drafted)";
-  const state = r.ready ? `READY by the registers${r.limited.length ? `, limited: ${r.limited.join("; ")}` : ""}` : `not ready (${r.items.length}): ${r.items.join("; ")}`;
+  // The header rides on every wait, inbox and leads answer and on every hand-off: it names the caller's own items and
+  // a few of the rest, each cut to a bound, and counts the others. The whole list is finish status's. Joined whole it
+  // was 40-59% of all wait output in four runs, and 38 MB a call once an item listed 137,703 unsearched objects.
+  const shown = boundItems(r.items, (item) => item.includes(me));
+  const state = r.ready
+    ? `READY by the registers${r.limited.length ? `, limited: ${boundItems(r.limited, () => false).text}` : ""}`
+    : `not ready (${r.items.length}${shown.own ? `, ${shown.own} of them yours` : ""}): ${shown.text}`;
   let act = "";
   // The finish phase: recorded when it turns, and said to every seat.
   const phase = await finishPhase(sandboxRoot).catch(() => null);

@@ -4012,6 +4012,12 @@ export async function leadsDigest(ctx: P.SwarmContext, o: { mark?: boolean } = {
     await markOffersSeen(ctx.sandboxRoot, me, notices.filter((n) => n.offer !== undefined && n.kind !== "parked").flatMap((n) => n.batch ?? [{ lead: n.lead, offer: n.offer! }]));
     if (qd) await Q.markQuestionOffersSeen(ctx.sandboxRoot, me, qd.notices.filter((n) => n.kind === "offer" && n.offer !== undefined).map((n) => ({ q: n.q, offer: n.offer! }))).catch(() => undefined);
   }
+  // No line of the digest is unbounded: it rides on every wait and inbox answer and on every hand-off. A line past the
+  // bound is cut and says so; the registers (leads, finish status, job_status) hold what was cut.
+  const DIGEST_LINE_MAX = 6000;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (lines[i]!.length > DIGEST_LINE_MAX) lines[i] = `${lines[i]!.slice(0, DIGEST_LINE_MAX - 120)}\u2026 (cut here: this line was ${lines[i]!.length} characters; leads, finish status and job_status give it whole)`;
+  }
   return { text: lines.join("\n"), notices: [...notices, ...(qd?.notices ?? []).map((n) => ({ kind: `question_${n.kind}` as LeadNotice["kind"], lead: n.q, text: n.text, wakes: n.wakes }))], counts: { ...counts, ...(qd ? { questions: qd.counts } : {}) } };
 }
 
