@@ -43,10 +43,11 @@ import { join, resolve } from "node:path";
 import { INDEX_MIN_BYTES } from "./manifest-index.ts";
 import { hubAlive, hubProcessFor, Journal, manifestFile, manifestOf, maybeCrash, publishGeneration, publishRevision, readManifest, resealMoved, sealTree, sha256File, sha256Hex, storePaths, traceLineBytes, traceOrigin, type JournalLine, type Manifest, type TraceOrigin } from "./evidence-store.ts";
 import { chooseImage, readImageRecords, type ImageChoice, type ImageRecord } from "./image-choice.ts";
-import { buildView, declaredScope, dropProjected, freeMb, PROJECTED_DIR, resolveScope, ScopeError, scopeKindOf, scopeManifestText, VIEW_DIR, type ScopeKind, type ScopeObject, type ViewEntry } from "./job-scope.ts";
+import { buildView, declaredScope, dropProjected, freeMb, PROJECTED_DIR, resolveScope, SCOPE_DECLARED_MAX, ScopeError, scopeKindOf, scopeManifestText, VIEW_DIR, type ScopeKind, type ScopeObject, type ViewEntry } from "./job-scope.ts";
 import { assessJob, HEARTBEAT_LINES, HEARTBEAT_STOP, keepSample, readSamples, sampleJob, type JobProgress } from "./job-telemetry.ts";
 import type { Mount, WorkerSpec } from "./vm.ts";
 import { jobNetworkHosts } from "./net-grants.ts";
+import { argRefsWords, resolveToolArgs, type ArgRef } from "./tool-arg-refs.ts";
 import { dumpMembers, dumpsPost, membersTsv } from "./dump-members.ts";
 import { indexOutputs, objectsMatch, opMatch, rankSimilar, reuseOf, SAME_AS_SHOWN, sameAsOf, sameAsView, type Reuse, type SameAs, type Similar } from "./job-reuse.ts";
 import { declaredSecretOutput, jobSensitivity, parseSecretDeclaration, recipeSecretRefusal, sensitiveIndex, targetPaths, type SecretDeclaration, type Sensitivity } from "./output-hygiene.ts";
@@ -214,6 +215,8 @@ export type JobSpec = {
   note?: string;
   parent?: string;
   alias?: string;
+  /** tool: the arguments that were references (job:, import:, input:) and the paths the tool was given for them (scripts/tool-arg-refs.ts). */
+  args_resolved?: ArgRef[];
   /** recipe: the one phase of the recipe to run, of those its recipe.json declares (`phases`); the recipe is told in RECIPE_PHASE. Without it the recipe runs whole. */
   phase?: string;
   experimental?: boolean;
@@ -1391,9 +1394,15 @@ export class JobService {
       const args = raw.args && typeof raw.args === "object" && !Array.isArray(raw.args) ? raw.args : {};
       const checked = await this.toolCheck(String(raw.tool ?? ""), args);
       if (!checked.ok) return { reason: checked.reason };
+      // A reference given as an argument is the path it names; one that names nothing is refused here, with the form that works.
+      const refs = resolveToolArgs(this.S, String(raw.tool), args as Record<string, unknown>, (id) => this.jobs.get(id)?.state);
+      if (!refs.ok) return { reason: refs.reason };
+      // A declared scope is given what the arguments name: the tool could not read it otherwise.
+      if (declared.kind === "declared") for (const r of refs.resolved) if (!base.inputs.some((x) => x === r.object || x.startsWith(`${r.object}/`) || x === r.from) && base.inputs.length < SCOPE_DECLARED_MAX) base.inputs.push(r.from);
+      const withRefs = { tool: String(raw.tool), args: refs.args, ...(refs.resolved.length ? { args_resolved: refs.resolved.slice(0, 32) } : {}) };
       // The tool's manifest says this job is secret output: so it is, whatever the agent said (false included).
-      if (checked.secret) return { ...base, secret_output: true, secret_output_by: "tool_manifest", tool: String(raw.tool), args };
-      return { ...base, tool: String(raw.tool), args };
+      if (checked.secret) return { ...base, secret_output: true, secret_output_by: "tool_manifest", ...withRefs };
+      return { ...base, ...withRefs };
     }
     if (kind === "command") {
       const command = String(raw.command ?? "");
@@ -3816,7 +3825,7 @@ export function describe(job: JobRecord): string {
   const cite = job.spec.seal && job.status === "ok" ? `record again citing ${job.spec.seal.ref}: it resolves to import:${job.id}/<name>` : `cite its files as job:${job.id}/<path>`;
   const sameN = job.same_as_total?.files ?? job.same_as?.length ?? 0;
   const same = sameN ? ` ${sameN} of its files are an earlier job's output byte for byte (job_status ${job.id} names ${job.same_as_total?.list ? `the first, ${job.same_as_total.list} every one` : "them"}).` : "";
-  return `Job ${job.id} (${what}) ${head}: ${files}; stdout and stderr whole in store/jobs/${job.id}/. job_status ${job.id} for the details; ${cite}.${job.generation ? ` Catalogued as ${job.generation}.` : ""}${same}${job.sensitive ? ` ${sensitiveWords(job)}` : ""}`;
+  return `Job ${job.id} (${what}) ${head}: ${files}; stdout and stderr whole in store/jobs/${job.id}/. job_status ${job.id} for the details; ${cite}.${job.generation ? ` Catalogued as ${job.generation}.` : ""}${same}${job.spec.args_resolved?.length ? ` ${argRefsWords(job.spec.args_resolved)}` : ""}${job.sensitive ? ` ${sensitiveWords(job)}` : ""}`;
 }
 
 /**

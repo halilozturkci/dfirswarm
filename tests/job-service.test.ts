@@ -13,7 +13,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlink
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { boundInputSets, copyInputsManifest, DERIVED, JOB_INPUTS_MANIFEST, JOB_INPUTS_MANIFEST_MAX, JobService, jobView, missingOf, SHORT_JOB_SECONDS, type JobServiceOptions } from "../scripts/job-service.ts";
+import { boundInputSets, copyInputsManifest, DERIVED, describe, JOB_INPUTS_MANIFEST, JOB_INPUTS_MANIFEST_MAX, JobService, jobView, missingOf, SHORT_JOB_SECONDS, type JobServiceOptions } from "../scripts/job-service.ts";
 import { storePaths, verifyJournalText } from "../scripts/evidence-store.ts";
 import { listInputs, localWorker, mountedWorker } from "./job-service-worker.ts";
 import type { WorkerSpec } from "../scripts/vm.ts";
@@ -176,6 +176,30 @@ test("a pack or forged tool runs sealed, its arguments checked against its manif
   assert.equal(job.tool_sha256?.length, 64, "the tool's sha256 is on the record");
   writeFileSync(join(S, "tools", "writer", "run.py"), "print('changed')\n");
   await refused({ output: "{OUT}/a", text: "x" }, /does not match its manifest's sha256/);
+  await svc.stop("test over");
+});
+
+test("a tool is given the path of a job reference in its arguments, $OUT is its directory, and a reference that names nothing is refused", async () => {
+  const S = sandbox();
+  tool(S, "copier", "import json,sys,os\nd=json.load(sys.stdin)\nos.makedirs(os.path.dirname(d['output']), exist_ok=True)\nopen(d['output'],'w').write(open(d['source']).read() if d.get('source') else d.get('text',''))\nprint(json.dumps({'ok': True, 'source': d.get('source')}))\n", { output: { type: "string", required: true }, source: { type: "string" }, text: { type: "string" } });
+  const { svc } = service(S);
+  await svc.start();
+  const first = await svc.submit("a1", { kind: "tool", tool: "copier", args: { output: "$OUT/a dir/one.txt", text: "carved" }, inputs: [] });
+  assert.ok(first.ok, !first.ok ? first.reason : "");
+  const j1 = await until(svc, first.job.id);
+  assert.equal(readFileSync(join(storePaths(S).jobs, j1.id, "out", "a dir", "one.txt"), "utf8"), "carved", "$OUT at an argument's head is the job's directory");
+  // The reference a seat cites the file by, given as the path argument, with a declared scope that does not name the job.
+  const second = await svc.submit("a1", { kind: "tool", tool: "copier", args: { output: "${OUT}/two.txt", source: `job:${j1.id}/a dir/one.txt` }, inputs: [] });
+  assert.ok(second.ok, !second.ok ? second.reason : "");
+  assert.deepEqual(second.job.spec.args_resolved, [{ at: "source", from: `job:${j1.id}/a dir/one.txt`, to: `store/jobs/${j1.id}/out/a dir/one.txt`, object: `job:${j1.id}` }]);
+  assert.ok(second.job.spec.inputs.includes(`job:${j1.id}/a dir/one.txt`), "the declared scope is given what the argument names");
+  const j2 = await until(svc, second.job.id);
+  assert.equal(j2.status, "ok", readFileSync(join(storePaths(S).jobs, j2.id, "stderr.log"), "utf8"));
+  assert.equal(readFileSync(join(storePaths(S).jobs, j2.id, "out", "two.txt"), "utf8"), "carved");
+  assert.match(describe(j2), /The tool was given the path of the reference in its arguments \(source: job:j\d{6}\/a dir\/one\.txt is store\/jobs\/j\d{6}\/out\/a dir\/one\.txt\)\./);
+  const bad = await svc.submit("a1", { kind: "tool", tool: "copier", args: { output: "$OUT/x", source: `job:${j1.id}/nope.txt` }, inputs: [] });
+  assert.equal(bad.ok, false);
+  assert.match(!bad.ok ? bad.reason : "", /tool copier: source names job:j\d{6}\/nope\.txt, and job j\d{6} has no nope\.txt/);
   await svc.stop("test over");
 });
 
