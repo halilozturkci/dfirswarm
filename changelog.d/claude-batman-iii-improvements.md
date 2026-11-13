@@ -116,3 +116,12 @@ gave a format (`Name_md5(file)`, `DD-MM-YYYY-HH-MM`, `ip:port`), on another a da
 is now read into a pattern (a hash's hex digits, a date and time's digits in the placeholders' order, an address, a port, an email, free
 words between the separators), and an answer whose value holds no line in that form gets a note naming the format. It is recorded as
 written: the pattern is a reading of free text, so it is said, never refused.
+
+### Added: a case says what its questions need done, and the kickoff checks it before anything is spent
+
+On the first Batman III run three questions closed not determinable for want of a video decoder and a QR reader, and on another a
+`zbarimg` was there and could not read a PNG (no ImageMagick PNG coder). `--requires video-decode,qr-decode,…` (or `requires:` in the
+goal's metadata block) names what the questions need; the toolbox check, where the agents run, looks for a program that does each and runs
+a test input where one says more than presence (`zbarimg` on a small PNG). `toolbox.json` records each under `requires`, `SWARM.md` says
+it, and one not met is a warning before the run starts (a blocker with `--toolbox-required`). Eleven capabilities: video-decode,
+audio-decode, qr-decode, ocr, image-convert, pdf-text, office-macros, archive-7z, pcap, stego, memory.

@@ -187,7 +187,7 @@ swarm.sh start — prepare a sandbox, write the contract, launch the agents.
       [--compact-prompt-file FILE] [--compact-model P/ID] [--inbox-page-chars N] [--skill-release compaction|auto|off] [--skill-cards on|off]
       [--allow-install] [--no-pypi] [--no-read DIR]... [--accept-signer-exposure]
       [--tools-from DIR] [--inputs DIR]... [--inputs-enforce auto|on|off]
-      [--inputs-max-mb N] [--inputs-max-files N] [--catalog] [--allow-missing-symbols] [--toolbox SETS|auto|off] [--toolbox-required]
+      [--inputs-max-mb N] [--inputs-max-files N] [--catalog] [--allow-missing-symbols] [--toolbox SETS|auto|off] [--toolbox-required] [--requires CAPS]
       [--quarantine] [--case-id ID] [--examiner NAME] [--operator ID] [--allow-host HOST]...
       [--no-netguard] [--local-only] [--playwright] [--probe-violation]
       [--network closed|dynamic|open] [--policy standard|live_adversary|internal|ctf]
@@ -450,6 +450,13 @@ Evidence
                       SWARM.md: dfir, crypto, linux, comma-separated. auto picks
                       dfir when --catalog is on; off checks nothing.
   --toolbox-required  A missing tool is a blocker rather than a warning.
+  --requires CAPS     What the case's questions need done, comma-separated:
+                      video-decode, audio-decode, qr-decode, ocr, image-convert,
+                      pdf-text, office-macros, archive-7z, pcap, stego, memory
+                      (or the goal's metadata block, requires: ...). Checked
+                      where the agents run, by a program that does the work;
+                      one not met is a warning before the run starts (a
+                      blocker with --toolbox-required), and SWARM.md says it.
   --inputs-image FILE Attach a disk image read-only and use it as inputs/, instead of
                       copying a directory. The refusal comes from the host kernel on
                       the device: the write bit cannot be put back, so the metadata
@@ -3598,6 +3605,7 @@ cmd_start() {
   # only one, for one set), and says whether there is evidence at all.
   local inputs_dirs=() inputs_names=()
   local pack_tools_as_jobs=""
+  local requires_caps=""
   local allow_hosts="" tools_from="" catalog=0 toolbox="off" toolbox_required=0 quarantine=0 cap_per_agent="" cap_per_agent_tokens="" case_id="" examiner=""
   # The run's operator (--operator ID): a person enrolled on this install,
   # recorded with the run; `--as operator` on the run's acts names them.
@@ -3750,6 +3758,7 @@ cmd_start() {
       --pack) packs="${packs:+$packs,}$2"; shift 2 ;;
       --pack-tools-as-jobs) pack_tools_as_jobs="${pack_tools_as_jobs:+$pack_tools_as_jobs,}${2:-}"; shift 2 ;;
       --toolbox-required) toolbox_required=1; shift ;;
+      --requires) requires_caps="$2"; shift 2 ;;
       --quarantine) quarantine=1; shift ;;
       --no-write-guard) write_guard=0; shift ;;
       --accept-signer-exposure) accept_signer_exposure=1; shift ;;
@@ -4300,7 +4309,7 @@ import json, re, sys
 path = sys.argv[1]
 text = open(path, encoding="utf-8").read()
 m = re.match(r"^---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)", text)
-out = {"toolbox": "", "until_solved": "", "stall_minutes": "", "stop": ""}
+out = {"toolbox": "", "until_solved": "", "stall_minutes": "", "stop": "", "requires": ""}
 premises = []
 if m:
     for k in out:
@@ -4395,6 +4404,14 @@ print(json.dumps(out))
 STRIP
 )"
   goal_toolbox="$(jq -r '.toolbox' <<<"$goal_meta")"
+  # What the case requires done: the kickoff's --requires, else the goal's metadata block.
+  if [[ -z "$requires_caps" ]]; then
+    requires_caps="$(jq -r '.requires // ""' <<<"$goal_meta" | tr -d '[]"' | tr -s ', ' ',' | sed 's/^,//; s/,$//')"
+  fi
+  if [[ -n "$requires_caps" && ! "$requires_caps" =~ ^(video-decode|audio-decode|qr-decode|ocr|image-convert|pdf-text|office-macros|archive-7z|pcap|stego|memory)(,(video-decode|audio-decode|qr-decode|ocr|image-convert|pdf-text|office-macros|archive-7z|pcap|stego|memory))*$ ]]; then
+    echo "BLOCKER: requires: $requires_caps names a capability the toolbox does not know; it takes video-decode, audio-decode, qr-decode, ocr, image-convert, pdf-text, office-macros, archive-7z, pcap, stego, memory, comma-separated." >&2
+    exit 2
+  fi
   local goal_brief
   goal_brief="$(jq -r '.brief_without_premises // empty' <<<"$goal_meta")"
   # A must_establish: key that names no question (docs/adr/0013): said, never guessed.
@@ -4482,6 +4499,8 @@ STRIP
       fi ;;
   esac
   if [[ "$catalog" -eq 1 && "$toolbox" == "off" ]]; then toolbox="dfir"; fi
+  # A case that says what it requires is checked for it, whatever the sets.
+  if [[ -n "$requires_caps" && "$toolbox" == "off" ]]; then toolbox="dfir"; fi
   if [[ "$catalog" -eq 1 ]]; then quarantine=1; fi
   local pack_dirs=""
   if [[ -n "$packs" ]]; then
@@ -5382,6 +5401,7 @@ console.log(r.ok ? "" : r.reason);' "$_gp" "$_gk" 2>/dev/null || echo "could not
     # tools are the image's, and this host's are none of theirs.
     local toolbox_args=()
     [[ "$toolbox_required" -eq 1 ]] && toolbox_args+=(--required)
+    [[ -n "$requires_caps" ]] && toolbox_args+=(--requires "$requires_caps")
     vm_cli toolbox --image "${job_image:-$vm_image}" --preset "$toolbox" --packs "$(paste -sd: - <<< "$pack_dirs")" --out "$sandbox/toolbox.json" ${toolbox_args[@]+"${toolbox_args[@]}"} || exit $?
   elif [[ "$toolbox" != "off" && "$isolation" == "microvm" ]]; then
     # A prepared VM run: the check belongs to the image, not this host, and
@@ -5390,6 +5410,7 @@ console.log(r.ok ? "" : r.reason);' "$_gp" "$_gk" 2>/dev/null || echo "could not
   elif [[ "$toolbox" != "off" ]]; then
     local toolbox_args=()
     [[ "$toolbox_required" -eq 1 ]] && toolbox_args+=(--required)
+    [[ -n "$requires_caps" ]] && toolbox_args+=(--requires "$requires_caps")
     bash "$ROOT/scripts/toolbox.sh" "$sandbox" "$toolbox" ${toolbox_args[@]+"${toolbox_args[@]}"} || exit $?
   fi
   if [[ -n "$resume_of" ]]; then

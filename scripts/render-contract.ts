@@ -275,6 +275,18 @@ function toolboxSection(sandbox: string): string {
       for (const t of (get(tb, "missing", []) as Obj[])) lines.push(`| \`${pyStr(t.name)}\` | missing | ${pyStr(get(t, "use", ""))} — install: \`${pyStr(get(t, "install", ""))}\` |`);
       section = `${lines.join("\n")}\n\n`;
     }
+    // What the case requires done (the goal's requires: or --requires), and whether the check found a program that does it.
+    const req = get(tb, "requires", []) as Obj[];
+    if (Array.isArray(req) && req.length) {
+      const rows = ["The case requires these done; checked at kickoff where you run:", "", "| Capability | Met by | Use |", "| --- | --- | --- |"];
+      for (const r of req) {
+        const by = (get(r, "by", []) as unknown[]).map((b) => `\`${pyStr(b)}\``).join(", ");
+        const failed = (get(r, "present_but_failed_probe", []) as unknown[]).map((b) => `\`${pyStr(b)}\``).join(", ");
+        rows.push(`| ${pyStr(r.capability)} | ${get(r, "met") === true ? by : `not met${failed ? ` (${failed} is there and failed a test input)` : ` (none of ${(get(r, "wanted", []) as unknown[]).map((b) => `\`${pyStr(b)}\``).join(", ")})`}`} | ${pyStr(get(r, "use", ""))} |`);
+      }
+      if (req.some((r) => get(r, "met") !== true)) rows.push("", "A capability not met is not a reason to stop at not determinable: a program the operator supplies runs in a job (`job_run` with `programs`), and asking for one is an acquisition ask.");
+      section += `${rows.join("\n")}\n\n`;
+    }
   }
   // In a VM the install paragraph is the host section's; this one describes the host's shared toolchain.
   if (env("SWARM_CONTRACT_ISOLATION") === "microvm") {

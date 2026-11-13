@@ -49,7 +49,7 @@
  *   node --experimental-strip-types scripts/vm.ts capacity --n N --cpus N --memory MIB
  *   node --experimental-strip-types scripts/vm.ts netcheck --image REF [--allow-host H]...
  *   node --experimental-strip-types scripts/vm.ts check-allow ENTRIES...
- *   node --experimental-strip-types scripts/vm.ts toolbox --image REF --out FILE [--preset SETS] [--required] [--packs DIRS]
+ *   node --experimental-strip-types scripts/vm.ts toolbox --image REF --out FILE [--preset SETS] [--required] [--packs DIRS] [--requires CAPS]
  *   node --experimental-strip-types scripts/vm.ts fuse-check --image REF   (exit 0 when a VM of the image has /dev/fuse, 1 when not)
  *   node --experimental-strip-types scripts/vm.ts catalog --image REF --sandbox DIR [--evidence DIR]... [--allow-host H]... [--memory MIB] [--run ID] [--registry FILE]
  *   node --experimental-strip-types scripts/vm.ts msb-path
@@ -1926,7 +1926,7 @@ function putAwayOnSignal(name: string): () => void {
  * host, which an agent in a VM never touches. Returns the check's exit code
  * (3: a required tool is missing) and the toolbox.json it wrote.
  */
-export async function imageToolbox(image: string, preset: string, required: boolean, packDirs: string[] = []): Promise<{ code: number; json: string; output: string; digest?: string }> {
+export async function imageToolbox(image: string, preset: string, required: boolean, packDirs: string[] = [], requires = ""): Promise<{ code: number; json: string; output: string; digest?: string }> {
   const M = await sdk();
   const { mkdtemp, copyFile } = await import("node:fs/promises");
   const tmp = await mkdtemp("/tmp/dfs-tb-");
@@ -1962,7 +1962,7 @@ export async function imageToolbox(image: string, preset: string, required: bool
       .detached(true)
       .volume("/tb", (v) => v.bind(realpathSync(tmp)))
       .create();
-    const out = await sandbox.exec("bash", ["/tb/toolbox.sh", "/tb/sbx", preset, ...(required ? ["--required"] : []), "--image", "/tb/image.json"]);
+    const out = await sandbox.exec("bash", ["/tb/toolbox.sh", "/tb/sbx", preset, ...(required ? ["--required"] : []), "--image", "/tb/image.json", ...(requires ? ["--requires", requires] : [])]);
     let json = await readFile(join(tmp, "sbx", "toolbox.json"), "utf8").catch(() => "");
     // Which image this was, by digest: the check describes that image, not a tag.
     const digest = await imageDigest(name);
@@ -3156,8 +3156,8 @@ async function main(): Promise<void> {
       const image = opt("--image");
       const preset = opt("--preset") ?? "dfir";
       const out = opt("--out");
-      if (!image || !out) throw new Error("toolbox needs --image REF --out FILE [--preset SETS] [--packs DIR:DIR] [--required]");
-      const r = await imageToolbox(image, preset, rest.includes("--required"), (opt("--packs") ?? "").split(":"));
+      if (!image || !out) throw new Error("toolbox needs --image REF --out FILE [--preset SETS] [--packs DIR:DIR] [--required] [--requires CAPS]");
+      const r = await imageToolbox(image, preset, rest.includes("--required"), (opt("--packs") ?? "").split(":"), opt("--requires") ?? "");
       if (r.json) await writeFile(out, r.json);
       // The script names the file at its guest path; the operator reads the host's.
       process.stderr.write(r.output.replaceAll("/tb/sbx/toolbox.json", out));
