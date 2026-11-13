@@ -530,7 +530,7 @@ install_signal_handlers(lambda signum: interrupted_answer(signum))
 # END SHARED STOP
 
 
-PARSER = "thumbcache_read/2"
+PARSER = "thumbcache_read/3"
 MAGIC = b"CMMM"
 INDEX_MAGIC = b"IMMM"
 DEADLINE_SECONDS = 100            # the manifest allows 120: the reads and the writes stop here, so that the page is placed and the answer printed before the harness ends it
@@ -766,13 +766,13 @@ def digest_at(fd, offset, length):
 
 
 def next_magic(fd, start, size):
-    """The offset of the next 'CMMM' at or after `start`, or None; and whether a byte that is not zero lies before it. Read in blocks, the clock
-    looked at between them (None, None when it ran out)."""
+    """The offset of the next 'CMMM' that lies whole between `start` and `size`, or `size` when there is none; and whether a byte that is not
+    zero lies before it. Nothing at or past `size` is read. Read in blocks, the clock looked at between them (None, None when it ran out)."""
     pos, nonzero, carry = start, False, b""
     while pos < size:
         if out_of_time():
             return None, None
-        chunk = os.pread(fd, BLOCK, pos)
+        chunk = os.pread(fd, min(BLOCK, size - pos), pos)
         if not chunk:
             break
         data = carry + chunk
@@ -868,7 +868,13 @@ def read_cache(path, rows, budget, extract, include_free, directory, shown_dir, 
         gaps = {"zero_bytes": 0, "other_bytes": 0, "other": 0}
         end = size if include_free or not header_bytes <= free <= size else free
         said["read_to_offset"] = end
+        # An entry's declared size can be larger than its parts (header, identifier, padding, data). The read goes on from the end of its parts,
+        # never from its declared end: what lies in the rest of its declared size (its slack) is read like any other stretch of the file. An entry
+        # that begins there is read as an entry and marked inside_entry_at; bytes there that are neither an entry nor zero are counted in
+        # bytes_not_in_an_entry; zeros there are the entry's own and are not counted.
+        slacks = []                                            # (offset of the entry, its declared end) of the entries whose slack is being read
         while pos < end:
+            slacks = [s for s in slacks if s[1] > pos]
             if out_of_time():
                 budget.stopped = "the tool's own clock (%d s) ran out" % DEADLINE_SECONDS
             if budget.stopped is None and budget.entries_left <= 0:
@@ -877,6 +883,19 @@ def read_cache(path, rows, budget, extract, include_free, directory, shown_dir, 
                 reasons.append("%s at offset %d of %d: the entries from there on were not read" % (budget.stopped, pos, size))
                 break
             head = pread(fd, entry_header, pos)
+            if head[:4] != MAGIC and slacks:
+                owner = slacks[-1][0]
+                at, nonzero = next_magic(fd, pos, min(min(s[1] for s in slacks), end))
+                if at is None:
+                    continue                                   # the clock ran out inside the search: said at the top of the loop
+                if nonzero:
+                    gaps["other"] += 1
+                    gaps["other_bytes"] += at - pos
+                    said["slack_stretches_not_zero"] = said.get("slack_stretches_not_zero", 0) + 1
+                    problem("%d byte(s) at offset %d lie inside the declared size of the entry at offset %d, after its parts, and are neither an entry nor "
+                            "zero: they were not read as one" % (at - pos, pos, owner))
+                pos = at
+                continue
             if head[:4] != MAGIC:
                 at, nonzero = next_magic(fd, pos, size)
                 if at is None:
@@ -893,6 +912,9 @@ def read_cache(path, rows, budget, extract, include_free, directory, shown_dir, 
             if first_usable and pos < first:
                 row["before_first_entry_offset"] = True
                 said["entries_before_first_entry_offset"] = said.get("entries_before_first_entry_offset", 0) + 1
+            if slacks:
+                row["inside_entry_at"] = slacks[-1][0]
+                said["entries_inside_another_entry"] = said.get("entries_inside_another_entry", 0) + 1
             said["entries"] += 1
             budget.entries_left -= 1
             PROGRESS["entries"] += 1
@@ -983,15 +1005,23 @@ def read_cache(path, rows, budget, extract, include_free, directory, shown_dir, 
                     break
             else:
                 row["image_type"] = None
+            if entry_size > inside:
+                row["slack_bytes"] = entry_size - inside
             rows.add(row)
-            if cut:
-                break
-            pos += entry_size
+            if cut and pos + inside > size:
+                break                                          # the file ends inside the entry's parts: there is nothing after them
+            if entry_size > inside:
+                slacks.append((pos, pos + entry_size))
+            pos += inside
         said["bytes_not_in_an_entry"] = gaps
         skipped_by_header = said.get("entries_before_first_entry_offset", 0)
         if skipped_by_header:
             problem("the header's first entry offset (%d) lies past %d entr(ies) that begin before it: a reader that starts at that offset skips them; they were "
                     "read here as entries and are marked before_first_entry_offset" % (first, skipped_by_header))
+        swallowed = said.get("entries_inside_another_entry", 0)
+        if swallowed:
+            problem("%d entr(ies) begin inside the declared size of another entry, after its parts: a reader that steps from entry to entry by the declared "
+                    "size skips them; they were read here as entries and are marked inside_entry_at (the offset of the entry whose size covers them)" % swallowed)
         if gaps["other"]:
             reasons.append("%d stretch(es) of the file (%d bytes) are neither an entry nor zero" % (gaps["other"], gaps["other_bytes"]))
         if said.get("entries_malformed"):
@@ -1004,12 +1034,14 @@ def read_cache(path, rows, budget, extract, include_free, directory, shown_dir, 
             reasons.append("the header's first entry offset was not usable, so the entries were found by search")
         if reasons:
             return ended("partial", "; ".join(reasons))
-        return ended("complete", "every entry from the end of the header to %s was read (%d, %d with an image)%s%s" % (
+        return ended("complete", "every entry from the end of the header to %s was read (%d, %d with an image)%s%s%s" % (
             "the end of the file" if end == size else "the header's first free offset (include_free is false: what lies past it was not read)",
             said["entries"], said["entries_with_image"],
             "" if not extract else "; every image was written" if said["entries_with_image"] else "",
             "" if not skipped_by_header else "; %d of them begin before the header's first entry offset (%d), which skips them: they are marked "
-                                             "before_first_entry_offset" % (skipped_by_header, first)))
+                                             "before_first_entry_offset" % (skipped_by_header, first),
+            "" if not swallowed else "; %d of them begin inside the declared size of another entry, which covers them: they are marked inside_entry_at"
+                                     % swallowed))
     finally:
         os.close(fd)
 
@@ -1118,13 +1150,15 @@ def main():
         status = "partial" if reasons else "complete"
         to_free = sum(1 for f in files if f.get("read_to_offset") != f.get("bytes"))
         skipped_by_header = sum(f.get("entries_before_first_entry_offset", 0) for f in files)
-        basis = "; ".join(reasons) if reasons else "every cache file found (%d) was read from the end of its header to %s; %d entr(ies), %d with an image%s%s%s" % (
+        swallowed = sum(f.get("entries_inside_another_entry", 0) for f in files)
+        basis = "; ".join(reasons) if reasons else "every cache file found (%d) was read from the end of its header to %s; %d entr(ies), %d with an image%s%s%s%s" % (
             len(files),
             "its end" if not to_free else "the header's first free offset in %d of them and to its end in the others (include_free is false: what lies past that "
                                           "offset was not read, and complete says nothing of it)" % to_free,
             sum(f["entries"] for f in files), sum(f["entries_with_image"] for f in files),
             ", every image written" if extract else ", none written (extract is false)",
             "" if not skipped_by_header else "; %d entr(ies) begin before their header's first entry offset, which skips them (marked before_first_entry_offset)" % skipped_by_header,
+            "" if not swallowed else "; %d entr(ies) begin inside the declared size of another entry, which covers them (marked inside_entry_at)" % swallowed,
             "" if not indexes else "; %d cache index file(s) beside them are named in not_caches and are not caches this tool reads" % len(indexes))
     answer = {
         "parser": PARSER,
@@ -1148,7 +1182,9 @@ def main():
         "note": "An entry is a rendering Explorer stored: a thumbnail or an icon, under a hash of the item it was made for. The cache does not hold the item's path "
                 "(Windows Search's index and the cache's own index tie a hash to a file, and neither is read here), and it gives no time. in_free_space marks an entry "
                 "past the offset the header gives for its first free byte: bytes of an earlier state of the cache, a candidate. before_first_entry_offset marks an "
-                "entry that begins before the offset the header gives for its first entry: the header skips it, and it was read all the same. An image's file is "
+                "entry that begins before the offset the header gives for its first entry: the header skips it, and it was read all the same. inside_entry_at marks an "
+                "entry that begins inside the declared size of another entry (the one at that offset), after its parts: a reader that steps by the declared "
+                "size skips it, and it was read all the same; slack_bytes is how much an entry's declared size exceeds its parts. An image's file is "
                 "named by this tool (files[].output_prefix, the entry's number, its hash), never by the cache file's name. The two checksums are copied, not verified.",
         **page,
     }

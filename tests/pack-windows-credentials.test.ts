@@ -642,6 +642,43 @@ test("a REAL cell of Infinity or NaN is written to the values file as text: ever
   });
 });
 
+test("a logins table with a column named rowid is read by its real row id: every row once, in order, a cell over the limit included; a table whose columns take all three row-id names is refused", async () => {
+  await withCwd(async (cwd) => {
+    const key = randomBytes(32);
+    const keyFile = secretFile(cwd, "work/k", key);
+    // Four rows whose own "rowid" column is NULL, a text, a number and a number, out of order; the first holds a cell over the limit of one
+    // cell. A reader that selects rowid reads that column instead: it orders the rows by it, and after the cell over the limit it looks for
+    // the row "rowid = NULL", finds none, and starts again from the first row, for ever (to its row bound).
+    py(
+      "import sqlite3, sys\nc = sqlite3.connect(sys.argv[1])\nc.execute('CREATE TABLE logins (rowid, origin_url, username_value, password_value BLOB)')\n" +
+        "c.execute('INSERT INTO logins VALUES (NULL, ?, zeroblob(?), NULL)', ('https://big.example/', 9 * 1024 * 1024))\n" +
+        "for i, own in enumerate(('x', -5, 3)):\n" +
+        "    c.execute('INSERT INTO logins VALUES (?,?,?,?)', (own, 'https://r%d.example/' % i, 'u%d' % i, bytes.fromhex(sys.argv[2 + i])))\n" +
+        "c.commit(); c.close()",
+      join(cwd, "shadow.db"),
+      ...SECRETS.map((s) => v10(key, s).toString("hex")),
+    );
+    const env = secretJob(cwd);
+    const { out } = await call("chromium_logins", cwd, { login_data: "shadow.db", key_file: keyFile }, env);
+    assert.deepEqual([out.rows_in_table, out.rows_read, out.every_row_read, out.decrypted, out.cells_over_limit], [4, 4, true, 3, 1], out.status_basis);
+    assert.deepEqual(out.rows.map((r: Answer) => [r.rowid, r.origin]), [[1, "https://big.example/"], [2, "https://r0.example/"], [3, "https://r1.example/"], [4, "https://r2.example/"]]);
+    assert.deepEqual(lines(join(env.OUT, "chromium_logins-values.jsonl")).map((v) => v.password), SECRETS);
+    assert.equal(out.status, "partial", "the cell over the limit is said");
+    assert.doesNotMatch(out.status_basis, /bound of \d+ rows|clock/);
+    assert.equal(out.parser, "chromium_logins/3");
+    // rowid, _rowid_ and oid all taken by columns: the real row id has no name left, and the table is refused rather than read by a column.
+    py(
+      "import sqlite3, sys\nc = sqlite3.connect(sys.argv[1])\nc.execute('CREATE TABLE logins (rowid, _rowid_, OID, origin_url, password_value BLOB)')\n" +
+        "c.execute('INSERT INTO logins VALUES (NULL, NULL, NULL, ?, ?)', ('https://a.example/', b'v10'))\nc.commit(); c.close()",
+      join(cwd, "all.db"),
+    );
+    const refused = await call("chromium_logins", cwd, { login_data: "all.db", key_file: keyFile }, secretJob(cwd));
+    assert.equal(refused.out.status, "failed");
+    assert.match(refused.out.status_basis, /columns named rowid, _rowid_ and oid, which take all three of SQLite's names for its row id/);
+    assert.equal(refused.out.row_count, 0);
+  });
+});
+
 test("dpapi_masterkey: a SID with a line break is refused, a path that is not there is said, and a blob file this tool refuses is refused before a key is written, the values files named", async () => {
   await withCwd(async (cwd) => {
     const p = profile(cwd);

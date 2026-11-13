@@ -134,7 +134,7 @@ test("a Windows 10 cache: every entry is a row, every stored image is written by
     assert.equal(out.status, "complete", out.status_basis);
     assert.equal(out.exit, 0);
     assert.match(out.status_basis, /every cache file found \(1\) was read from the end of its header to its end; 4 entr\(ies\), 3 with an image, every image written/);
-    assert.equal(out.parser, "thumbcache_read/2");
+    assert.equal(out.parser, "thumbcache_read/3");
     const [said] = out.files;
     assert.deepEqual([said.format_version, said.windows, said.cache_type, said.size_class_from_header, said.size_class_from_name, said.cache_family_from_name],
       ["0x20", "Windows 10 and later", 6, "1280", "1280", "thumbcache"]);

@@ -1240,7 +1240,7 @@ def read_keys_file(path):
 # END CREDENTIAL IO
 
 
-PARSER = "chromium_logins/2"
+PARSER = "chromium_logins/3"
 DEADLINE_SECONDS = 45             # the manifest allows 60: the reads stop here, so that the page is placed and the answer printed before the harness ends the tool
 VALUES_NAME = "chromium_logins-values.jsonl"
 DEFAULT_LIMIT = 100
@@ -1366,41 +1366,46 @@ def sidecars(path):
     return looked, found
 
 
-def login_records(conn, columns):
-    """Every row of the logins table in rowid order, as (fields, cells over the limit). `columns` is [(the reader's name, the table's own name)].
+ROWID_NAMES = ("rowid", "_rowid_", "oid")    # SQLite's three names for a table's row id; a column of the table with one of them hides that one
+
+
+def login_records(conn, columns, rowid="rowid"):
+    """Every row of the logins table in rowid order, as (fields, cells over the limit). `columns` is [(the reader's name, the table's own name)];
+    `rowid` is the one of SQLite's names for the row id that no column of the table takes (a column named rowid would be read in its place).
     A cell over CELL_MAX (SQLITE_LIMIT_LENGTH) ends a statement that selects it, so the row that holds one is read cell by cell: every cell
     that fits is read as it is, and the one that does not is None in the fields and is described by its type and, for a BLOB, its length
     (SQLite gives both without loading the value; the length of a TEXT is a count of characters, which needs the value, so it stays None).
     The rows after it are read by a new statement that starts past it, so one such cell loses no other row and no other cell."""
     names = ["rowid"] + [name for name, _real in columns]
-    select = "SELECT rowid, %s FROM logins" % ", ".join('"%s"' % real for _name, real in columns)
+    select = "SELECT %s, %s FROM logins" % (rowid, ", ".join('"%s"' % real for _name, real in columns))
     last = None
     while True:
         try:
             # (the statement's first step is taken by execute itself, so it is inside the try as well)
-            cursor = conn.execute(select + " ORDER BY rowid") if last is None else conn.execute(select + " WHERE rowid > ? ORDER BY rowid", (last,))
+            cursor = (conn.execute(select + " ORDER BY %s" % rowid) if last is None else
+                      conn.execute(select + " WHERE %s > ? ORDER BY %s" % (rowid, rowid), (last,)))
             for record in cursor:
                 last = record[0]
                 yield dict(zip(names, record)), {}
             return
         except sqlite3.DataError:
             pass                                               # SQLITE_TOOBIG: the next row holds a cell over the limit
-        found = (conn.execute("SELECT rowid FROM logins ORDER BY rowid LIMIT 1") if last is None else
-                 conn.execute("SELECT rowid FROM logins WHERE rowid > ? ORDER BY rowid LIMIT 1", (last,))).fetchone()
+        found = (conn.execute("SELECT {0} FROM logins ORDER BY {0} LIMIT 1".format(rowid)) if last is None else
+                 conn.execute("SELECT {0} FROM logins WHERE {0} > ? ORDER BY {0} LIMIT 1".format(rowid), (last,))).fetchone()
         if found is None:
             return
         last = found[0]
         fields, over = {"rowid": last}, {}
         for name, real in columns:
             try:
-                got = conn.execute('SELECT "%s" FROM logins WHERE rowid = ?' % real, (last,)).fetchone()
+                got = conn.execute('SELECT "%s" FROM logins WHERE %s = ?' % (real, rowid), (last,)).fetchone()
                 fields[name] = got[0] if got else None
             except sqlite3.DataError:
                 fields[name] = None
                 about = {"type": None, "length": None}
                 for what in ("typeof", "length"):
                     try:
-                        got = conn.execute('SELECT %s("%s") FROM logins WHERE rowid = ?' % (what, real), (last,)).fetchone()
+                        got = conn.execute('SELECT %s("%s") FROM logins WHERE %s = ?' % (what, real, rowid), (last,)).fetchone()
                         about["type" if what == "typeof" else "length"] = got[0] if got else None
                     except sqlite3.DataError:
                         pass
@@ -1585,17 +1590,24 @@ def main():
             else:
                 # SQLite matches a column's name without regard to case, so this reader does too: the fields are named as the reader names them
                 # (COLUMNS), and the table's own spelling is what the statements select.
-                columns = [(r[1].lower(), r[1]) for r in conn.execute("PRAGMA table_info(logins)")
-                           if isinstance(r[1], str) and r[1].lower() in COLUMNS and '"' not in r[1]]
+                info = conn.execute("PRAGMA table_info(logins)").fetchall()
+                columns = [(r[1].lower(), r[1]) for r in info if isinstance(r[1], str) and r[1].lower() in COLUMNS and '"' not in r[1]]
                 present = [name for name, _real in columns]
+                # A column named rowid (or _rowid_, or oid) is read where its name is written, in place of the row id: the first of the three
+                # names that no column takes is the one the rows are read in order by.
+                taken = {r[1].lower() for r in info if isinstance(r[1], str)}
+                rowid_name = next((n for n in ROWID_NAMES if n not in taken), None)
                 if "password_value" not in present or "origin_url" not in present:
                     read_error = "the logins table has no origin_url or no password_value column: not a layout this reader knows"
+                elif rowid_name is None:
+                    read_error = ("the logins table has columns named rowid, _rowid_ and oid, which take all three of SQLite's names for its row id: its rows "
+                                  "cannot be read in order by their row id, and none was read (not a layout Chromium writes)")
         except sqlite3.Error as exc:
             read_error = "the schema could not be read (%s)" % type(exc).__name__
         if read_error is None:
             try:
                 declared = conn.execute("SELECT count(*) FROM logins").fetchone()[0]
-                records = login_records(conn, columns)
+                records = login_records(conn, columns, rowid_name)
                 while True:
                     if out_of_time():
                         stopped = "the tool's own clock (%d s) ran out after %d row(s)" % (DEADLINE_SECONDS, counts["rows"])
