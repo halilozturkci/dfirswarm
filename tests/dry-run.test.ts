@@ -1890,6 +1890,21 @@ test("wait returns on a post, on the sentinel, and on a lost claim", async () =>
     assert.equal(woke.reason, "post");
     assert.match(woke.detail, /main/);
 
+    // The catalogue's revision announcement to everyone is news, not a reason to wake; a harness post that asks is.
+    await readInbox(a0);
+    const quiet = waitForSwarmChange(a0, { seconds: 1, pollMs: 50 });
+    setTimeout(() => {
+      void systemPost(root, { tag: "result", to: "all", body: "Catalogue revision 7: challimage.ad1 members — complete. Search it with catalog_search." });
+    }, 100);
+    const slept = await quiet;
+    assert.equal(slept.reason, "timeout", "a catalogue revision post did not wake the waiter");
+    assert.equal(slept.passed, 1, "and it is counted as passed, to be delivered with the next inbox");
+    const loud = waitForSwarmChange(a0, { seconds: 5, pollMs: 50 });
+    setTimeout(() => {
+      void systemPost(root, { tag: "ask", to: "all", body: "The operator supplied a program: mat-0001." });
+    }, 100);
+    assert.equal((await loud).reason, "post", "another harness post to everyone still wakes");
+
     // Our own lease lapsing is worth waking up for: someone may have taken it.
     await readInbox(a0);
     await claimFile(a0, HELLO_REL, { reason: "write hello", seconds: 1 });

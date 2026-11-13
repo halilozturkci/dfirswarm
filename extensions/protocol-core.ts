@@ -5536,6 +5536,18 @@ export function postIsFor(to: string, agentId: string, team: ReadonlyArray<{ id:
   return !team.some((m) => m.id.toLowerCase() !== me && named(m));
 }
 
+/**
+ * A harness announcement to everyone that is news for whoever looks, not a reason to wake: the catalogue's revision
+ * posts. In the run sf4406b 51 of them went to all eight seats, each waking every waiting seat for a full turn at
+ * 55,000 to 150,000 tokens; a third to a half of all waits returned within two seconds. The post is still delivered
+ * with the next inbox or wait that returns for another reason.
+ */
+export function quietAnnouncement(post: { from: string; to: string; body: string }): boolean {
+  if (post.from !== SYSTEM_AGENT) return false;
+  if (!/^\s*(all|everyone|team)?\s*$/i.test(post.to ?? "")) return false;
+  return /^Catalogue revision \d+\b/.test(post.body.trimStart());
+}
+
 export const WAIT_MAX_SECONDS = 300;
 export const WAIT_POLL_MS = 500;
 
@@ -5609,7 +5621,7 @@ async function waitLoop(
           if (!(n > (seen[thread] ?? 0) && n <= id)) continue;
           const post = await readPost(file).catch(() => null);
           // A post that cannot be read is not known to be someone else's.
-          if (!post || postIsFor(post.to, ctx.agentId, team)) {
+          if (!post || (postIsFor(post.to, ctx.agentId, team) && !quietAnnouncement(post))) {
             forMe = true;
             break;
           }

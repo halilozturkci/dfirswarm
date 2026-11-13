@@ -581,13 +581,27 @@ function withReason(head: string, why: string, max: number, id: string): string 
  * is material and is weighed as such, and how to run it, since a sealed file
  * has no execute bit and no place a job can read it from executes.
  */
+/**
+ * The files of a supply as a post names them: the programs first (bin/, sbin/, or a file at the top), at most
+ * POST_FILES_MAX of them with their sha256, and the rest as a count with where every one is listed. A bundle of a
+ * program and its eighty libraries made a post of 25,000 characters that every seat's next inbox carried.
+ */
+export const POST_FILES_MAX = 6;
+export function postFileList(id: string, files: ReadonlyArray<{ path: string; bytes: number; sha256: string }>): string {
+  const rank = (p: string) => (/^(s?bin)\//.test(p) ? 0 : p.includes("/") ? 2 : 1);
+  const ordered = [...files].sort((a, b) => rank(a.path) - rank(b.path) || a.path.localeCompare(b.path));
+  const shown = ordered.slice(0, POST_FILES_MAX).map((f) => `${f.path} (${f.bytes} bytes, sha256 ${f.sha256})`);
+  const rest = files.length - shown.length;
+  return `${shown.join("; ")}${rest > 0 ? `; and ${rest} more (store/imports/${id}/manifest.json lists every file with its sha256)` : ""}`;
+}
+
 function toolPostBody(rec: MaterialRecord, tool: ToolProvenance, entry: number | null, use: string): string {
   const id = rec.import;
   const files = rec.files;
   const inputs = JSON.stringify([files.length === 1 ? `import:${id}/${files[0]!.path}` : `import:${id}`]);
   const cite = files.length === 1 ? `import:${id}/${files[0]!.path}` : `import:${id}/<file>`;
   return [
-    `TOOL SUPPLIED as import:${id} (${rec.class}; use: ${use}), ${files.length} file(s): ${files.map((f) => `${f.path} (${f.bytes} bytes, sha256 ${f.sha256})`).join("; ")}, by ${rec.supplied_by}: ${rec.why}.`,
+    `TOOL SUPPLIED as import:${id} (${rec.class}; use: ${use}), ${files.length} file(s): ${postFileList(id, files)}, by ${rec.supplied_by}: ${rec.why}.`,
     `Where it came from, as the operator states it: ${tool.source}.`,
     tool.built ? `How it was built, as the operator states it: ${tool.built}.` : "How it was built: not stated by the operator.",
     tool.checked.length ? `Hashes the operator gave, each checked against the bytes sealed: ${tool.checked.join(", ")}.` : "Hashes the operator gave: none; the harness holds the bytes to the sha256 each had before it was copied.",

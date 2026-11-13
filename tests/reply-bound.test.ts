@@ -71,3 +71,18 @@ test("a hand-off carries the seat's own part of the lead register and the finish
   assert.ok(handoffLeads(`Yours: ${"L-1 active; ".repeat(2000)}`).length <= HANDOFF_LEADS_MAX);
   assert.equal(handoffLeads("Finish: READY by the registers; s1 coordinates it."), "Finish: READY by the registers; finish status lists what holds it.");
 });
+
+test("a tool-supply post names the programs and counts the libraries (a bundle's post was 25,000 characters)", async () => {
+  const { postFileList, POST_FILES_MAX } = await import("../scripts/material.ts");
+  const sha = "a".repeat(64);
+  const files = [
+    ...Array.from({ length: 80 }, (_, i) => ({ path: `lib/lib${String(i).padStart(2, "0")}.so.1`, bytes: 1000 + i, sha256: sha })),
+    { path: "bin/zbarimg", bytes: 50_000, sha256: sha },
+    { path: "PACKAGES.txt", bytes: 300, sha256: sha },
+  ];
+  const text = postFileList("mat-0002", files);
+  assert.ok(text.startsWith("bin/zbarimg (50000 bytes, sha256 "), "the program comes first");
+  assert.match(text, new RegExp(`and ${files.length - POST_FILES_MAX} more \\(store/imports/mat-0002/manifest\\.json lists every file with its sha256\\)$`));
+  assert.ok(text.length < 1000, `${text.length} characters`);
+  assert.equal(postFileList("mat-0001", [files[80]!]), `bin/zbarimg (50000 bytes, sha256 ${sha})`);
+});

@@ -314,6 +314,35 @@ export function shellTimeout(asked: unknown, env: NodeJS.ProcessEnv = process.en
   return { seconds: asked, why: null };
 }
 /**
+ * Which of job_run's three forms a call is: a command, a tool with its args, or an import. The open-weight seats sent
+ * a placeholder command beside a tool call ("true", "echo run", the tool's own name) or args with no tool 27 times in
+ * five runs, each refused with "one of them" and no word on which. A placeholder beside a tool is dropped and the call
+ * runs as the tool call it plainly is; the other mixes are refused with the form to send.
+ */
+export function jobRunShape(p: { command?: unknown; tool?: unknown; args?: unknown; import?: unknown }): { ok: true; dropped?: "command" } | { ok: false; reason: string } {
+  const command = typeof p.command === "string" ? p.command.trim() : "";
+  const tool = typeof p.tool === "string" ? p.tool.trim() : "";
+  const imp = typeof p.import === "string" ? p.import.trim() : "";
+  const hasArgs = p.args !== undefined && p.args !== null && typeof p.args === "object" && Object.keys(p.args as object).length > 0;
+  const forms = [command, tool, imp].filter(Boolean).length;
+  if (forms === 1) {
+    if (hasArgs && !tool) return { ok: false, reason: `args are a tool's parameters, and this call names no tool: send job_run(tool: "<name>", args: {...}) with no command (tools lists the names; a command takes its arguments on its own line, with no args)` };
+    return { ok: true };
+  }
+  if (forms === 0) {
+    if (hasArgs) return { ok: false, reason: `args with no tool: name the tool the args are for, job_run(tool: "<name>", args: {...}) (tools lists the names)` };
+    return { ok: false, reason: `nothing to run: send exactly one of command (a shell command line), tool (a tool's name, with its parameters in args) or import (a file to seal)` };
+  }
+  if (tool && command && !imp) {
+    const placeholder = /^(true|:|#.*|echo(\s.*)?|exit 0)?$/i.test(command) || command === tool || command === `${tool} --help`;
+    if (placeholder && hasArgs) return { ok: true, dropped: "command" };
+    if (command.split(/\s+/)[0] === tool) return { ok: false, reason: `${tool} is a pack tool: it takes its parameters in args, not on a command line. Send job_run(tool: "${tool}", args: {...}) with no command (tools(name: "${tool}") gives its parameters)` };
+    return { ok: false, reason: `a job is one thing: either the tool ${tool} with its args, or the command. Send job_run(tool: "${tool}", args: {...}) with no command to run the tool, or job_run(command: "...") with no tool to run the command` };
+  }
+  return { ok: false, reason: `a job is one of command, tool (with its args) or import, and this call gives ${[command && "command", tool && "tool", imp && "import"].filter(Boolean).join(" and ")}: send one, and the other as a job of its own` };
+}
+
+/**
  * A shell command that waits on a job by sleeping in a loop over the store or a job's files: 42 such loops cost one run
  * 117 seat-minutes. job_status waits for a job, and `wait` wakes on its result post. Returns why it is refused, or null.
  */
@@ -2789,7 +2818,7 @@ export default function (pi: ExtensionAPI) {
       inputs: Type.Optional(Type.Array(Type.String(), { description: "What it reads, and all it is given: input:<path> (input:<dir>/ for a directory), job:<id>[/<path>], import:<id>[/<path>], member:<gen>#<n>, sha256:<hex>, work/<you>/<path>, tool-output/<you>/<path>; [] for nothing. Left out, or [\"all\"]: everything you see" })),
       timeout_seconds: Type.Optional(Type.Integer({ description: "Stop it after this long (default 900, at most 14400); 120 or less takes the worker kept for short jobs" })),
       network: Type.Optional(Type.Union([Type.Literal("off"), Type.Literal("allowlist")], { description: "off (default) or the run's allowlist" })),
-      profile: Type.Optional(Type.String({ description: "The job image to run in, by profile, as SWARM.md's Job images lists them (disk, memory, mobile, …); left out, the smallest job image whose record holds what the command runs, else the one that holds every pack" })),
+      profile: Type.Optional(Type.String({ description: "The job image to run in, by profile, as SWARM.md's Job images lists them (SWARM.md names the ones this run has; a name it does not list is refused); left out, the smallest job image whose record holds what the command runs, else the one that holds every pack" })),
       wait_seconds: Type.Optional(Type.Integer({ description: "How long to wait here for it (default 12, at most 100)" })),
       lead: Type.Optional(Type.String({ description: "The lead (L-<n>, one you hold) this job is run under; left out, the one active lead you hold, if you hold exactly one. A lead's jobs wait for an interpretation (record with interprets) before the run may end." })),
       net_grants: Type.Optional(Type.Array(Type.String(), { description: "Network grants (N-<k>) you asked for a job (net_request for: \"job\"): bound to this job, which makes each one's exact request with python3 /job/net_fetch.py N-<k> --out \"$OUT/<name>\"; its worker reaches the fetch service on the host and nothing else of it" })),
@@ -2799,11 +2828,13 @@ export default function (pi: ExtensionAPI) {
     }),
     async execute(_id, params, signal, _onUpdate, toolCtx: ToolCtx) {
       const started = Date.now();
-      if ([params.command, params.tool, params.import].filter(Boolean).length !== 1) {
-        const refused = { ok: false as const, reason: "give command, tool (with its args) or import, one of them" };
+      const shape = jobRunShape(params);
+      if (!shape.ok) {
+        const refused = { ok: false as const, reason: shape.reason };
         await logEvent(toolCtx.cwd, agentId, "job_run", params, refused, Date.now() - started);
         return { content: [{ type: "text" as const, text: refused.reason }], details: refused, isError: true };
       }
+      if (shape.dropped) delete (params as { command?: string }).command;
       // A tool's output path in the agent's own directories (work/<id>/x, as
       // its manifest asks for) becomes a place under {OUT}, as it does when a
       // direct call is run again as a job: a worker writes only its $OUT. The
