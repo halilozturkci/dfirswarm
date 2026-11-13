@@ -1,7 +1,7 @@
 {
   "id": "reverse-engineering",
   "name": "Reverse Engineering Pack",
-  "version": "1.16.10",
+  "version": "1.16.11",
   "description": "Static triage of a binary or a document under quarantine: what the file actually is, PE and ELF structure, entropy and packing, obfuscated strings, capability mapping, macros and embedded objects, and rules. Nothing from the evidence is ever executed.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -34,8 +34,8 @@
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
       "README.md": "1fdc133919133b25b549da60485eacdd1d5acfda8c49a6dca8d6e3871816ff6f",
       "goals/sample-triage.md": "0f6798ec18204b277c9430d5a74359cf7c5142131ccfc5071293b3dd1bd0ad12",
-      "recipes/capa-floss/recipe.json": "f626becf2fa5a237cf3a3d2ed7510223894f4d19626e72a51bd9520d025e79ce",
-      "recipes/capa-floss/run.py": "276f7efd547580b5c4342082531a0132f76f99cd2e1c2555e12725fc236aee46",
+      "recipes/capa-floss/recipe.json": "897e5b9c4f1b76605e54356e239049e26551722c346d6b5bf58f2d01081d6288",
+      "recipes/capa-floss/run.py": "a7b4bea05c2b4c8fdd3169fc409fad0c6600b2a837d77ab39523f1b2c60f3409",
       "recipes/static-binary/recipe.json": "9de0c31c09c68873079b1c4479539b376ad3508aa8553c1f8da0f507d0e2f387",
       "recipes/static-binary/run.py": "09d4502f251c0f12df24a8eda5898a20b54f4535d1b5ac47e7e8746f978acf6d",
       "requires/host.json": "f054043585f4b96fff99c2fefda4e064b5e14e741e34cdd59f3b78d93ab066fc",

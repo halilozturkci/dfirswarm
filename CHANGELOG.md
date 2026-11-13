@@ -6,10 +6,6 @@ All notable changes to this project. The format follows
 
 ## [Unreleased]
 
-### Security: `programs` takes supplied programs only
-
-- `job_run(programs: …)` took any `import:mat-<n>`, so a seat could put operator material that `material add` sealed as data on `PATH` and `LD_LIBRARY_PATH` of a pack-tool job. It now takes an import only when its `material.json` holds the `tool` record that `swarm.sh tool-supply` writes; other material is refused with the reason and is read by naming it in `inputs` (`tests/job-programs.test.ts`).
-
 ### Added: the programs a memory case asked for, and Volatility's Windows symbol tables, in the images
 
 A run on a Windows memory image, a capture and a logical disk image asked for programs no image held: a steganography extractor, an AES key-schedule finder, a compiler, and the symbol tables that Volatility's Windows plugins need when a VM has no network. Each is in the image that fits it now: `gcc` and `make` in memory and `re`, `aeskeyfind` in memory and `full`, `steghide` and Pillow in every image, the symbol tables in memory and `full` and only for kernels of 2019 and earlier.

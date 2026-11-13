@@ -178,3 +178,16 @@ reserve, never below 4 GiB (`SWARM_JOB_OUT_QUOTA_MB` sets it). The job's accessi
 The skills experiment needs an arm that has the packs' tools and recipes and none of their notes. `--pack-skills off` leaves the skill
 index out of the prompt and registers no `skill` tool and no cards; it is recorded as `pack_skills` in the registry and reaches the seats'
 VMs.
+
+### Security: `programs` takes supplied programs only
+
+`job_run(programs: …)` took any `import:mat-<n>`, so a seat could put operator material that `material add` sealed as data on the
+`PATH` and `LD_LIBRARY_PATH` of a pack-tool job. It now takes an import only when its `material.json` holds the `tool` record that
+`swarm.sh tool-supply` writes; other material is refused with the reason, and is read by naming it in `inputs`
+(`tests/job-programs.test.ts`).
+
+### Fixed: a stop during capa-floss's version probe leaves no hidden file (reverse-engineering)
+
+The recipe's stop ends with `os._exit`, past the `finally` that removes the two `.version-*` files its `--version` probe writes; a
+SIGTERM in that window left one in the output directory. The probe's files are now listed with the receipt's temporary files, which the
+stop's last word removes.
