@@ -2349,9 +2349,41 @@ export function disputeWords(d: DisputeInForce): string {
 
 export type LedgerActInput = { seq?: number | string; how?: string; why?: string; refs?: string[] | string; withdraw?: boolean; review?: unknown; strength?: unknown; answer_review?: unknown; second_review_why?: string };
 
-/** The standing entries an answer cites that were recorded for its own question (`id`, its section key). */
+/**
+ * The coverage record that carries a superseded one an answer cites, or null:
+ * the standing correction of a coverage record, itself a coverage record, for
+ * the same questions and at the same coverage (complete, partial, …). A
+ * coverage record is revised to name what a sweep found, and on the run
+ * sf4406b each revision made the answer resting on it be written again with
+ * the same value (18 versions of one answer in an hour, each cutting the
+ * report's acknowledgements). Such a revision does not change what the answer
+ * rests on: the answer rests on the record as it now stands, which is still
+ * reviewed (an unreviewed correction holds the negative), still swept, and
+ * still read by the gates in place of the one cited. A correction that
+ * changes the questions or the coverage is not carried: the answer is weighed
+ * again.
+ */
+export function carriedCoverage(t: LedgerEntry, bySeq: Map<number, LedgerEntry>, replaced: Map<number, number>): LedgerEntry | null {
+  if (t.kind !== "coverage" || !replaced.has(t.seq)) return null;
+  const c = bySeq.get(standingSeq(t.seq, replaced));
+  if (!c || c.kind !== "coverage" || c.seq === t.seq) return null;
+  const qs = (e: LedgerEntry) => [...new Set((e.answers ?? []).map((x) => sectionKey(x)))].sort().join("\u0000");
+  if (qs(c) !== qs(t)) return null;
+  if (String((c as { coverage?: unknown }).coverage ?? "") !== String((t as { coverage?: unknown }).coverage ?? "")) return null;
+  return c;
+}
+
+/** The standing entries an answer cites that were recorded for its own question (`id`, its section key); a coverage record carried by its correction (carriedCoverage) is that correction. */
 export function citedForQuestion(a: LedgerEntry, bySeq: Map<number, LedgerEntry>, replaced: Map<number, number>, id: string): LedgerEntry[] {
-  return (a.support ?? []).map((x) => bySeq.get(x.seq)).filter((e): e is LedgerEntry => Boolean(e) && !replaced.has((e as LedgerEntry).seq) && ((e as LedgerEntry).answers ?? []).some((x) => sectionKey(x) === id));
+  const out: LedgerEntry[] = [];
+  for (const x of a.support ?? []) {
+    const e = bySeq.get(x.seq);
+    if (!e) continue;
+    const now = replaced.has(e.seq) ? carriedCoverage(e, bySeq, replaced) : e;
+    if (!now || out.includes(now)) continue;
+    if ((now.answers ?? []).some((q) => sectionKey(q) === id)) out.push(now);
+  }
+  return out;
 }
 
 /**
@@ -3039,7 +3071,7 @@ export function answerProblems(entries: LedgerEntry[], disputes: LedgerDispute[]
     }
     for (const [edges, role, citedAs] of [[a.support ?? [], "rests on", "support"], [a.limitations ?? [], "is bounded by", "limitation"]] as const) {
       for (const edge of edges) {
-        const t = bySeq.get(edge.seq);
+        let t = bySeq.get(edge.seq);
         if (!t) {
           out.push(`it ${role} E-${edge.seq}, which is not in the ledger`);
           continue;
@@ -3050,10 +3082,17 @@ export function answerProblems(entries: LedgerEntry[], disputes: LedgerDispute[]
         }
         if (replaced.has(t.seq)) {
           const now = standingSeq(t.seq, replaced);
-          if (!cited.has(now)) out.push(`it ${role} E-${t.seq}, superseded by #${now}, and does not cite the correction`);
-          continue;
+          if (cited.has(now)) continue;
+          // A coverage record revised for the same questions and coverage carries the answer (carriedCoverage): what follows is read on the
+          // correction, which the answer now rests on.
+          const carried = carriedCoverage(t, bySeq, replaced);
+          if (!carried) {
+            out.push(`it ${role} E-${t.seq}, superseded by #${now}, and does not cite the correction`);
+            continue;
+          }
+          t = carried;
         }
-        const against = disputed.get(edge.hash);
+        const against = disputed.get(t.hash ?? edge.hash);
         if (against?.length && !qualified(t.seq)) out.push(`it ${role} E-${t.seq}, disputed by ${against.map(disputeWords).join("; ")}`);
         const bad = failed.get(t.seq);
         if (bad?.length && !qualified(t.seq) && failedJobIsDefect(citedAs)) out.push(`it ${role} E-${t.seq}, which rests on the kept output of a job that did not succeed (${bad.join(", ")}) and says nothing of it`);
@@ -4683,7 +4722,7 @@ export function ledgerGate(o: { entries: LedgerEntry[]; attestations: LedgerAtte
             section: sec.section,
             seqs: [a.seq, c.seq],
             what: `answer #${a.seq} (${sec.section}) is ${NB.resultWords(result)}, and ${said.join("; and ")}`,
-            fix: `examine each object the sweep names and record what it showed: one entry per object (a finding, an event or a limitation whose refs name the object itself), or one absence whose refs list several (a search that found nothing that bears on the question in them), written after the sweep; then record the coverage again with supersedes=${c.seq} naming each object (in refs, which hold 20, or in result_refs, which hold 200 and where an object named counts the same: put them there rather than drop one named before), with what it showed: those entries in result_refs (and coverage_actual), and the answer again with supersedes=${a.seq} citing it; or record the answer again on what those objects show`,
+            fix: `examine each object the sweep names and record what it showed: one entry per object (a finding, an event or a limitation whose refs name the object itself), or one absence whose refs list several (a search that found nothing that bears on the question in them), written after the sweep; then record the coverage again with supersedes=${c.seq} naming each object (in refs, which hold 20, or in result_refs, which hold 200 and where an object named counts the same: put them there rather than drop one named before), with what it showed: those entries in result_refs (and coverage_actual), and leave the answer as it is when its value and the coverage stay the same (it stands on the revised record); record it again with supersedes=${a.seq} only when what those objects show changes it`,
             named_by: [],
           });
         } else {

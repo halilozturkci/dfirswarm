@@ -93,3 +93,11 @@ is read; sweeps that start while a listing is made share it. Three sweeps at onc
 `status.json`, says a crossing of three quarters of its heap on the trace (`hub_memory_high`), and is started with a heap snapshot near its
 limit, which `swarm.sh stop` keeps under `~/.dfirswarm/diagnostics/<run>/`, out of the run. A seat told its file-history quota is spent sends
 later revisions as their hash, not their bytes.
+
+### Fixed: an answer stands on a coverage record revised for the same questions at the same coverage
+
+A coverage record revised to name what a store sweep found took down the answer resting on it, which then had to be written again with the
+same value, and each new answer moved the fingerprint the summary and the narrative are bound to: on one run one answer had 18 versions in
+an hour, and the finish line's acknowledgements were cut each time. A coverage record superseded by a coverage record for the same questions
+at the same coverage now carries the answer: the answer rests on the correction as it stands, which is still reviewed, swept and read by
+the gates, and is weighed again only when the questions or the coverage change. The sweep's fix says to leave the answer as it is then.
