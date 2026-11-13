@@ -250,11 +250,13 @@ export function normalizeProviderError(reason: string): string {
  * the seat itself, or the hub (a lead reclaimed from a stale holder), says
  * otherwise.
  */
-export function providerErrorPost(agentId: string, model: string, reason: string): string {
+export function providerErrorPost(agentId: string, model: string, reason: string, harness?: string): string {
+  // A refusal of the request's shape (too many images) is not the provider's weather: it comes again on every turn until the request changes,
+  // so "only this turn failed" would be false; the harness says what it changed instead.
   return (
     `PROVIDER ERROR: ${agentId}'s turn on ${model} ended with: ${reason}. ` +
-    `Nothing this agent or a peer does will change that: it is the provider answering, not the harness. ` +
-    `Only this turn failed. ${agentId}'s work, its leads and its claims stand as its own until ${agentId} or the hub says otherwise; ` +
+    (harness ? `${harness} ` : `Nothing this agent or a peer does will change that: it is the provider answering, not the harness. Only this turn failed. `) +
+    `${agentId}'s work, its leads and its claims stand as its own until ${agentId} or the hub says otherwise; ` +
     `do not take them over on the strength of this post. If ${agentId} stays silent, its leads show as stale in \`leads\` and can be reclaimed from there.`
   );
 }

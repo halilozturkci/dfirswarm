@@ -51,3 +51,11 @@ has no limit unless the model names one, and the watchdog leaves a seat its pane
 a limit (900 s when it names none, 1800 s at most; `SWARM_SHELL_TIMEOUT_S`, `SWARM_SHELL_TIMEOUT_MAX_S`), and one stopped there is told that
 longer work is a job (`shell_timeout`). The watchdog says a seat that is working with nothing on its session or the trace past
 `--call-stall-sec` (2400 s) once per silence, on the board and the trace (`call_stalled`).
+
+### Fixed: a seat that read many images is no longer refused on every turn after
+
+A seat read 71 images with `read`; its provider takes 32 a request, and since the context was the same on each turn it was refused six times
+and lost for the run's last 74 minutes, while the board said "only this turn failed". A model call now carries the newest 24 images at
+most (`SWARM_MAX_IMAGES`, 0 for no limit): past that the oldest are sent as a line naming them, down to half at a time so the history the
+provider caches changes rarely, and the session keeps them all. A refusal for too many images lowers the seat's limit to the provider's
+number (`image_cap`), and the board says what the harness changed.

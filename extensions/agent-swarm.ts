@@ -310,6 +310,55 @@ export function shellTimeoutNote(l: ShellLimit): string {
   return `The call was stopped at its limit: ${was}. Run longer work as a job (job_run with command, or a tool): it has a limit of its own, its output is kept in the store, and you go on working while it runs (job_status, or wait for its post).`;
 }
 
+/**
+ * Images a model call carries, at most (SWARM_MAX_IMAGES; 0 for no limit). A
+ * provider refuses a request over its own limit, and the context is the same
+ * on the next turn, so every turn after is refused too: a seat of the run
+ * sf4406b read 71 images with `read`, its provider took 32, and it was refused
+ * six times and lost for the last 74 minutes. Past the limit the oldest images
+ * are left out of what the model is sent (the session keeps them), each as a
+ * line that names it; a provider's own number in a refusal lowers the limit.
+ */
+export const MAX_IMAGES_DEFAULT = 24;
+export function imageLimit(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(env.SWARM_MAX_IMAGES);
+  return env.SWARM_MAX_IMAGES !== undefined && env.SWARM_MAX_IMAGES.trim() !== "" && Number.isInteger(n) && n >= 0 ? n : MAX_IMAGES_DEFAULT;
+}
+/** The provider's own limit, from its refusal ("at most 32 images per request"), or null. */
+export function providerImageLimit(reason: string): number | null {
+  const m = /at most (\d+) images?\b/i.exec(reason) ?? /\btoo[_ ]many[_ ]images\b.*?\b(\d+)\b/i.exec(reason);
+  if (m) return Number(m[1]);
+  return /\btoo[_ ]many[_ ]images\b/i.test(reason) ? 0 : null;
+}
+export const IMAGE_LEFT_OUT = "[an image left out of this call: the call carries the newest {cap} images only, the provider's limit. The session keeps it; read the file again if you need to see it.]";
+/**
+ * The messages with the oldest images replaced by a line; how many were left
+ * out. Past `cap` the oldest go until half of it is left, and the same number
+ * goes on later calls (`before`, the last call's) until the cap is passed
+ * again: the history the model is sent changes at one place, now and then,
+ * not at every new image (a provider's prompt cache keeps what comes before).
+ * A cap of 0 leaves all in.
+ */
+export function capImages<M>(messages: readonly M[], cap: number, before = 0): { messages: M[]; dropped: number; images: number } {
+  type Block = { type?: string };
+  const at: Array<[number, number]> = [];
+  messages.forEach((m, i) => {
+    const content = (m as { content?: unknown }).content;
+    if (Array.isArray(content)) content.forEach((b, j) => (b as Block)?.type === "image" && at.push([i, j]));
+  });
+  if (cap <= 0 || at.length <= cap) return { messages: [...messages], dropped: 0, images: at.length };
+  const count = before >= at.length - cap && before < at.length ? before : at.length - Math.max(1, Math.floor(cap / 2));
+  const drop = at.slice(0, count);
+  const out = messages.map((m) => m);
+  const byMessage = new Map<number, Set<number>>();
+  for (const [i, j] of drop) byMessage.set(i, (byMessage.get(i) ?? new Set()).add(j));
+  for (const [i, js] of byMessage) {
+    const m = out[i] as { content: unknown[] };
+    out[i] = { ...m, content: m.content.map((b, j) => (js.has(j) ? { type: "text", text: IMAGE_LEFT_OUT.replace("{cap}", String(cap)) } : b)) } as M;
+  }
+  return { messages: out, dropped: drop.length, images: at.length };
+}
+
 /** A bash command run this many times by one agent earns a hint to forge a tool. */
 const FORGE_HINT_AT = 8;
 /** Command words that are the shell itself, not a tool: no hint for these. */
@@ -524,6 +573,10 @@ export default function (pi: ExtensionAPI) {
   const toolStarts = new Map<string, number>();
   /** The limit the harness gave a shell call that named none, or named more than the most: said with its result when it is stopped there. */
   const shellLimits = new Map<string, ShellLimit>();
+  /** Images a model call carries at most, and where that number came from: the run's setting, or a provider's refusal. */
+  let imageCap = imageLimit();
+  let imageCapFrom: "setting" | "provider" = "setting";
+  let imagesDropped = 0;
   /** Watched-path snapshot taken before a bash call, keyed by tool call id. */
   const bashSnapshots = new Map<string, { at: number; snapshot: WatchSnapshot; command: string }>();
   /** Limits this process has already steered on; the clock itself is shared. */
@@ -1353,6 +1406,22 @@ export default function (pi: ExtensionAPI) {
   let pauseHeld = "";
   /** The turn in flight was ended by a pause: Pi files that abort as an error, and it is not the provider's. */
   let pauseAborted = false;
+  // The newest images only, within the provider's limit (capImages): what the model is sent, not what the session keeps.
+  pi.on("context", async (event, ctx) => {
+    const messages = (event as { messages?: unknown[] }).messages;
+    if (!Array.isArray(messages) || imageCap <= 0) return undefined;
+    const capped = capImages(messages, imageCap, imagesDropped);
+    if (!capped.dropped) {
+      imagesDropped = 0;
+      return undefined;
+    }
+    if (agentId && capped.dropped !== imagesDropped) {
+      imagesDropped = capped.dropped;
+      await logEvent(ctx.cwd, agentId, "images_left_out", { cap: imageCap }, { ok: true, images: capped.images, dropped: capped.dropped, from: imageCapFrom }).catch(() => undefined);
+    }
+    return { messages: capped.messages };
+  });
+
   pi.on("context", async (_event, ctx) => {
     if (!agentId || precallStopped) return;
     // A VM whose hub is down has no budget or sentinel to read; the lost-hub
@@ -1436,12 +1505,25 @@ export default function (pi: ExtensionAPI) {
     if (providerErrorEntry === entryKey) return;
     providerErrorEntry = entryKey;
     await logEvent(ctx.cwd, agentId, "agent_error", { model }, { ok: false, reason }).catch(() => undefined);
+    // A refusal for too many images comes again on every turn, the context being the same: the limit is lowered to the provider's, with room for
+    // the images a turn adds, and the next call carries fewer.
+    const said0 = providerImageLimit(reason);
+    let imageWords: string | undefined;
+    if (said0 !== null) {
+      const next = Math.max(1, Math.min(imageCap > 0 ? imageCap : Infinity, said0 > 0 ? Math.floor(said0 * 0.75) : Math.floor((imageCap > 0 ? imageCap : MAX_IMAGES_DEFAULT) / 2)));
+      if (next !== imageCap) {
+        imageCap = next;
+        imageCapFrom = "provider";
+        await logEvent(ctx.cwd, agentId, "image_cap", { cap: next }, { ok: true, from: "provider", provider_limit: said0 || null }).catch(() => undefined);
+      }
+      imageWords = `The request carried more images than the provider takes. From the next turn the harness sends ${agentId}'s newest ${imageCap} images only (the session keeps the rest), so the next turn should go through.`;
+    }
     const said = normalizeProviderError(reason);
     const tell = !providerErrorSpell && providerErrorTold !== said;
     providerErrorSpell = true;
     if (!tell) return;
     providerErrorTold = said;
-    await systemPost(ctx.cwd, { tag: "veto", body: providerErrorPost(agentId, model, reason) }).catch(() => undefined);
+    await systemPost(ctx.cwd, { tag: "veto", body: providerErrorPost(agentId, model, reason, imageWords) }).catch(() => undefined);
   }
 
   /**
