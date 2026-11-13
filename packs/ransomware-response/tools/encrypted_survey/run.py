@@ -1997,7 +1997,6 @@ def main():
     all_hours, cand_hours = collections.Counter(), collections.Counter()
     all_over, cand_over = [0], [0]
     tails = collections.Counter()
-    shared = None
     sampled = 0
     not_profiled = collections.Counter()
     stopped = {}
@@ -2139,12 +2138,11 @@ def main():
                             row["windows_overlap"] = overlap(windows)
                             if tail:
                                 # The last bytes are where per-file key material is usually kept (scheme_pointers says so): they are
-                                # measured here and not printed. Only bytes that every sampled tail shares are (shared_tail_suffix).
+                                # measured here and not printed. Only bytes that every distinct sampled tail shares are (shared_tail_suffix).
                                 row["tail"] = tail_measure(tail)
                                 tails[tail] += 1
                                 if reasons:
                                     tail_seen(tail)
-                                shared = tail if shared is None else common_suffix(shared, tail)
                             if end_exact is not None and end_exact < END_LOW:
                                 low_tail.add({"file": shown_path, "bytes": size, "end_entropy": windows[2]["entropy"],
                                               "head_entropy": head, "windows": windows,
@@ -2219,12 +2217,17 @@ def main():
         if n > 1:
             tail_page.add({"files": n, **tail_measure(tail), "basis": "observation",
                            "bytes_printed": "no: the same last bytes in several files can be one file copied after it was encrypted"})
+    # The common suffix is taken over the DISTINCT tails, and only when there are two or more: copies of one encrypted file have one tail,
+    # and a suffix taken over copies would be the whole tail (the bytes where a per-file key is kept). Of two different tails of one length
+    # the common suffix is always shorter than either, so no whole tail is printed.
     shared_out = None
-    if sum(tails.values()) > 1 and shared is not None and len(shared) >= 4:
+    shared = functools.reduce(common_suffix, tails) if len(tails) >= 2 else None
+    if shared is not None and len(shared) >= 4:
         shared_out = {"suffix_hex": shared.hex(), "bytes": len(shared), "across_files": sum(tails.values()), "basis": "observation",
                       "pending": "a match against a reference for a family, with the suffix and its position",
-                      "caveat": "every sampled tail ends with these bytes. Padding, an ordinary format trailer, duplicated "
-                                "content or one tool's output also do; this is not a finding about the family"}
+                      "caveat": "every sampled tail ends with these bytes, and they are what %d different tails have in common (copies of one "
+                                "file count once). Padding, an ordinary format trailer, duplicated content or one tool's output also do; this "
+                                "is not a finding about the family" % len(tails)}
 
     pages = {"candidates": finish_page(candidates), "low_entropy_tail_candidates": finish_page(low_tail),
              "note_name_candidates": finish_page(note_names), "skipped": finish_page(skipped), "exceptions": finish_page(exceptions),

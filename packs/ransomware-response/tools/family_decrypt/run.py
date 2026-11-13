@@ -842,7 +842,7 @@ def list_members(args, max_files, suffix=None):
 # FAMILY: end
 
 TOOL = "family_decrypt"
-VERSION = 2
+VERSION = 3
 PARSER = "family_decrypt/2"
 DEFAULT_SECONDS, MAX_SECONDS = 1500, 1740
 PIECE = 1 << 20
@@ -1187,7 +1187,7 @@ def main():
     if not rows:
         reasons.append("no file matched: nothing was decrypted")
     status = "partial" if reasons else "complete"
-    if rows and not done:
+    if not done:                                     # nothing decrypted, a directory with no member included: failed, as the manifest says
         status = "failed"
     basis = ("; ".join(reasons) if reasons else
              "all %d members named were decrypted with the recipe and written, each with a receipt; %d start with the bytes of the type their "

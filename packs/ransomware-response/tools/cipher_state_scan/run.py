@@ -407,7 +407,7 @@ def answered(main, cleanup=None):
         fail("unexpected failure: %s" % (describe(exc) if isinstance(exc, OSError) else "%s at %s" % (type(exc).__name__, where_it_failed(exc))))
 
 TOOL = "cipher_state_scan"
-VERSION = 2
+VERSION = 3
 PARSER = "cipher_state_scan/2"
 CHUNK = 16 << 20
 OVERLAP = 4096
@@ -854,10 +854,17 @@ def last_word(signum):
 
 
 def write_hits(hits, key):
-    directory, shown, _in_job, _secret = job_place()
-    directory = directory / "tool-output"
-    if directory.is_symlink() or (directory.exists() and not directory.is_dir()):
-        raise OSError(errno.ENOTDIR, "tool-output is there and is not a directory of this run (a link or a file): nothing was written through it")
+    directory, shown, in_job, _secret = job_place()
+    # In a job the list goes to $OUT/tool-output; outside one job_place() already names work/<agent>/tool-output, which is used as it is
+    # (it used to be given a second tool-output, and the link check was made on that doubled directory). No directory on the way that
+    # this run creates or writes into may be a link or a file: work, work/<agent> and the tool-output itself outside a job.
+    if in_job:
+        directory, shown, checked = directory / "tool-output", shown + "/tool-output", [directory / "tool-output"]
+    else:
+        checked = [directory.parents[1], directory.parent, directory]
+    for place in checked:
+        if place.is_symlink() or (place.exists() and not place.is_dir()):
+            raise OSError(errno.ENOTDIR, "tool-output is there and is not a directory of this run (a link or a file): nothing was written through it")
     name = "cipher_state_scan-hits-%s.jsonl" % hashlib.sha256(json.dumps(key, sort_keys=True).encode("utf-8")).hexdigest()[:16]
     fd, name = create_new(directory, name, 0o644)
     with os.fdopen(fd, "w", encoding="ascii") as fh:
@@ -865,7 +872,7 @@ def write_hits(hits, key):
             fh.write(json.dumps(hit) + "\n")
         fh.flush()
         os.fsync(fh.fileno())
-    return "%s/tool-output/%s" % (shown, name)
+    return "%s/%s" % (shown, name)
 
 
 def main():

@@ -845,7 +845,7 @@ def list_members(args, max_files, suffix=None):
 # FAMILY: end
 
 TOOL = "stream_kpa_check"
-VERSION = 2
+VERSION = 3
 PARSER = "stream_kpa_check/2"
 DEFAULT_SECONDS, MAX_SECONDS = 480, 540
 HEAD = 64                         # bytes of a member that are ever decrypted here
@@ -896,6 +896,23 @@ class Member:
         self.path, self.name, self.key = path, os.path.basename(path), key      # key: how a recipe names the member (member_keys)
         self.fd, self.size = None, 0
         self.first, self.last = b"", b""                                          # its first and last bytes, kept for the footer hypothesis
+        # What the member's own slices gave, by source ident. A fixed value (a literal, a file, a candidates file) is not copied onto every
+        # member: `keys` and `nonces` are made from the call's sources when they are asked for, one member at a time, so that what is kept
+        # per member is its slices, never a list as long as a values file (nor the trials, which are made as they are run).
+        self.sliced = {}
+        self.call = ((), ())                                                      # the call's key and nonce sources, shared by every member
+        self.counts = {}                                                          # cipher -> the trials planned on this member
+
+    def _values(self, specs):
+        return [(s.ident, v) for s in specs for v in [s.value if isinstance(s, Fixed) else self.sliced.get(s.ident)] if v]
+
+    @property
+    def keys(self):
+        return self._values(self.call[0])
+
+    @property
+    def nonces(self):
+        return self._values(self.call[1])
 
 
 def window_slice(member, region, skip, length, header):
@@ -1097,13 +1114,43 @@ def first_bytes(cipher, key, nonce, counter, keep=True):
 
 
 def combinations(cipher, keys, nonces, counters):
-    """Every (key, nonce, counter) a cipher can take from the values at hand; keys and nonces are (ident, bytes)."""
+    """Every (key, nonce, counter) a cipher can take from the values at hand, made one at a time as they are tried (a list of them would
+    be the product of the sources' sizes, in memory); keys and nonces are (ident, bytes)."""
     if cipher in ("rc4", "xor"):
-        return [(k, (None, b""), 0) for k in keys if 1 <= len(k[1]) <= 256]
+        for k in keys:
+            if 1 <= len(k[1]) <= 256:
+                yield k, (None, b""), 0
+        return
     usable = [k for k in keys if len(k[1]) in KEY_LENGTHS[cipher]]
     fitting = [n for n in nonces if len(n[1]) in NONCE_LENGTHS[cipher]]
     limit = (1 << 32) - 1 if cipher == "chacha20-ietf" else (1 << 62)
-    return [(k, n, c) for k in usable for n in fitting for c in counters if c <= limit]
+    steps = [c for c in counters if c <= limit]
+    for k in usable:
+        for n in fitting:
+            for c in steps:
+                yield k, n, c
+
+
+def lengths_of(values, more=()):
+    """{length: how many values have it}, of byte strings `values` and of the lengths in `more`."""
+    tally = {}
+    for n in [len(v) for v in values] + list(more):
+        tally[n] = tally.get(n, 0) + 1
+    return tally
+
+
+def count_trials(ciphers, key_lengths, nonce_lengths, counters):
+    """How many trials combinations() makes with each cipher, from the lengths of the keys and nonces alone (each {length: how many
+    values have it}): the same count, made by arithmetic, before any member is opened and without a trial in memory."""
+    counts = {}
+    for cipher in ciphers:
+        if cipher in ("rc4", "xor"):
+            counts[cipher] = sum(k for n, k in key_lengths.items() if 1 <= n <= 256)
+            continue
+        limit = (1 << 32) - 1 if cipher == "chacha20-ietf" else (1 << 62)
+        counts[cipher] = (sum(k for n, k in key_lengths.items() if n in KEY_LENGTHS[cipher])
+                          * sum(k for n, k in nonce_lengths.items() if n in NONCE_LENGTHS[cipher]) * sum(1 for c in counters if c <= limit))
+    return counts
 
 
 def chance(alternatives):
@@ -1113,10 +1160,12 @@ def chance(alternatives):
 PROGRESS = {"members": 0, "checked": 0, "trials": 0}
 
 
-def read_member(member, row, magics, header, trailer, key_sources, nonce_sources, ciphers, counters, window):
+def read_member(member, row, magics, header, trailer, key_sources, nonce_sources, ciphers, counters, window, fixed_lengths):
     """Everything the check needs of one open member, read now so that the file can be closed: its first bytes, its crib (the type in its
-    name, a plaintext twin beside it), the keys and nonces its slices give, the trials planned on it, and its first and last `window`
-    bytes for the footer hypothesis. A verdict that needs no trial is written to the row."""
+    name, a plaintext twin beside it), the keys and nonces its slices give, how many trials are planned on it (counted, not listed: the
+    trials are made in pass 2 as they are run), and its first and last `window` bytes for the footer hypothesis. `fixed_lengths` is
+    {length: how many} of the values the call's fixed sources give (keys, nonces), the same for every member. A verdict that needs no
+    trial is written to the row."""
     path = member.path
     row["bytes"] = member.size
     raw = pread_full(member.fd, HEAD, 0)
@@ -1159,10 +1208,20 @@ def read_member(member, row, magics, header, trailer, key_sources, nonce_sources
         return
     member.alternatives = alternatives
     row["crib_bytes"] = min(crib_bytes(alt) for alt in alternatives)
-    member.keys = [(s.ident, v) for s in key_sources for v in [s.of(member)] if v]
-    member.nonces = [(s.ident, v) for s in nonce_sources for v in [s.of(member)] if v]
-    member.plan = [(cipher, combinations(cipher, member.keys, member.nonces, counters)) for cipher in ciphers]
-    row["trials"] = sum(len(combos) for _cipher, combos in member.plan)
+    member.call = (key_sources, nonce_sources)
+    member.sliced = {s.ident: s.of(member) for s in key_sources + nonce_sources if isinstance(s, Sliced)}
+    fixed_keys, fixed_nonces = fixed_lengths
+
+    def plus_slices(fixed, specs):
+        tally = dict(fixed)
+        for spec in specs:
+            value = member.sliced.get(spec.ident) if isinstance(spec, Sliced) else None
+            if value:
+                tally[len(value)] = tally.get(len(value), 0) + 1
+        return tally
+
+    member.counts = count_trials(ciphers, plus_slices(fixed_keys, key_sources), plus_slices(fixed_nonces, nonce_sources), counters)
+    row["trials"] = sum(member.counts.values())
     if window:
         member.first = pread_full(member.fd, min(window, header, member.size), 0)
         keep = min(window, member.size)
@@ -1234,6 +1293,21 @@ def main():
         "payload": "a member's ciphertext is taken to start at header_bytes; only its first %d bytes are decrypted" % HEAD,
     }
 
+    # Before any member is opened: the trials one member can take, counted from the lengths of what the sources give (every slice taken to
+    # be in the file). A call whose sources alone pass max_trials on ONE member is refused here, with the count; nothing is listed in
+    # memory, however large a values file is.
+    call_keys, call_nonces = tuple(key_sources), tuple(nonce_sources)
+    nonce_by_ident = {s.ident: s for s in call_nonces}
+    fixed_lengths = (lengths_of(s.value for s in call_keys if isinstance(s, Fixed)), lengths_of(s.value for s in call_nonces if isinstance(s, Fixed)))
+    most_per_member = count_trials(ciphers, lengths_of((s.value for s in call_keys if isinstance(s, Fixed)), [s.length for s in call_keys if isinstance(s, Sliced)]),
+                                   lengths_of((s.value for s in call_nonces if isinstance(s, Fixed)), [s.length for s in call_nonces if isinstance(s, Sliced)]),
+                                   counters)
+    if sum(most_per_member.values()) > max_trials:
+        raise Refused("%d trials would be made on each member that has a crib (%s; every cipher, key, nonce and counter of the call) and %d "
+                      "members are named, and max_trials is %d: narrow ciphers, counters or the sources, or raise max_trials (at most 5000000). "
+                      "Nothing was opened and nothing was tried"
+                      % (sum(most_per_member.values()), ", ".join("%s %d" % (c, n) for c, n in most_per_member.items() if n), len(paths), max_trials))
+
     # Pass 1: open every member, read what a verdict and the footer hypothesis need, close it, and count the trials before any is made.
     fixed_sources = [s for s in key_sources if isinstance(s, Fixed)]
     window = MAX_SKIP + max([len(s.value) for s in fixed_sources if len(s.value) <= MAX_DERIVED_KEY] or [0]) if derive and fixed_sources else 0
@@ -1255,7 +1329,7 @@ def main():
             row["verdict"], row["error"] = "read_failed", describe(exc) if isinstance(exc, OSError) else "not a usable path"
             continue
         try:
-            read_member(member, row, magics, header, trailer, key_sources, nonce_sources, ciphers, counters, window)
+            read_member(member, row, magics, header, trailer, call_keys, call_nonces, ciphers, counters, window, fixed_lengths)
         except OSError as exc:
             row["verdict"], row["error"] = "read_failed", describe(exc)
         finally:
@@ -1267,7 +1341,7 @@ def main():
         raise Refused("%d trials would be made (%d members with a crib, and every cipher, key, nonce and counter on each) and max_trials is %d: "
                       "narrow ciphers, counters or the sources, or raise max_trials (at most 5000000). Nothing was tried"
                       % (planned, sum(1 for r in rows if r["trials"]), max_trials))
-    trials_by_cipher = {cipher: sum(len(combos) for m in members for c, combos in getattr(m, "plan", ()) if c == cipher) for cipher in ciphers}
+    trials_by_cipher = {cipher: sum(m.counts.get(cipher, 0) for m in members) for cipher in ciphers}
 
     # Pass 2: the trials.
     matched = {}                    # key ident -> {member index: [(cipher, nonce ident, counter)]}
@@ -1293,8 +1367,9 @@ def main():
             continue
         head = member.cipher_head
         made, hits, cut = 0, [], False
-        for cipher, combos in member.plan:
-            for (key_id, key), (nonce_id, nonce), counter in combos:
+        keys, nonces = member.keys, member.nonces                 # this member's values, for as long as its trials run
+        for cipher in ciphers:
+            for (key_id, key), (nonce_id, nonce), counter in combinations(cipher, keys, nonces, counters):
                 made += 1
                 if not made & 255 and out_of_time():
                     cut = True
@@ -1428,9 +1503,17 @@ def main():
         others = [i for i in with_crib if i != index and i not in by_rule]
 
         def as_opened(target, own_variants=own_variants, length=len(key)):
-            nonces = dict(target.nonces)
-            return [(cipher, nonce_id, nonces.get(nonce_id, b"") if nonce_id else b"", counter) for cipher, nonce_id, counter in own_variants
-                    if not nonce_id or nonce_id in nonces]
+            # The nonce of each variant is looked up by its source, not by a list of every nonce the member has (a values file's worth).
+            made = []
+            for cipher, nonce_id, counter in own_variants:
+                if not nonce_id:
+                    made.append((cipher, nonce_id, b"", counter))
+                    continue
+                source = nonce_by_ident.get(nonce_id)
+                value = source.value if isinstance(source, Fixed) else target.sliced.get(nonce_id) if source is not None else None
+                if value:
+                    made.append((cipher, nonce_id, value, counter))
+            return made
 
         hits = try_place(place, others, as_opened)
         if hits is not None:

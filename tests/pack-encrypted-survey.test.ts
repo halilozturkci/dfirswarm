@@ -185,16 +185,20 @@ test("encrypted_survey calls a shared trailer an observation pending a reference
     assert.deepEqual(solo.repeated_tails.map((t) => [t.bytes, t.distinct_byte_values, t.files]), [[8, new Set(trailer).size, 2]]);
     assert.ok(!JSON.stringify(solo).includes(trailer.toString("hex")), "a tail two of three files share is counted and measured, not printed");
     await writeFile(join(ev, "other.pdf.lockd"), Buffer.concat([randomBytes(80_000), Buffer.from([0x33]), trailer]));
-    const out = await tool(SURVEY, cwd, { root: "work/ev", tail_bytes: 8 });
-    const survey = body<Survey>(out);
-    assert.deepEqual(survey.shared_tail_suffix && [survey.shared_tail_suffix.suffix_hex, survey.shared_tail_suffix.basis, survey.shared_tail_suffix.across_files],
+    // With tail_bytes 8 the three tails are one tail: what copies of one file would show. The common suffix is taken over different tails
+    // only (from version 14), so a whole tail is not printed: it is counted and measured.
+    const same = await tool(SURVEY, cwd, { root: "work/ev", tail_bytes: 8 });
+    const one = body<Survey>(same);
+    assert.equal(one.shared_tail_suffix, null, "one tail seen three times is not a suffix shared by different tails");
+    assert.ok(!same.stdout.includes(trailer.toString("hex")));
+    assert.deepEqual(one.repeated_tails.map((t) => t.files), [3]);
+    assert.deepEqual(one.appended_extension_observations, [{ extension: ".lockd", files: 3 }]);
+    // With the default tail the random bytes before the trailer differ, and the common suffix of the three different tails is the trailer.
+    const out = await tool(SURVEY, cwd, { root: "work/ev" });
+    const wide = body<Survey>(out);
+    assert.deepEqual(wide.shared_tail_suffix && [wide.shared_tail_suffix.suffix_hex, wide.shared_tail_suffix.basis, wide.shared_tail_suffix.across_files],
       [trailer.toString("hex"), "observation", 3]);
     assert.doesNotMatch(out.stdout, /family marker|better identifier/);
-    assert.deepEqual(survey.repeated_tails.map((t) => t.files), [3]);
-    assert.deepEqual(survey.appended_extension_observations, [{ extension: ".lockd", files: 3 }]);
-    // With the default tail the random bytes before the trailer differ, and the common suffix is still the trailer.
-    const wide = body<Survey>(await tool(SURVEY, cwd, { root: "work/ev" }));
-    assert.equal(wide.shared_tail_suffix?.suffix_hex, trailer.toString("hex"));
     assert.deepEqual(wide.repeated_tails, []);
   });
 });

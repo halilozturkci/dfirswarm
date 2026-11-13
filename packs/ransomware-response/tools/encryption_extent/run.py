@@ -2482,8 +2482,9 @@ def main():
         reasons.append("no byte was inspected")
     complete = "partial" if reasons else "complete"
     basis = ("; ".join(reasons) if reasons else
-             "every named file was opened and every one of its bytes was inspected under policy full; the read budget and the time limit "
-             "were not reached")
+             "every named file was opened and every one of its bytes was inspected under policy %s%s; the read budget and the time limit "
+             "were not reached" % (policy, " (no file was larger than its %d sample windows, so each was read whole)" % samples
+                                   if policy == "sampling" else ""))
     exp = expected_random_entropy(window)
     receipt = {"parser": PARSER, "complete": complete, "status": complete, "status_basis": basis, "partial_reasons": reasons,
                "coverage": {k: (dict(v) if isinstance(v, collections.Counter) else v) for k, v in counters.items()},
