@@ -184,7 +184,7 @@ swarm.sh start — prepare a sandbox, write the contract, launch the agents.
       [--notify CMD] [--ledger-from RUN] [--no-verify-copy] [--allow-root] [--model-gateway] [--check]
       [--cap-per-agent USD] [--cap-per-agent-tokens N] [--cap-tokens N] [--token-alert N[,M...]] [--idle-nudge-sec N] [--allow-tool-forging]
       [--no-self-compact] [--compact-at SPEC] [--compact-warn-at SPEC] [--compact-notice-at SPEC]
-      [--compact-prompt-file FILE] [--compact-model P/ID] [--inbox-page-chars N] [--skill-release compaction|auto|off] [--skill-cards on|off] [--pack-skills on|off]
+      [--compact-prompt-file FILE] [--compact-model P/ID] [--inbox-page-chars N] [--skill-release compaction|auto|off] [--skill-cards on|off|inject] [--pack-skills on|off]
       [--allow-install] [--no-pypi] [--no-read DIR]... [--accept-signer-exposure]
       [--tools-from DIR] [--inputs DIR]... [--inputs-enforce auto|on|off]
       [--inputs-max-mb N] [--inputs-max-files N] [--catalog] [--allow-missing-symbols] [--toolbox SETS|auto|off] [--toolbox-required] [--requires CAPS]
@@ -396,7 +396,11 @@ Limits
                       and the summary input is not shaped. Recorded as
                       skill_release in the registry; skill_release_policy and
                       skill_unload on the trace. Needs --pack.
-  --skill-cards on|off
+  --skill-cards on|off|inject
+                      (inject: as on, and a lead that is opened or claimed
+                      comes back with the rules of the two notes that fit it
+                      best, not their names: the forced arm of a notes
+                      experiment.)
                       Whether a call to a tool a skill names (job_run tool=X,
                       or the tool itself), by an agent that does not hold that
                       skill, comes back with the skill's card: its own card:
@@ -4641,8 +4645,8 @@ sys.exit(0 if t(sys.argv[1]) < t(sys.argv[2]) else 1)' "$_have" "$_ship" 2>/dev/
     echo "BLOCKER: --compact-model names the summary model of self-compaction; drop --no-self-compact." >&2
     exit 2
   fi
-  if [[ -n "$skill_cards" && "$skill_cards" != "on" && "$skill_cards" != "off" ]]; then
-    echo "BLOCKER: --skill-cards is on or off, got $skill_cards." >&2
+  if [[ -n "$skill_cards" && "$skill_cards" != "on" && "$skill_cards" != "off" && "$skill_cards" != "inject" ]]; then
+    echo "BLOCKER: --skill-cards is on, off or inject, got $skill_cards." >&2
     exit 2
   fi
   if [[ -n "$pack_skills" && "$pack_skills" != "on" && "$pack_skills" != "off" ]]; then

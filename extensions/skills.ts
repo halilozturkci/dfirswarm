@@ -428,9 +428,12 @@ export const CARD_TOOL_SPREAD = 3;
 export const NOTES_LISTED_MAX = 8;
 /** Cards the hand-off header carries, of the notes a compaction took out. */
 export const HANDOFF_CARDS_MAX = 3;
-export type CardsMode = "on" | "off";
+export type CardsMode = "on" | "off" | "inject";
 export function parseCardsMode(raw: string | undefined): CardsMode {
-  return raw?.trim().toLowerCase() === "off" ? "off" : "on";
+  const v = raw?.trim().toLowerCase();
+  // inject: as on, and a lead that is opened or claimed comes back with the rules of the notes that fit it, not their
+  // names (the forced arm of the notes experiment: do the rules change what a seat does when they are in front of it?).
+  return v === "off" ? "off" : v === "inject" ? "inject" : "on";
 }
 
 /**
@@ -487,12 +490,12 @@ const noteWords = (t: string): string[] => [...new Set(t.toLowerCase().split(/[^
  * claims: the notes reached the open-weight seats only after a tool was called (a card), and a seat that never calls
  * the tool never sees its note. A router is never offered (it is in the prompt).
  */
-export function notesForText(packs: readonly PackIndex[], text: string, n = 3): Array<{ ref: string; when: string; score: number }> {
+export function notesForText(packs: readonly PackIndex[], text: string, n = 3): Array<{ ref: string; when: string; score: number; pack: string; id: string }> {
   const want = new Set(noteWords(text));
   if (want.size < 2) return [];
   const ids = new Map<string, number>();
   for (const p of packs) for (const e of p.entries) ids.set(e.id, (ids.get(e.id) ?? 0) + 1);
-  const out: Array<{ ref: string; when: string; score: number }> = [];
+  const out: Array<{ ref: string; when: string; score: number; pack: string; id: string }> = [];
   for (const p of packs) {
     for (const e of p.entries) {
       if (e.id === p.router) continue;
@@ -500,7 +503,7 @@ export function notesForText(packs: readonly PackIndex[], text: string, n = 3): 
       const when = e.line.replace(/^[-*\s]*/, "").replace(e.id, "").replace(/^[`:\s—-]+/, "").trim();
       const have = noteWords(`${e.id.replace(/[/_-]/g, " ")} ${when}`);
       const score = have.filter((w) => want.has(w)).length;
-      if (score >= 2) out.push({ ref: (ids.get(e.id) ?? 0) > 1 ? `${p.id}:${e.id}` : e.id, when, score });
+      if (score >= 2) out.push({ ref: (ids.get(e.id) ?? 0) > 1 ? `${p.id}:${e.id}` : e.id, when, score, pack: p.id, id: e.id });
     }
   }
   return out.sort((a, b) => b.score - a.score || a.ref.localeCompare(b.ref)).slice(0, n);
@@ -1349,7 +1352,7 @@ export function registerSkills(pi: ExtensionAPI, deps: SkillsDeps): SkillsHandle
     if (account) lines.push(account);
     else if (ids.length) lines.push(`Skill bodies a compaction took out of your context: ${ids.join(", ")}. Load again (skill(id)) the ones you still need.`);
     // The cards of the notes the compaction took out, the last read first: what must not be lost with the bodies.
-    if (cardsMode === "on") {
+    if (cardsMode !== "off") {
       const cards = ids.slice().reverse().map((k) => [k, cardText.get(k)] as const).filter((x): x is readonly [string, string] => Boolean(x[1])).slice(0, HANDOFF_CARDS_MAX);
       if (cards.length) lines.push(`Cards of the notes you were working with (the whole note: skill(id)):\n${cards.map(([k, c]) => `- ${k}:\n${c.split("\n").map((l) => `  ${l}`).join("\n")}`).join("\n")}`);
       // The rules shown with a tool's first call are not shown again in this run, so they are carried here: the last
@@ -1774,8 +1777,22 @@ export function registerSkills(pi: ExtensionAPI, deps: SkillsDeps): SkillsHandle
         const notes = notesForText(await packIndexes(), about).filter((x) => !ledger.get(x.ref) && !cardsHeld.has(x.ref));
         if (!notes.length) return undefined;
         cardsEver.add(key);
-        const words = `Notes of this run's packs that fit this lead (each is a page of method: load the one you need with skill(id) before the work, not after): ${notes.map((x) => `${x.ref}${x.when ? ` (${x.when.length > 110 ? `${x.when.slice(0, 109)}\u2026` : x.when})` : ""}`).join("; ")}.`;
-        await deps.trace((ctx as unknown as { cwd: string }).cwd, "skill_card", { lead, ids: notes.map((x) => x.ref) }, { ok: true, kind: "lead", tokens: estimateTokens(words), turn: deps.turns() }).catch(() => undefined);
+        let words = `Notes of this run's packs that fit this lead (each is a page of method: load the one you need with skill(id) before the work, not after): ${notes.map((x) => `${x.ref}${x.when ? ` (${x.when.length > 110 ? `${x.when.slice(0, 109)}\u2026` : x.when})` : ""}`).join("; ")}.`;
+        if (cardsMode === "inject") {
+          // The forced arm: the rules themselves, for the two notes that fit best.
+          const all = await packIndexes();
+          const cards: string[] = [];
+          for (const x of notes.slice(0, 2)) {
+            const pack = all.find((p) => p.id === x.pack);
+            const file = pack ? await readSkillFile(pack, x.id) : null;
+            if (!file) continue;
+            const card = skillCard(file);
+            cardsHeld.set(x.ref, card);
+            cards.push(`- ${x.ref}:\n${card.split("\n").map((l) => `  ${l}`).join("\n")}`);
+          }
+          if (cards.length) words = `The rules of the notes that fit this lead, to work by (the whole note: skill(id)):\n${cards.join("\n")}`;
+        }
+        await deps.trace((ctx as unknown as { cwd: string }).cwd, "skill_card", { lead, ids: notes.map((x) => x.ref) }, { ok: true, kind: cardsMode === "inject" ? "lead_injected" : "lead", tokens: estimateTokens(words), turn: deps.turns() }).catch(() => undefined);
         return { content: [...content, { type: "text" as const, text: words }] };
       } catch {
         return undefined;

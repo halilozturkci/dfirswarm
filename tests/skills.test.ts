@@ -1102,3 +1102,11 @@ test("the notes that fit a lead are named when it is opened or claimed: by share
   assert.deepEqual(notesForText(packs, "ok"), []);
   assert.ok(notesForText(packs, "program ran prefetch registry hive keys password browser login saved", 2).length <= 2);
 });
+
+test("--skill-cards inject: the card mode is read, and off stays off", async () => {
+  const { parseCardsMode } = await import("../extensions/skills.ts");
+  assert.equal(parseCardsMode("inject"), "inject");
+  assert.equal(parseCardsMode(" OFF "), "off");
+  assert.equal(parseCardsMode(undefined), "on");
+  assert.equal(parseCardsMode("anything"), "on");
+});
