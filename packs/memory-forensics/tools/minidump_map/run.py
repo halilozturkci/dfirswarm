@@ -33,15 +33,24 @@ PDB path, a service pack string, a thread name, the command line) goes through t
 replaced by a placeholder that says how long it was; withholding is by shape, so a plain password in a command line is printed. Memory
 content itself is never printed: `find` gives positions, `read` and `module` write files. Those files are memory content (a credential can
 be in any page), so writing needs `write_values: true`, a job, and a job run as secret output (SECRET_OUTPUT=1, which the manifest makes the
-harness set): $OUT/minidump_map, directory 0700, files 0600, created exclusively and placed without replacing an earlier file; sizes and
-sha256 go to manifest.jsonl beside them, not into the answer. Without write_values, `read` and `module` still say what is present and what
+harness set): $OUT/minidump_map, directory 0700, files 0600, created exclusively and placed without replacing an earlier file; the
+sha256 of each goes to manifest.jsonl beside them, with its size, and not into the answer (the size it gives is the length asked for). Without write_values, `read` and `module` still say what is present and what
 is not, and write nothing.
 
 BOUNDS. Lists are paged by `offset` and `limit`: every paged answer says total, returned and next_offset, and a page is cut at 256 KiB of
 JSON as well. `find` reads the dump in 8 MiB pieces (the memory the tool uses does not grow with the dump), stops at `max_hits` or at
-`max_seconds` with status partial and `resume_va`, the address to pass as `va_start` for the rest. `read` writes at most 64 MiB and `module`
-at most 512 MiB a call. A paged list also ends its page at `max_seconds`. At most 250,000 memory ranges, 250,000 regions, 16,384 modules, 65,536 threads
-and 250,000 handles are read; a dump that declares more is partial and says so.
+`max_seconds` with status partial and `resume_va`, the address to pass as `va_start` for the rest: every hit that starts below it is in
+the answer and none that starts at or above it is, so the calls together give each hit once. `read` writes at most 64 MiB and `module`
+at most 512 MiB a call. At most 250,000 memory ranges, 250,000 regions, 16,384 modules, 65,536 threads and 250,000 handles are read; a
+dump that declares more is partial and says so. Every handle's type name is read, and 512 distinct names are listed.
+
+THE CLOCK. `max_seconds` is the clock of the whole call, counted from when the arguments are read, and every loop over something the dump
+sizes looks at it. A loop that can say where it stopped does so (a page of a list, the search, the addresses of `va`, the type names of
+the handles, the lines of a comment); any other (reading a table, comparing module names, counting coverage, writing a file) ends the
+call with one failed answer that says what it was doing, and keeps nothing. What can run past it is one unit of work: one string put
+through the display rules, one piece read, one write; and `find` may name the modules of the hits it has for 5 seconds more. The loops
+that do not look at it are bounded by a constant and not by the dump: the retries of a read or a write that came back short (each makes
+progress or ends), the 999 names tried for an output file, the registers and flags of a record.
 
 STOPS. SIGTERM, SIGINT and SIGHUP end the call with one JSON document (status failed, interrupted true, exit 128 plus the signal); a file
 that was being written is removed, and so is an image whose map was not yet placed beside it. A signal that arrives while the answer is written is held until it is out.
@@ -204,8 +213,8 @@ import os
 import signal
 import sys
 
-PARSER = "minidump_map/1"
-TOOL = 1
+PARSER = "minidump_map/2"
+TOOL = 2
 
 
 def _before_start(signum, _frame):
@@ -250,6 +259,9 @@ MAX_REGIONS = 250_000
 MAX_MODULES = 16_384
 MAX_THREADS = 65_536
 MAX_HANDLES = 250_000
+MAX_HANDLE_TYPES = 512          # distinct type names the handle count lists; handles of a further name are counted apart
+PDB_PATH_BYTES = 520            # bytes of the path of a PDB record that are read
+DESCRIBE_GRACE = 5              # seconds past max_seconds that find may spend on naming the modules of the hits it already has
 TABLE_BYTES = 64 << 20          # bytes of one stream's table held at once, whatever entry size its header declares
 MAX_ENTRY = 4096                # bytes of one table entry a header may declare
 MAX_STRING_BYTES = 8192         # of one MINIDUMP_STRING (a path is at most 32,767 characters; more than this is cut and said)
@@ -1246,6 +1258,30 @@ def checkpoint():
         raise Terminated(signum)
 
 
+# The call's one clock: max_seconds, counted from the moment the arguments were read. Every loop over something the dump sizes looks at it,
+# through tick() (which ends the call with a failed answer that says what it was doing: a loop that has no partial answer to give) or
+# through late() (a loop that can stop and say where it stopped: a page, a search, a count).
+CLOCK = {"deadline": None, "seconds": None}
+
+
+class OutOfTime(Exception):
+    """max_seconds was reached in a loop that has no partial answer to give; run_guarded() turns it into the one failed answer."""
+
+    def __init__(self, doing):
+        super().__init__(doing)
+        self.doing = doing
+
+
+def late():
+    return CLOCK["deadline"] is not None and time.monotonic() > CLOCK["deadline"]
+
+
+def tick(doing):
+    checkpoint()
+    if late():
+        raise OutOfTime(doing)
+
+
 def emit(answer):
     """The one way an answer leaves: whole, once, and not cut by a signal. A signal that arrives while it is written is held, and once it is
     out a later one changes nothing, so stdout never holds two documents."""
@@ -1556,7 +1592,8 @@ class OutFile:
 
 
 def record_digests(rows):
-    """Sizes and sha256 of what was written go to manifest.jsonl beside the files, never into the answer. Returns the name to print."""
+    """The sha256 of what was written goes to manifest.jsonl beside the files, with its size, and never into the answer (which gives the
+    size alone: the length of the range that was asked for). Returns the name to print."""
     job, out = job_dir()
     name = out / "minidump_map" / "manifest.jsonl"
     fd = os.open(str(name), os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0), 0o600)
@@ -1633,10 +1670,12 @@ class Dump:
         self.seg_sum = [0]
         self.declared_bytes = self.mapped_bytes = 0
         self.ranges_declared = 0
+        self.ranges_empty = self.ranges_overlapping = self.ranges_cut = self.regions_overlapping = 0
         self.reg_va, self.reg_len, self.reg_state, self.reg_protect, self.reg_type, self.reg_abase, self.reg_aprot = [], [], [], [], [], [], []
         self.absent = []            # the names of the streams the directory does not list, of those this tool reads
         self.mod_order, self.mod_bases = [], []
         self._shown_names = {}
+        self._names = {}            # (stream, RVA) -> the string there: a name many modules point at is read once
 
     def problem(self, stream, offset, text):
         self.problem_count += 1
@@ -1719,6 +1758,8 @@ class Dump:
             self.problem("directory", directory, "the directory of %d entries (12 bytes each) at file offset %d runs past the end of the file "
                          "(%d bytes): %d whole entries are in the file" % (take, directory, self.size, len(raw) // 12))
         for i in range(len(raw) // 12):
+            if not i & 1023:
+                tick("the directory was read")
             kind, size, rva = struct.unpack_from("<III", raw, i * 12)
             name = STREAM_NAMES.get(kind, "stream %d" % kind if kind <= 0xFFFF else "user stream 0x%x" % kind)
             in_file = max(0, min(size, self.size - rva))
@@ -1821,6 +1862,8 @@ class Dump:
             if head is not None:
                 data, take = self.table("ModuleList", rva, size, in_file, 4, struct.unpack("<I", head)[0], 108, MAX_MODULES, "MINIDUMP_MODULE")
                 for i in range(take):
+                    if not i & 1023:
+                        tick("the module list was read")
                     base, image, checksum, stamp, name_rva = struct.unpack_from("<QIIII", data, i * 108)
                     fixed = struct.unpack_from("<13I", data, i * 108 + 24)
                     cv_size, cv_rva = struct.unpack_from("<II", data, i * 108 + 76)
@@ -1838,6 +1881,8 @@ class Dump:
                 else:
                     data, take = self.table("UnloadedModuleList", rva, size, in_file, header, count, entry, MAX_MODULES, "MINIDUMP_UNLOADED_MODULE")
                     for i in range(take):
+                        if not i & 1023:
+                            tick("the unloaded module list was read")
                         base, image, checksum, stamp, name_rva = struct.unpack_from("<QIIII", data, i * entry)
                         self.unloaded.append({"index": i, "base": base, "size": image, "checksum": checksum, "stamp": stamp, "name_rva": name_rva,
                                               "entry_offset": rva + header + i * entry, "name": None, "named": False})
@@ -1846,7 +1891,10 @@ class Dump:
 
     def module_name(self, module, stream="ModuleList"):
         if not module["named"]:
-            module["name"] = self.string(stream, module["name_rva"], "the name of module %d" % module["index"])
+            key = (stream, module["name_rva"])
+            if key not in self._names:      # read once: a fault in it is one problem, whatever the number of modules that name it
+                self._names[key] = self.string(stream, module["name_rva"], "the name of module %d" % module["index"])
+            module["name"] = self._names[key]
             module["named"] = True
         return module["name"]
 
@@ -1880,6 +1928,8 @@ class Dump:
             else:
                 data, take = self.table(name, rva, size, in_file, 4, struct.unpack("<I", self.read(rva, 4))[0], entry, MAX_THREADS, "MINIDUMP_THREAD")
                 for i in range(take):
+                    if not i & 1023:
+                        tick("the thread list was read")
                     tid, suspend, pclass, priority, teb, stack_va, stack_size, stack_rva, ctx_size, ctx_rva = struct.unpack_from("<IIIIQQIIII", data, i * entry)
                     self.threads.append({"index": i, "id": tid, "suspend": suspend, "class": pclass, "priority": priority, "teb": teb,
                                          "stack": (stack_va, stack_size, stack_rva), "context": (ctx_size, ctx_rva), "entry_offset": rva + 4 + i * entry})
@@ -1895,6 +1945,8 @@ class Dump:
                 else:
                     data, take = self.table("ThreadInfoList", rva, size, in_file, header, count, entry, MAX_THREADS, "MINIDUMP_THREAD_INFO")
                     for i in range(take):
+                        if not i & 1023:
+                            tick("the thread information list was read")
                         tid, dump_flags, dump_error, exit_status, created, exited, kernel, user, start, affinity = struct.unpack_from("<IIIIQQQQQQ", data, i * entry)
                         self.thread_info.setdefault(tid, {"dump_flags": hx(dump_flags), "dump_error": hx(dump_error), "exit_status": hx(exit_status),
                                                           "create_time": {"raw": created, "utc": filetime_iso(created), "epoch": "100 ns since 1601-01-01 UTC"},
@@ -1908,6 +1960,8 @@ class Dump:
             else:
                 data, take = self.table("ThreadNames", rva, size, in_file, 4, struct.unpack("<I", self.read(rva, 4))[0], 12, MAX_THREADS, "MINIDUMP_THREAD_NAME")
                 for i in range(take):
+                    if not i & 1023:
+                        tick("the thread names were read")
                     tid, name_rva = struct.unpack_from("<IQ", data, i * 12)
                     self.thread_names.setdefault(tid, name_rva)
 
@@ -1924,6 +1978,8 @@ class Dump:
                 data, take = self.table("Memory64List", rva, size, in_file, 16, count, 16, MAX_RANGES, "MINIDUMP_MEMORY_DESCRIPTOR64")
                 at = base_rva
                 for va, length in struct.iter_unpack("<QQ", data[:take * 16]):
+                    if not len(raw) & 4095:
+                        tick("the Memory64List was read")
                     raw.append((va, length, at, "Memory64List"))
                     at += length
         got = self.stream("MemoryList")
@@ -1936,6 +1992,8 @@ class Dump:
                 self.ranges_declared += count
                 data, take = self.table("MemoryList", rva, size, in_file, 4, count, 16, max(0, MAX_RANGES - len(raw)), "MINIDUMP_MEMORY_DESCRIPTOR")
                 for va, length, at in struct.iter_unpack("<QII", data[:take * 16]):
+                    if not len(raw) & 4095:
+                        tick("the MemoryList was read")
                     raw.append((va, length, at, "MemoryList"))
         # One address, one place: the ranges in address order, an overlap given to the range that starts first, a range the file ends
         # inside counted for what the file holds of it.
@@ -1943,7 +2001,10 @@ class Dump:
         end = 0
         overlaps = cut = empty = 0
         first_overlap = first_cut = None
-        for va, length, at, source in raw:
+        tick("the memory ranges were put in address order")
+        for n, (va, length, at, source) in enumerate(raw):
+            if not n & 4095:
+                tick("the memory ranges were put in address order")
             if length == 0:
                 empty += 1
                 continue
@@ -1972,7 +2033,9 @@ class Dump:
             self.mapped_bytes += have
             end = va + length
         self.seg_sum = [0]
-        for have in self.seg_have:
+        for n, have in enumerate(self.seg_have):
+            if not n & 4095:
+                tick("the memory ranges were totalled")
             self.seg_sum.append(self.seg_sum[-1] + have)
         self.ranges_empty = empty
         self.ranges_overlapping, self.ranges_cut = overlaps, cut
@@ -1997,12 +2060,41 @@ class Dump:
                     data, take = self.table("MemoryInfoList", rva, size, in_file, header, count, entry, MAX_REGIONS, "MINIDUMP_MEMORY_INFO")
                     rows = []
                     for i in range(take):
+                        if not i & 4095:
+                            tick("the MemoryInfoList was read")
                         rows.append(struct.unpack_from("<QQIIQIII", data, i * entry))
                     del data
-                    ordered = all(rows[i][0] <= rows[i + 1][0] for i in range(len(rows) - 1))
-                    if not ordered:
+                    # The lookups (which region holds an address) need the regions in address order and apart. VirtualQuery gives them so;
+                    # a list that is not so is put in order, and both facts are said: an answer about a region then rests on a list
+                    # that is not laid out as the format's writer lays it out.
+                    disorder = None
+                    for i in range(len(rows) - 1):
+                        if not i & 4095:
+                            tick("the MemoryInfoList was checked for order")
+                        if rows[i][0] > rows[i + 1][0]:
+                            disorder = i + 1
+                            break
+                    if disorder is not None:
+                        self.problem("MemoryInfoList", rva + header + disorder * entry,
+                                     "the regions are not in address order (entry %d, at %s, comes after one at %s): they were sorted by base "
+                                     "address before any was looked up" % (disorder, hx(rows[disorder][0]), hx(rows[disorder - 1][0])))
                         rows.sort(key=lambda r: r[0])
-                    for base, abase, aprot, _pad, length, state, protect, kind in rows:
+                    lapped, first_lap = 0, None
+                    for i in range(len(rows) - 1):
+                        if not i & 4095:
+                            tick("the MemoryInfoList was checked for overlaps")
+                        if rows[i][0] + rows[i][4] > rows[i + 1][0]:
+                            lapped += 1
+                            if first_lap is None:
+                                first_lap = rows[i][0]
+                    self.regions_overlapping = lapped
+                    if lapped:
+                        self.problem("MemoryInfoList", rva, "%d region(s) run into the region after them in address order (the first at %s): an "
+                                     "address that more than one region claims is answered by the region with the highest base at or below "
+                                     "it, or by none where that one ends below the address" % (lapped, hx(first_lap)))
+                    for n, (base, abase, aprot, _pad, length, state, protect, kind) in enumerate(rows):
+                        if not n & 4095:
+                            tick("the MemoryInfoList was read")
                         self.reg_va.append(base)
                         self.reg_len.append(length)
                         self.reg_state.append(state)
@@ -2045,20 +2137,49 @@ class Dump:
         data, take = self.table("HandleData", rva, size, in_file, header, count, entry, MAX_HANDLES, "MINIDUMP_HANDLE_DESCRIPTOR")
         by_rva, named = {}, 0
         for i in range(take):
+            if not i & 4095:
+                tick("the handle descriptors were counted")
             _handle, type_rva, name_rva = struct.unpack_from("<QII", data, i * entry)
             by_rva[type_rva] = by_rva.get(type_rva, 0) + 1
             named += 1 if name_rva else 0
-        by_type, untyped = {}, 0
-        for type_rva, n in sorted(by_rva.items(), key=lambda kv: -kv[1])[:256]:
-            text = self.string("HandleData", type_rva, "a handle's type name") if type_rva else None
+        del data
+        # Every distinct TypeNameRva is read (a writer puts one string a handle, so there are as many as handles), the most frequent first.
+        # What bounds it is said and counted apart, never as "no type name": the clock (type_name_not_read), the number of distinct
+        # names the answer lists (type_name_not_listed) and a string the file does not hold (type_name_unreadable).
+        without = by_rva.pop(0, 0)
+        order = sorted(by_rva.items(), key=lambda kv: -kv[1])
+        by_type, keys = {}, {}
+        unreadable = not_listed = not_read = read = 0
+        for done, (type_rva, n) in enumerate(order):
+            checkpoint()
+            if late():
+                not_read = sum(m for _r2, m in order[done:])
+                self.problem("HandleData", rva, "max_seconds was reached after the type names at %d of %d distinct TypeNameRva values were "
+                             "read: %d handle(s) have a type name that was not read (type_name_not_read)" % (done, len(order), not_read))
+                break
+            text = self.string("HandleData", type_rva, "a handle's type name")
+            read += 1
             if text is None:
-                untyped += n
-            else:
-                key = str(shown(text, "name"))
-                by_type[key] = by_type.get(key, 0) + n
-        rest = sum(n for _r2, n in sorted(by_rva.items(), key=lambda kv: -kv[1])[256:])
-        self.handles = {"handles": take, "handles_declared": count, "with_an_object_name": named, "by_type": by_type, "without_a_type_name": untyped + rest,
-                        "note": "a count by object type; object names are not printed here (they are in the dump at each descriptor's ObjectNameRva)"}
+                unreadable += n
+                continue
+            key = keys.get(text)
+            if key is None:
+                if len(keys) >= MAX_HANDLE_TYPES:
+                    not_listed += n
+                    continue
+                key = keys[text] = str(shown(text, "name"))
+            by_type[key] = by_type.get(key, 0) + n
+        if not_listed:
+            self.problem("HandleData", rva, "the handles have more than %d distinct type names: %d handle(s) whose type name is a further one "
+                         "are counted apart (type_name_not_listed), not by name" % (MAX_HANDLE_TYPES, not_listed))
+        self.handles = {"handles": take, "handles_declared": count, "with_an_object_name": named, "by_type": by_type,
+                        "without_a_type_name": without, "type_name_unreadable": unreadable, "type_name_not_listed": not_listed,
+                        "type_name_not_read": not_read, "type_name_strings_read": read, "type_names_listed_at_most": MAX_HANDLE_TYPES,
+                        "note": "a count by object type. without_a_type_name counts the handles whose TypeNameRva is 0 and no other; a type "
+                                "name the file does not hold (type_name_unreadable, each in problems), one past the %d distinct names "
+                                "listed (type_name_not_listed) and one the clock left unread (type_name_not_read) are counted apart, and "
+                                "any of the three makes the status partial. Object names are not printed here (they are in the dump at "
+                                "each descriptor's ObjectNameRva)" % MAX_HANDLE_TYPES}
 
     def comments(self):
         """The comment streams (CommentA, CommentW): text the dump's writer put in, such as the command line of the dumping tool. Lines, judged."""
@@ -2073,7 +2194,14 @@ class Dump:
             lines = [line.strip() for line in re.split(r"[\r\n]+", text) if line.strip()]
             if min(size, in_file) > take or len(lines) > 32:
                 self.problem(name, rva, "the comment is %d bytes in %d line(s); the first %d bytes and 32 lines are read" % (size, len(lines), take))
-            out.append({"stream": name, "bytes": size, "file_offset": rva, "lines": [shown(line, "text") for line in lines[:32]]})
+            judged = []
+            for line in lines[:32]:
+                checkpoint()
+                if late():
+                    self.problem(name, rva, "max_seconds was reached: %d of the comment's first %d line(s) are in this answer" % (len(judged), len(lines[:32])))
+                    break
+                judged.append(shown(line, "text"))
+            out.append({"stream": name, "bytes": size, "file_offset": rva, "lines": judged})
         return out
 
     # ---- addresses ----
@@ -2087,8 +2215,12 @@ class Dump:
         """[va, va + length) as pieces in address order: (va, bytes, file offset or None, why absent or None)."""
         end = va + length
         at = max(0, bisect.bisect_right(self.seg_va, va) - 1)
+        turns = 0
         while va < end:
-            while at < len(self.seg_va) and self.seg_va[at] + self.seg_len[at] <= va:
+            turns += 1
+            if not turns & 1023:
+                tick("the ranges of an address range were walked")
+            while at < len(self.seg_va) and self.seg_va[at] + self.seg_len[at] <= va:      # at most one step: `at` starts at the range at or below va
                 at += 1
             if at >= len(self.seg_va) or self.seg_va[at] >= end:
                 yield va, end - va, None, "not in the dump"
@@ -2149,6 +2281,23 @@ class Dump:
         return {"base": hx(self.reg_va[at]), "bytes": self.reg_len[at], "state": STATE.get(self.reg_state[at], hx(self.reg_state[at])),
                 "protect": protect_name(self.reg_protect[at]), "type": MEMTYPE.get(self.reg_type[at], hx(self.reg_type[at]) if self.reg_type[at] else None),
                 "allocation_base": hx(self.reg_abase[at]), "allocation_protect": protect_name(self.reg_aprot[at])}
+
+
+def shown_path(text):
+    """A path read from the dump, judged as a path. The shared rule withholds a path whole when one of its components is over 128
+    characters, and it cuts components at `/` only, so a Windows path of more than 128 characters (any module under WinSxS) was one
+    component. Here such a path, when it has no `/` of its own and no component over 128 characters between its backslashes, is judged
+    with its backslashes read as `/` and printed with them put back (a placeholder holds no `/`, so every `/` of the result is one of
+    the path's separators). The backstop is asked about the path as it stands as well, because one of its rules reads across a backslash
+    and not across a `/`; what it calls a secret stays withheld whole."""
+    if len(text) <= MAX_COMPONENT or "\\" not in text or "/" in text or len(text) > MAX_ONE:
+        return shown(text, "path")
+    if any(len(part) > MAX_COMPONENT for part in text.split("\\")) or _hidden(text) or _backstop_reason(text) is not None:
+        return shown(text, "path")
+    judged = shown(text.replace("\\", "/"), "path")
+    if str(judged).startswith("<withheld "):
+        return judged
+    return Shown(str(judged).replace("/", "\\"))
 
 
 def load(path):
@@ -2290,7 +2439,7 @@ def process_parameters(dump):
         row = {"in_dump": text is not None, "va": hx(buffer), "bytes": length, "characters": length // 2,
                "file_offset": place[2] if place else None}
         if text is not None:
-            row["shown"] = shown(text, "text" if key == "command_line" else "path")
+            row["shown"] = shown(text, "text") if key == "command_line" else shown_path(text)
         elif length:
             row["why_not"] = "the string's buffer at %s is not in the dump" % hx(buffer)
         out[key] = row
@@ -2316,7 +2465,7 @@ def view_summary(dump, p):
     out["counts"] = {"streams": len(dump.directory), "modules": len(dump.modules), "unloaded_modules": len(dump.unloaded), "threads": len(dump.threads),
                      "memory_ranges": len(dump.seg_va), "memory_ranges_declared": dump.ranges_declared, "memory_ranges_empty": dump.ranges_empty,
                      "memory_ranges_overlapping": dump.ranges_overlapping, "memory_ranges_cut_by_end_of_file": dump.ranges_cut,
-                     "memory_info_regions": len(dump.reg_va)}
+                     "memory_info_regions": len(dump.reg_va), "memory_info_regions_overlapping": dump.regions_overlapping}
     out["memory"] = {"mapped_bytes": dump.mapped_bytes, "declared_bytes": dump.declared_bytes,
                      "lowest_address": hx(dump.seg_va[0]) if dump.seg_va else None,
                      "highest_address": hx(dump.seg_va[-1] + dump.seg_len[-1] - 1) if dump.seg_va else None,
@@ -2324,29 +2473,95 @@ def view_summary(dump, p):
                              "declare (larger only when the file is truncated). Every other address of the process is not in the dump, "
                              "which is not the same as zero"}
     out["handles"] = dump.handles
-    streams, facts = paged(len(dump.directory), 0, MAX_LIMIT, lambda i: dump.directory[i])
+    streams, facts = paged(len(dump.directory), 0, MAX_LIMIT, lambda i: dump.directory[i], p["deadline"])
     out["streams"] = streams
     if facts["truncated"]:
         out["streams_page"] = facts
     read_here = {"SystemInfo", "MiscInfo", "ModuleList", "UnloadedModuleList", "ThreadList", "ThreadExList", "ThreadInfoList", "ThreadNames",
                  "MemoryList", "Memory64List", "MemoryInfoList", "Exception", "HandleData", "CommentA", "CommentW"}
+    if "ThreadList" in dump.streams:
+        read_here.discard("ThreadExList")       # the threads are read from the ThreadList; a ThreadExList beside it is not read
     out["streams_not_read"] = sorted({s["name"] for s in dump.directory if s["type"] and s["name"] not in read_here})
+    if "ThreadList" in dump.streams and "ThreadExList" in dump.streams:
+        out["streams_not_read_note"] = ("the dump has a ThreadList and a ThreadExList: the threads are read from the ThreadList, and the "
+                                        "ThreadExList (the same threads, each with its backing store) is not read")
     out["streams_absent"] = sorted(set(dump.absent))
+    out["not_read_in_this_view"] = ("the entries of the module and thread lists are counted here, not followed: a module's name and PDB record "
+                                    "and a thread's context and name are read by the views modules and threads, and a fault in one of them "
+                                    "is reported there, not here (the names this view prints, of the modules that hold the exception "
+                                    "address and the image base, are read)")
     extra = []
     if facts["truncated"]:
         extra.append("the directory has %d entries and %d are listed" % (facts["total"], facts["returned"]))
-    status, basis = status_of(dump, "summary", "the header, the directory and every stream this tool reads were read whole; the streams it does not "
-                                               "read are named in streams_not_read, and the ones the dump does not have in streams_absent", extra)
+    handles = dump.handles or {}
+    if handles.get("type_name_not_read") or handles.get("type_name_not_listed") or handles.get("type_name_unreadable"):
+        extra.append("the handle count by type is not whole: %d handle(s) have a type name that was not read, %d one past the names listed, "
+                     "%d one the file does not hold" % (handles["type_name_not_read"], handles["type_name_not_listed"], handles["type_name_unreadable"]))
+    status, basis = status_of(dump, "summary", "the header, the directory and the fixed part of every stream this tool reads were read whole, with "
+                                               "every handle's type name; module names, PDB records and thread contexts are not read in this view "
+                                               "(not_read_in_this_view); the streams the tool does not read are named in streams_not_read, and "
+                                               "the ones the dump does not have in streams_absent", extra)
     finish(dump, out, status, basis)
+
+
+def pdb_record(dump, module):
+    """What a module's entry says of its CodeView record, in three cases a reader can tell apart: None (the entry declares no record), a
+    record that was read (RSDS with its GUID, age and path, or one of another format), and a record that is declared and is not in the
+    file whole (read false, named in problems, so the answer is partial). A path that the PDB_PATH_BYTES read of it do not end is said
+    to be cut."""
+    cv_size, cv_rva = module["cv"]
+    if not cv_size:
+        return None
+    what = "the CodeView (PDB) record of module %d" % module["index"]
+    out = {"read": False, "declared_bytes": cv_size, "file_offset": cv_rva, "format": None}
+    if not cv_rva:
+        dump.problem("ModuleList", module["entry_offset"], "%s: the entry declares %d bytes at file offset 0, where the header is; it is not read" % (what, cv_size))
+        out["why_not"] = "the entry declares a record of %d bytes at file offset 0; it was not read, and this is not a module without a record" % cv_size
+        return out
+    take = min(cv_size, 24 + PDB_PATH_BYTES)
+    raw = dump.need("ModuleList", cv_rva, take, what)
+    if raw is None:
+        if dump.read(cv_rva, 4) == b"RSDS":
+            out["format"] = "RSDS"
+        out["why_not"] = ("the entry declares a record of %d bytes at file offset %d and the file does not hold the %d bytes to be read of it "
+                          "(problems): the record is declared and not readable, which is not a module without a record" % (cv_size, cv_rva, take))
+        return out
+    out["read"] = True
+    if raw[:4] != b"RSDS":
+        out["format"] = "not RSDS"
+        return out
+    if len(raw) < 24:
+        out["format"] = "RSDS"
+        out["read"] = False
+        out["why_not"] = "the record begins with RSDS and declares %d bytes; its GUID and age need 24" % cv_size
+        dump.problem("ModuleList", cv_rva, "%s: it begins with RSDS and declares %d bytes, fewer than the 24 of its fixed part" % (what, cv_size))
+        return out
+    d1, d2, d3 = struct.unpack_from("<IHH", raw, 4)
+    path, ended, _rest = raw[24:].partition(b"\x00")
+    text = path.decode("utf-8", "replace")
+    out.update(format="RSDS", guid="%08X%04X%04X%s" % (d1, d2, d3, raw[12:20].hex().upper()), age=struct.unpack_from("<I", raw, 20)[0],
+               path=shown_path(text) if text else None, path_bytes_read=len(path), path_cut=False)
+    if not ended and cv_size > take:
+        out["path_cut"] = True
+        out["path_note"] = ("the record declares %d bytes; the first %d bytes of its path were read and the path does not end in them, so "
+                            "what is printed is the beginning of the path" % (cv_size, PDB_PATH_BYTES))
+        dump.problem("ModuleList", cv_rva, "%s: %d bytes are declared and the path does not end in the first %d bytes of it, which are what "
+                     "was read" % (what, cv_size, PDB_PATH_BYTES))
+    elif not ended:
+        out["path_note"] = "the path has no terminating NUL inside the record's %d bytes; it is printed as far as the record goes" % cv_size
+    return out
 
 
 def module_row(dump, module, state):
     name = dump.module_name(module, "ModuleList" if state == "loaded" else "UnloadedModuleList")
     row = {"state": state, "index": module["index"], "base": hx(module["base"]), "size": module["size"],
            "end": hx(module["base"] + module["size"]), "name": shown(re.split(r"[\\/]", name)[-1], "name") if name else None,
-           "path": shown(name, "path") if name else None,
+           "path": shown_path(name) if name else None,
            "timestamp": {"raw": module["stamp"], "utc": iso(module["stamp"]), "epoch": "seconds since 1970-01-01 UTC (the PE header's TimeDateStamp as the loader recorded it)"},
            "checksum": hx(module["checksum"]), "entry_file_offset": module["entry_offset"]}
+    if name is None:
+        row["name_why_not"] = ("the entry gives no name (its name RVA is 0)" if not module["name_rva"] else
+                               "the name string at file offset %d could not be read (problems)" % module["name_rva"])
     if state == "loaded":
         fixed = module["fixed"]
         if fixed[0] == 0xFEEF04BD:
@@ -2354,17 +2569,9 @@ def module_row(dump, module, state):
             row["product_version"] = "%d.%d.%d.%d" % (fixed[4] >> 16, fixed[4] & 0xFFFF, fixed[5] >> 16, fixed[5] & 0xFFFF)
         else:
             row["file_version"] = row["product_version"] = None
-        cv_size, cv_rva = module["cv"]
-        row["pdb"] = None
-        if cv_size >= 24 and cv_rva:
-            raw = dump.read(cv_rva, min(cv_size, 24 + 520))
-            if raw[:4] == b"RSDS" and len(raw) >= 24:
-                d1, d2, d3 = struct.unpack_from("<IHH", raw, 4)
-                guid = "%08X%04X%04X%s" % (d1, d2, d3, raw[12:20].hex().upper())
-                pdb = raw[24:].split(b"\x00", 1)[0].decode("utf-8", "replace")
-                row["pdb"] = {"format": "RSDS", "guid": guid, "age": struct.unpack_from("<I", raw, 20)[0], "path": shown(pdb, "path") if pdb else None}
-            elif raw[:4]:
-                row["pdb"] = {"format": "not RSDS (%d bytes at file offset %d)" % (cv_size, cv_rva)}
+        row["pdb"] = pdb_record(dump, module)
+        row["pdb_record"] = ("none declared" if row["pdb"] is None else "declared, not readable" if not row["pdb"]["read"]
+                             else "read" if row["pdb"]["format"] == "RSDS" else "read, not RSDS")
         have = dump.present(module["base"], module["size"]) if module["size"] else 0
         row["image_bytes_in_dump"] = have
         row["image_coverage_percent"] = round(100.0 * have / module["size"], 2) if module["size"] else None
@@ -2407,6 +2614,32 @@ def region_match(dump, at, p):
     return p["type"] == "any" or kind == {"private": 0x20000, "mapped": 0x40000, "image": 0x1000000}[p["type"]]
 
 
+def matching_part(dump, va, length, p, first_only=False):
+    """What of the range [va, va + length) the protect and type filters are met by: (regions that match, bytes of the range in them, the
+    first as (region index, from, to)). A range the dump holds can lie over several regions (a writer joins neighbours), so every region it
+    overlaps is asked, not only the one at its first address: the region that holds `va`, then each that begins inside the range."""
+    end = va + length
+    at = dump.region(va)
+    if at < 0:
+        at = bisect.bisect_right(dump.reg_va, va)
+    stop = bisect.bisect_left(dump.reg_va, end)
+    count = total = 0
+    first = None
+    for turn, i in enumerate(range(at, stop)):
+        if not turn & 1023:
+            tick("the regions under a memory range were compared with the filter")
+        start, finish = max(va, dump.reg_va[i]), min(end, dump.reg_va[i] + dump.reg_len[i])
+        if finish <= start or not region_match(dump, i, p):
+            continue
+        count += 1
+        total += finish - start
+        if first is None:
+            first = (i, start, finish)
+            if first_only:
+                break
+    return count, min(total, length), first
+
+
 def view_memory(dump, p):
     out = base_answer(dump, p)
     has_info = "MemoryInfoList" in dump.streams
@@ -2417,7 +2650,12 @@ def view_memory(dump, p):
     out["list"] = p["list"]
     if p["list"] == "ranges":
         if filtered:
-            keep = [i for i in range(len(dump.seg_va)) if region_match(dump, dump.region(dump.seg_va[i]), p)]
+            keep = []
+            for i in range(len(dump.seg_va)):
+                if not i & 1023:
+                    tick("the memory ranges were compared with the filter")
+                if matching_part(dump, dump.seg_va[i], dump.seg_len[i], p, first_only=True)[0]:
+                    keep.append(i)
         else:
             keep = range(len(dump.seg_va))
 
@@ -2431,7 +2669,12 @@ def view_memory(dump, p):
                 last = dump.region(va + length - 1)
                 if at >= 0 and last != at:
                     row["regions_spanned"] = (last - at + 1) if last >= 0 else None
-                    row["region_note"] = "the range spans more than one region; region is the one at its first address"
+                    row["region_note"] = ("the range spans more than one region; region is the one at its first address%s"
+                                          % (", and matched says which part of the range the filter is met by" if filtered else ""))
+                if filtered:
+                    count, total, first = matching_part(dump, va, length, p)
+                    row["matched"] = {"regions": count, "bytes": total, "whole_range": total >= length,
+                                      "first": {"va": hx(first[1]), "end": hx(first[2]), "region": dump.region_facts(first[0])}}
             module = dump.module_ref(va)
             if module:
                 row["module"] = module
@@ -2442,7 +2685,15 @@ def view_memory(dump, p):
     else:
         if not has_info:
             fail("list regions reads the MemoryInfoList, and this dump has none. list ranges gives the memory the dump holds", memory_info_list="absent")
-        keep = [i for i in range(len(dump.reg_va)) if region_match(dump, i, p)] if filtered else range(len(dump.reg_va))
+        if filtered:
+            keep = []
+            for i in range(len(dump.reg_va)):
+                if not i & 4095:
+                    tick("the regions were compared with the filter")
+                if region_match(dump, i, p):
+                    keep.append(i)
+        else:
+            keep = range(len(dump.reg_va))
 
         def make(n):
             i = keep[n]
@@ -2458,6 +2709,10 @@ def view_memory(dump, p):
         out["totals"] = {"regions": len(dump.reg_va), "regions_matching": len(keep)}
     out["page"] = facts
     out["filter"] = {"protect": p["protect"], "type": p["type"]}
+    if filtered:
+        out["filter"]["rule"] = ("a range is listed when any region it overlaps meets the filter (protect and type are both asked of the same "
+                                 "region), not only the region at its first address; its row says in matched how many regions, how many "
+                                 "bytes and where the first is" if p["list"] == "ranges" else "a region is listed when it meets the filter itself")
     out["memory_info_list"] = "present" if has_info else "absent: the dump does not record the protection, state or type of its ranges"
     out["note"] = ("a range is memory the dump holds, at file_offset; bytes_in_file is less than bytes only where the file is truncated. A region "
                    "is the process's own bookkeeping (VirtualQuery) at the moment of the dump: it can be reserved or free and hold no bytes, and "
@@ -2556,8 +2811,12 @@ def nearest(dump, va):
 
 def view_va(dump, p):
     out = base_answer(dump, p)
-    rows = []
-    for va in p["addresses"]:
+    rows, left = [], []
+    for asked, va in enumerate(p["addresses"]):
+        checkpoint()
+        if rows and late():         # a module's name is judged for each address: past the clock the rest is said, not looked up
+            left = p["addresses"][asked:]
+            break
         va, n, at, why = next(dump.pieces(va, 1))
         row = {"va": hx(va), "in_dump": at is not None}
         if at is not None:
@@ -2579,19 +2838,25 @@ def view_va(dump, p):
             row["module"] = module
         rows.append(row)
     out["addresses"] = rows
-    out["page"] = {"total": len(rows), "returned": len(rows), "next_offset": None, "truncated": False}
+    out["page"] = {"total": len(p["addresses"]), "returned": len(rows), "next_offset": None, "truncated": bool(left)}
+    if left:
+        out["not_answered"] = [hx(va) for va in left]
+        out["page"]["how_to_continue"] = "call again with the addresses of not_answered; each address is answered by itself"
     out["counts"] = {"in_dump": sum(1 for r in rows if r["in_dump"]), "not_in_dump": sum(1 for r in rows if not r["in_dump"])}
     out["memory_info_list"] = "present" if "MemoryInfoList" in dump.streams else "absent"
     out["note"] = ("file_offset is where the byte at va is in the dump file. An address that is not in the dump has no file offset: the writer "
                    "did not put that memory in the file (or the file is truncated), which says nothing of what the process held there")
-    status, basis = status_of(dump, "va", "each of the %d address(es) was looked up in every memory range the dump lists" % len(rows))
+    status, basis = status_of(dump, "va", "each of the %d address(es) was looked up in every memory range the dump lists" % len(rows),
+                              ["max_seconds (%d) was reached after %d of %d addresses; the others are in not_answered" % (p["seconds"], len(rows), len(p["addresses"]))] if left else [])
     finish(dump, out, status, basis)
 
 
 def coverage_of(dump, va, length):
     """The pieces of [va, va + length) and the totals of what is present and what is not."""
     segments, present, absent, gaps = [], 0, 0, 0
-    for at_va, n, at, why in dump.pieces(va, length):
+    for turn, (at_va, n, at, why) in enumerate(dump.pieces(va, length)):
+        if not turn & 1023:
+            tick("the coverage of the range was counted")
         last = segments[-1] if segments else None
         if last is not None and at is None and last["state"] == "absent" and last["why"] == why:
             last["bytes"] += n
@@ -2651,7 +2916,8 @@ def write_range(dump, p, va, length, name, what, deadline):
         GUARD["depth"] -= 1
     checkpoint()
     return {"written": True, "file": placed, "file_bytes": body.bytes, "map_file": placed_map, "digests_in": listed, "contains_secret_values": True,
-            "note": "the file is memory content: cite it by job and path, never by content. Its size and sha256 are in digests_in, not in this answer"}
+            "note": "the file is memory content: cite it by job and path, never by content. file_bytes is the length of the range that was asked "
+                    "for (absent bytes are zeros in the file); the file's sha256 is in digests_in, with its size, and not in this answer"}
 
 
 def answer_range(dump, p, out, view, va, length, name, what, complete_basis, deadline):
@@ -2694,7 +2960,7 @@ def view_read(dump, p):
     if module:
         out["module"] = module
     answer_range(dump, p, out, "read", p["va"], p["length"], "read-%x-%d.bin" % (p["va"], p["length"]), "memory at %s" % hx(p["va"]),
-                 "every byte of the range is in the dump%s" % (" and was written" if p["write_values"] else ""), time.monotonic() + p["seconds"])
+                 "every byte of the range is in the dump%s" % (" and was written" if p["write_values"] else ""), p["deadline"])
 
 
 def pe_sections(dump, module):
@@ -2730,6 +2996,8 @@ def pe_sections(dump, module):
         return out
     sections = []
     for i in range(take):
+        if not i & 15:
+            tick("the section table of the image was read")
         raw_name, vsize, rva, raw_size, raw_at = struct.unpack_from("<8sIIII", table, i * 40)
         flags = struct.unpack_from("<I", table, i * 40 + 36)[0]
         span = vsize or raw_size
@@ -2746,6 +3014,24 @@ def pe_sections(dump, module):
     return out
 
 
+def printed_as(name, wanted):
+    """Whether view modules prints this module's path or its file name as `wanted` (lower case), so that a withheld name answers no guess.
+    What is printed of a string is the string itself or the string with parts replaced by <...> placeholders. So a name whose own text
+    differs from `wanted` (when `wanted` has no `<`), or differs from it before its first `<` or after its last `>`, cannot be printed
+    as it: that is compared first, and only a name that passes is put through the display rules, which cost far more than a comparison."""
+    for text, path in ((name, True), (re.split(r"[\\/]", name)[-1], False)):
+        if "Σ" not in text:            # str.lower() reads a capital sigma by what follows it; such a name skips the cheap test
+            plain = _escaped(text).lower()
+            if "<" not in wanted:
+                if plain != wanted:
+                    continue
+            elif not (plain.startswith(wanted.partition("<")[0]) and plain.endswith(wanted.rpartition(">")[2])):
+                continue
+        if str(shown_path(text) if path else shown(text, "name")).lower() == wanted:
+            return True
+    return False
+
+
 def view_module(dump, p):
     out = base_answer(dump, p)
     if not dump.modules:
@@ -2759,11 +3045,21 @@ def view_module(dump, p):
                                                                    "; that address is inside the module at %s" % hx(inside["base"])))
     else:
         wanted = p["module"].lower()
-        found = []
-        for m in dump.modules:              # matched against what view modules prints, so a withheld name answers no guess
+        found, judged = [], {}
+        guess = wanted.startswith("<")      # a placeholder names no module: what is withheld is named by base
+        for compared, m in enumerate(dump.modules if not guess else ()):
             checkpoint()
+            if late():
+                fail("max_seconds (%d) was reached while the module names were compared with the one asked for (%d of %d compared): no module "
+                     "was chosen and nothing was written. Name the module by base (view modules gives it), or raise max_seconds"
+                     % (p["seconds"], compared, len(dump.modules)), modules=len(dump.modules), compared=compared, out_of_time=True)
             name = dump.module_name(m)
-            if name and wanted in (str(shown(name, "path")).lower(), str(shown(re.split(r"[\\/]", name)[-1], "name")).lower()) and not wanted.startswith("<"):
+            if not name:
+                continue
+            hit = judged.get(name)          # a name is judged once, however many modules carry it
+            if hit is None:
+                hit = judged[name] = printed_as(name, wanted)
+            if hit:
                 found.append(m)
         if not found:
             fail("no module of the module list has that name (the file name or the whole path, in any case); view modules lists them, and "
@@ -2784,7 +3080,7 @@ def view_module(dump, p):
     answer_range(dump, p, out, "module", module["base"], module["size"], "module-%x-%d.img" % (module["base"], module["size"]),
                  "the image of the module at %s" % hx(module["base"]),
                  "every byte of the module's image (%d bytes at %s) is in the dump%s" % (module["size"], hx(module["base"]), " and was written" if p["write_values"] else ""),
-                 time.monotonic() + p["seconds"])
+                 p["deadline"])
 
 
 def needle_forms(p):
@@ -2817,35 +3113,73 @@ def needle_forms(p):
     return forms
 
 
-def hits_in(buf, lowered, form, skip, room):
-    """The first `room` positions in `buf` of one form of the needle that end after `skip` (what lies wholly inside the carried tail was
-    reported). A case-folding form is looked for in `lowered` (the same bytes with ASCII capitals lowered: a plain search, linear in the
-    memory read) and each place found is then held to the form's exact rule on the bytes themselves, which a byte that is not a letter of
-    the needle can fail (the high byte of a UTF-16 unit that happens to be a capital's code)."""
+def hits_in(buf, lowered, form, limit, room):
+    """The first `room` positions below `limit` in `buf` of one form of the needle. A case-folding form is looked for in `lowered` (the
+    same bytes with ASCII capitals lowered: a plain search, linear in the memory read) and each place found is then held to the form's
+    exact rule on the bytes themselves, which a byte that is not a letter of the needle can fail (the high byte of a UTF-16 unit that
+    happens to be a capital's code). Memory can be made of places that pass the plain search and fail the exact rule, millions a piece,
+    so the clock is looked at every 16,384 places: returns (the positions, the offset below which every position was found), and that
+    offset is `limit` unless the clock ended the look, in which case it is above 0."""
     _label, raw, pattern = form
-    found, start = [], max(0, skip - len(raw) + 1)
+    found, start, end, turns = [], 0, min(len(buf), limit + len(raw) - 1), 0
     while len(found) < room:
-        at = (buf if pattern is None else lowered).find(raw, start)
+        at = (buf if pattern is None else lowered).find(raw, start, end)
         if at < 0:
             break
         if pattern is None or pattern.match(buf, at):
             found.append(at)
         start = at + 1
-    return found
+        turns += 1
+        if not turns & 16383:
+            checkpoint()
+            if late():
+                return found, min(start, limit)
+    return found, limit
 
 
 def view_find(dump, p):
+    """The search. The memory is read in pieces of CHUNK bytes; of each piece, with the last bytes of the piece before it in front (the
+    carried tail, one byte less than the longest form of the needle), only the hits that START below the frontier are taken: the frontier
+    is the address where the next piece's buffer will begin, so a hit that starts at or above it is found by the next piece, whole, at
+    the front of its buffer. Every hit is thus found once, in address order whatever the forms' lengths, and at any moment every hit that
+    starts below the frontier is in the list and none that starts at or above it is. That is what a stop rests on: the search resumes
+    at the frontier (the clock, a read that failed), or at the first hit that was not taken (max_hits, the answer's size), and a call
+    that starts there finds exactly the hits this one did not give. Where two ranges are not adjacent the tail is searched by itself and
+    nothing is carried."""
     out = base_answer(dump, p)
     forms = needle_forms(p)
     longest = max(len(raw) for _l, raw, _p in forms)
-    started = time.monotonic()
-    deadline = started + p["seconds"]
     lo, hi = p["va_start"], p["va_end"] if p["va_end"] is not None else U64 + 1
-    hits, searched, stop, resume = [], 0, None, None
-    tail, previous_end = b"", None
+    hits, read_bytes, stop, resume = [], 0, None, None
+    tail, tail_va, previous_end = b"", None, None
+
+    def take(buf, buf_va, limit):
+        """The hits of `buf` that start below buf_va + limit, in address order, added to the list; False when max_hits ended the search."""
+        nonlocal stop, resume
+        room = p["max_hits"] - len(hits) + 1
+        lowered = buf.lower() if p["ignore_case"] else None
+        found, reached = [], limit
+        for form in forms:              # a form the clock cut short lowers `reached`, and the forms after it look no further than that
+            positions, reached = hits_in(buf, lowered, form, reached, room)
+            found.extend((buf_va + i, form[0], len(form[1])) for i in positions)
+        del lowered
+        found.sort()
+        for hit in found:
+            if hit[0] >= buf_va + reached:
+                break
+            if len(hits) >= p["max_hits"]:
+                stop, resume = "max_hits (%d) was reached" % p["max_hits"], hit[0]
+                return False
+            hits.append(hit)
+        if reached < limit:             # the clock, inside a piece: every hit that starts below buf_va + reached is in the list
+            stop, resume = "max_seconds (%d) was reached" % p["seconds"], buf_va + reached
+            return False
+        return True
+
     at = max(0, bisect.bisect_right(dump.seg_va, lo) - 1)
-    names = {}
     while at < len(dump.seg_va) and stop is None:
+        if not at & 1023:
+            tick("the memory ranges were walked for the search")
         seg_va, have, seg_off = dump.seg_va[at], dump.seg_have[at], dump.seg_off[at]
         at += 1
         first, last = max(seg_va, lo), min(seg_va + have, hi)
@@ -2853,47 +3187,51 @@ def view_find(dump, p):
             if seg_va >= hi:
                 break
             continue
-        if previous_end != first:
-            tail = b""              # not adjacent in the address space: nothing carries over
+        if previous_end != first:   # not adjacent in the address space: what was carried is searched by itself, and nothing carries over
+            if tail and not take(tail, tail_va, len(tail)):
+                break
+            tail = b""
         pos = first
         while pos < last:
-            take = min(CHUNK, last - pos)
-            data = dump.read(seg_off + (pos - seg_va), take)
-            if len(data) < take:
-                dump.problem(dump.seg_src[at - 1], seg_off + (pos - seg_va) + len(data), "a read of %d bytes returned %d: the file changed or cannot be read there" % (take, len(data)))
-                stop, resume = "the dump could not be read at file offset %d" % (seg_off + (pos - seg_va) + len(data)), pos
+            size = min(CHUNK, last - pos)
+            data = dump.read(seg_off + (pos - seg_va), size)
+            if len(data) < size:
+                dump.problem(dump.seg_src[at - 1], seg_off + (pos - seg_va) + len(data), "a read of %d bytes returned %d: the file changed or cannot be read there" % (size, len(data)))
+                stop, resume = "the dump could not be read at file offset %d" % (seg_off + (pos - seg_va) + len(data)), pos - len(tail)
                 break
             buf = tail + data if tail else data
             buf_va = pos - len(tail)
-            room = p["max_hits"] - len(hits) + 1
-            lowered = buf.lower() if p["ignore_case"] else None
-            found = []
-            for form in forms:
-                found.extend((buf_va + i, form[0], len(form[1])) for i in hits_in(buf, lowered, form, len(tail), room))
-            del lowered
-            found.sort()
-            for hit_va, label, length in found:
-                if len(hits) >= p["max_hits"]:
-                    stop, resume = "max_hits (%d) was reached" % p["max_hits"], hit_va
-                    break
-                hits.append((hit_va, label, length))
-            if stop is not None:
+            keep = min(longest - 1, len(buf))
+            if not take(buf, buf_va, len(buf) - keep):
                 break
-            searched += take
-            pos += take
-            tail = buf[-(longest - 1):] if longest > 1 else b""
+            del data
+            read_bytes += size
+            pos += size
+            tail, tail_va = (buf[len(buf) - keep:], pos - keep) if keep else (b"", pos)
+            del buf
             checkpoint()
-            if time.monotonic() > deadline and (pos < last or (at < len(dump.seg_va) and dump.seg_va[at] < hi)):
-                stop, resume = "max_seconds (%d) was reached" % p["seconds"], pos
+            # The clock stops the search only where it leaves a call from the resume address something to do and this call something done:
+            # the frontier is above va_start, and memory lies beyond this piece.
+            if late() and pos - len(tail) > lo and (pos < last or (at < len(dump.seg_va) and dump.seg_va[at] < hi)):
+                stop, resume = "max_seconds (%d) was reached" % p["seconds"], pos - len(tail)
                 break
         previous_end = last
-    rows = []
-    for hit_va, label, length in hits:
+    if stop is None and tail:
+        take(tail, tail_va, len(tail))
+    rows, names = [], {}
+    for n, (hit_va, label, length) in enumerate(hits):
+        if not n & 63:
+            checkpoint()
         _va, _n, file_offset, _why = next(dump.pieces(hit_va, 1))
         row = {"va": hx(hit_va), "file_offset": file_offset, "form": label, "bytes": length}
         module = dump.module_at(hit_va)
         if module is not None:
             if module["index"] not in names:
+                # A module's name is judged once, which costs. A search the clock ended still names the modules of the hits it has,
+                # for DESCRIBE_GRACE seconds at most; the hits from there on are left to the next call.
+                if rows and time.monotonic() > p["deadline"] + DESCRIBE_GRACE:
+                    stop, resume = "max_seconds (%d) and %d more seconds for naming the hits' modules were reached" % (p["seconds"], DESCRIBE_GRACE), hit_va
+                    break
                 names[module["index"]] = dump.module_ref(hit_va)["name"]
             row["module"] = {"name": names[module["index"]], "base": hx(module["base"]), "rva": hx(hit_va - module["base"])}
         region = dump.region(hit_va)
@@ -2904,18 +3242,29 @@ def view_find(dump, p):
     if facts["truncated"]:              # the page's byte ceiling: the rest is found again from the first hit that is not shown
         resume = hits[facts["returned"]][0]
         stop = "the answer reached %d bytes of JSON" % INLINE_BYTES
-    seconds = time.monotonic() - started
+    seconds = time.monotonic() - p["started"]
+    # What was searched is the memory the dump holds below the address the search ended at: every hit that starts there is in the answer.
+    reached = min(resume, hi) if resume is not None else hi
+    searched = dump.present(lo, reached - lo) if reached > lo else 0
     out["hits"] = shown_rows
     out["page"] = {"total": len(shown_rows) if stop is None else None, "returned": len(shown_rows), "next_offset": None, "truncated": stop is not None,
                    "resume_va": hx(resume) if resume is not None else None}
     if stop is not None:
         out["page"]["total_note"] = "the search stopped early, so the total is not known: at least %d" % len(shown_rows)
-        out["page"]["how_to_continue"] = "call again with va_start %s; every hit below it is in this answer" % hx(resume)
+        out["page"]["how_to_continue"] = ("call again with va_start %s: every hit that starts below that address is in this answer and none that "
+                                          "starts at or above it is, so the calls together give each hit once" % hx(resume))
+        if stop.startswith("the dump could not be read"):
+            out["page"]["how_to_continue"] += ("; while the file cannot be read there that call stops at the same place, and a va_start above "
+                                               "the range that holds the unreadable bytes searches what lies beyond them")
     out["needle"] = {"forms": [{"form": label, "bytes": len(raw)} for label, raw, _p in forms], "ignore_case": p["ignore_case"],
                      "ignore_case_note": "ASCII letters only; any other character is matched exactly" if p["ignore_case"] else None}
-    out["searched"] = {"va_start": hx(lo), "va_end": hx(hi) if hi <= U64 else None, "bytes": searched, "mapped_bytes_in_dump": dump.mapped_bytes,
-                       "seconds": round(seconds, 3), "megabytes_per_second": round(searched / 1048576 / seconds, 1) if seconds > 0.0005 else None,
-                       "max_seconds": p["seconds"], "piece_bytes": CHUNK}
+    out["searched"] = {"va_start": hx(lo), "va_end": hx(hi) if hi <= U64 else None, "bytes": searched, "bytes_read": read_bytes,
+                       "mapped_bytes_in_dump": dump.mapped_bytes,
+                       "seconds": round(seconds, 3), "megabytes_per_second": round(read_bytes / 1048576 / seconds, 1) if seconds > 0.0005 else None,
+                       "max_seconds": p["seconds"], "piece_bytes": CHUNK,
+                       "note": "bytes is the memory the dump holds from va_start up to the address the search ended at (resume_va, or va_end): "
+                               "every hit that starts in it is in this answer. bytes_read is what was read from the file, which is more when "
+                               "the search stopped inside a piece; seconds is the whole call, the reading of the dump's tables included"}
     out["note"] = ("a hit is the needle's bytes at va in the process and at file_offset in the dump file; a needle that lies across two ranges "
                    "adjacent in the address space is found, and one that would lie across a gap is not. Only memory the dump holds was searched: "
                    "no hit is not absence from the process unless the dump is a full-memory one, and even then pages its writer could not read "
@@ -2931,8 +3280,11 @@ def view_find(dump, p):
 
 
 def main():
-    p = parse_args(read_args())
-    p["deadline"] = time.monotonic() + p["seconds"]
+    args = read_args()
+    started = time.monotonic()      # the clock starts when the arguments are in: waiting for them is not the tool's work
+    p = parse_args(args)
+    p["started"], p["deadline"] = started, started + p["seconds"]
+    CLOCK["deadline"], CLOCK["seconds"] = p["deadline"], p["seconds"]
     dump = load(p["path"])
     {"summary": view_summary, "modules": view_modules, "memory": view_memory, "threads": view_threads, "va": view_va, "read": view_read,
      "module": view_module, "find": view_find}[p["view"]](dump, p)
@@ -2946,6 +3298,10 @@ def run_guarded():
             main()
         except (SystemExit, Terminated):
             raise
+        except OutOfTime as exc:
+            fail("max_seconds (%d) was reached while %s: the call ended without an answer, nothing was kept and nothing in this document is "
+                 "a finding. Raise max_seconds (at most %d), or ask for less in one call" % (CLOCK["seconds"], exc.doing, MAX_SECONDS),
+                 max_seconds=CLOCK["seconds"], out_of_time=True)
         except MemoryError:
             fail("the tool ran out of memory; nothing in this document is a finding")
         except OSError as exc:      # the dump or an output file could not be read or written (a full disk, a file that went away)

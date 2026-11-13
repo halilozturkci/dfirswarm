@@ -223,3 +223,38 @@ test("the tool's own clock ends a search with a truthful partial and a resume ad
   assert.equal(rest.status, "complete");
   assert.deepEqual(rest.hits.map((h: any) => [h.va, h.file_offset]), [[hex(base + BigInt(32 * GIB - 4096)), big.memoryAt + 32 * GIB - 4096]]);
 });
+
+test("the clock is looked at inside a piece: memory made of places that pass the folded search and fail the exact rule ends at max_seconds, and the chain gives every hit", { timeout: 300_000 }, async () => {
+  // U+0141 is the bytes 41 01 in UTF-16LE; lowered for the search it is 61 01, which is what this memory is made of, so every second byte
+  // is a place the plain search finds and the exact rule refuses. A piece of 8 MiB of it took 14.6 s for a needle of 300 such letters,
+  // with max_seconds 1, when the clock was looked at only between pieces.
+  const base = 0x60000000000n;
+  const size = 12 * MIB;
+  const needle = "Ł".repeat(300);
+  const body = Buffer.alloc(size);
+  for (let i = 0; i < size; i += 2) { body[i] = 0x61; body[i + 1] = 0x01; }
+  const at = [1000, 8 * MIB - 100, 11 * MIB + 2];                           // plain; across the 8 MiB piece; near the end
+  for (const n of at) Buffer.from(needle, "utf16le").copy(body, n);
+  const { head, memoryAt } = bareDump([{ va: base, size }]);
+  await writeFile(join(dir, "inputs", "refused.dmp"), Buffer.concat([head, body]));
+  const hits: string[] = [];
+  let start = "0x0", calls = 0, searched = 0;
+  for (;;) {
+    const run = await call(dir, { path: "inputs/refused.dmp", view: "find", needle, ignore_case: true, encodings: ["utf-16le"], max_seconds: 1, va_start: start });
+    const a = doc(run);
+    calls++;
+    assert.ok(run.ms < 8_000, `call ${calls} with max_seconds 1 took ${run.ms} ms`);
+    hits.push(...a.hits.map((h: any) => h.va));
+    assert.ok(a.hits.every((h: any) => h.file_offset === memoryAt + Number(BigInt(h.va) - base)));
+    searched += a.searched.bytes;
+    if (a.page.resume_va === null) { assert.equal(a.status, "complete"); break; }
+    assert.equal(a.status, "partial");
+    assert.match(a.status_basis, /max_seconds \(1\) was reached; memory from 0x[0-9a-f]+ on was not searched/);
+    assert.ok(BigInt(a.page.resume_va) > BigInt(start), "each call gets further");
+    start = a.page.resume_va;
+    assert.ok(calls < 200);
+  }
+  assert.deepEqual(hits, at.map((n) => hex(base + BigInt(n))), "every hit once, the one across the piece boundary among them");
+  assert.equal(searched, size, "the calls searched every byte once between them");
+  assert.ok(calls > 1, "the search did not fit one second, so the clock was what ended a call");
+});

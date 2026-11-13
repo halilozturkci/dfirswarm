@@ -18,7 +18,10 @@ import { after, before, test } from "node:test";
 import { PYTHON3 } from "./host-gates.ts";
 import { ROOT } from "./tool-library-harness.ts";
 import { rng } from "./memory-f1-support.ts";
-import { type Built, call, doc, encode, hex, PAGE, scene, SCRIPT, SIGMA, STRADDLE, TOOL_DIR, u32, u64, WIDE_NEEDLE } from "./pack-memory-minidump-support.ts";
+import {
+  assemble, type Built, call, doc, encode, handleEntry, hex, IMAGE, inProcess, mdString, memoryInfo, moduleEntry, PAGE, PRIVATE, RW, RWX, RX, scene, SCRIPT, SIGMA, STRADDLE,
+  TOOL_DIR, u32, u64, WIDE_NEEDLE,
+} from "./pack-memory-minidump-support.ts";
 
 const B62 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 const r = rng(20261113);
@@ -68,7 +71,7 @@ test("summary: header, flags, kind of dump, system, process, exception, handles,
     assert.equal(a.process.integrity_level.name, "high");
     assert.equal(a.process.build_string, "19041.1.amd64fre.vb_release.191206-1406");
     assert.deepEqual(a.counts, { streams: 11, modules: 2, unloaded_modules: 1, threads: 2, memory_ranges: 9, memory_ranges_declared: 9, memory_ranges_empty: 0,
-      memory_ranges_overlapping: 0, memory_ranges_cut_by_end_of_file: 0, memory_info_regions: 11 });
+      memory_ranges_overlapping: 0, memory_ranges_cut_by_end_of_file: 0, memory_info_regions: 11, memory_info_regions_overlapping: 0 });
     assert.equal(a.memory.mapped_bytes, d.mapped);
     assert.equal(a.memory.declared_bytes, d.mapped);
     assert.equal(a.exception.thread_id, 4242);
@@ -113,7 +116,9 @@ test("modules: base, size, name, timestamp, checksum, version, PDB record, the u
     assert.deepEqual([payload.state, payload.base, payload.size, payload.end, payload.name, payload.path], ["loaded", hex(s.payload), 0x5000, hex(s.payload + 0x5000n), "payload.exe", s.imagePath]);
     assert.deepEqual([payload.timestamp.raw, payload.timestamp.utc, payload.checksum], [0x65f0a1b2, new Date(0x65f0a1b2 * 1000).toISOString().replace(".000Z", "Z"), "0x1a2b3"]);
     assert.equal(payload.file_version, "1.2.3.4");
-    assert.deepEqual(payload.pdb, { format: "RSDS", guid: "33221100554477668899AABBCCDDEEFF", age: 3, path: "D:\\build\\payload.pdb" });
+    assert.deepEqual([payload.pdb.format, payload.pdb.guid, payload.pdb.age, payload.pdb.path, payload.pdb.read, payload.pdb.path_cut, payload.pdb.declared_bytes, payload.pdb_record],
+      ["RSDS", "33221100554477668899AABBCCDDEEFF", 3, "D:\\build\\payload.pdb", true, false, 24 + "D:\\build\\payload.pdb".length + 1, "read"]);
+    assert.deepEqual([gone.pdb, gone.pdb_record], [undefined, undefined], "an unloaded module's entry has no CodeView record to declare");
     assert.deepEqual([payload.image_bytes_in_dump, payload.image_coverage_percent], [0x4000, 80]);
     assert.deepEqual([ntdll.name, ntdll.file_version, ntdll.image_bytes_in_dump, ntdll.image_coverage_percent], ["ntdll.dll", "10.0.19041.3996", 0x4000, 100]);
     assert.deepEqual([gone.state, gone.name, gone.size, gone.checksum], ["unloaded", "winhttp.dll", 0x9000, "0x3c3c3"]);
@@ -228,6 +233,8 @@ test("read: what is present is said without writing; bytes go to a file only in 
     assert.deepEqual(await listed(out), []);
     const wrote = await ask({ ...whole, write_values: true }, JOB(out));
     assert.deepEqual([wrote.status, wrote.output.written, wrote.output.file_bytes, wrote.output.contains_secret_values], ["complete", true, 0x1000, true]);
+    assert.match(wrote.output.note, /file_bytes is the length of the range that was asked for.*sha256 is in digests_in, with its size, and not in this answer/, "the note says what the answer gives");
+    assert.doesNotMatch(JSON.stringify(wrote), /"sha256"\s*:/, "no digest of memory content is in the answer");
     assert.match(wrote.output.file, /^store\/jobs\/j000042\/out\/minidump_map\/read-[0-9a-f]+-4096\.bin$/);
     const name = wrote.output.file.split("/").pop() as string;
     const bytes = await readFile(join(out, "minidump_map", name));
@@ -345,6 +352,9 @@ test("find: a text needle as UTF-8 and UTF-16LE, a hex needle, a needle across t
     const rest = await ask({ path, view: "find", needle_hex: "50450000", max_hits: 1, va_start: first.page.resume_va });
     assert.deepEqual([rest.status, rest.hits.length, rest.page.resume_va], ["complete", 1, null]);
     assert.deepEqual([first.hits[0].va, rest.hits[0].va], pe.hits.map((h: any) => h.va));
+    // what a stopped search says it searched is the memory below its resume address (it was 0 when max_hits stopped inside the first piece)
+    assert.ok(first.searched.bytes > 0 && first.searched.bytes < d.mapped, `${first.searched.bytes}`);
+    assert.equal(first.searched.bytes + rest.searched.bytes, d.mapped, "the two calls searched every byte once between them");
     // a window: only what lies inside it
     const window = await ask({ path, view: "find", needle_hex: "50450000", va_start: hex(s.ntdll), va_end: hex(s.ntdll + 0x1000n) });
     assert.deepEqual([window.hits.length, window.searched.bytes, window.status], [1, 0x1000, "complete"]);
@@ -583,4 +593,275 @@ test("u32 and u64 of the generator write little-endian (the fixtures are what th
   assert.equal(d64.file.subarray(0, 4).toString("latin1"), "MDMP");
   assert.equal(d64.file.readUInt16LE(4), 0xa793);
   assert.equal(PAGE, 4096);
+});
+
+// ---- the findings of the first independent verification (2026-11-13), each on a dump built here ----
+
+/** About 30 ms for the display rules to judge, and printable: thirty components of user-info-shaped pieces with a character NFKC makes long. */
+const COSTLY = Array.from({ length: 30 }, () => "\ufdfa:\ufdfa@\ufdfa ".repeat(15)).join("\\");
+
+test("module by name: 16,384 modules that share one costly name are answered at once, and names that have to be judged one by one end at max_seconds", { timeout: 300_000 }, async () => {
+  const N = 16384;
+  const shared = assemble((put) => {
+    const costly = put(mdString(COSTLY));
+    const real = put(mdString("C:\\Windows\\System32\\kernel32.dll"));
+    return [{ type: 4, body: Buffer.concat([u32(N), ...Array.from({ length: N }, (_, i) => moduleEntry({ base: 0x10000n * BigInt(i + 1), size: 0x1000, nameRva: i === N - 1 ? real : costly }))]) }];
+  });
+  await writeFile(join(dir, "inputs", "manymods.dmp"), shared.file);
+  // the name loop took 611.8 s on this shape with max_seconds 5 (one judgement of the same string for each module)
+  const found = await call(dir, { path: "inputs/manymods.dmp", view: "module", module: "KERNEL32.dll", max_seconds: 5 });
+  const fa = doc(found);
+  assert.deepEqual([fa.module.name, fa.module.base, fa.coverage.bytes_present], ["kernel32.dll", hex(0x10000n * BigInt(N)), 0]);
+  assert.ok(found.ms < 20_000, `the lookup took ${found.ms} ms`);
+  const none = await call(dir, { path: "inputs/manymods.dmp", view: "module", module: "nosuch.dll", max_seconds: 5 });
+  assert.deepEqual([none.code, doc(none).status], [1, "failed"]);
+  assert.match(doc(none).error, /no module of the module list has that name/);
+  assert.ok(none.ms < 20_000, `the lookup of a name no module has took ${none.ms} ms`);
+  // 1,500 different costly names, and a name asked for that the cheap comparison cannot rule out (it begins as every one of them does and
+  // then holds a placeholder): each has to be judged, which is 45 s of work, and the clock ends it with an answer that says so
+  const M = 1500;
+  const apart = assemble((put) => [{ type: 4, body: Buffer.concat([u32(M), ...Array.from({ length: M }, (_, i) => moduleEntry({ base: 0x10000n * BigInt(i + 1), size: 0x1000, nameRva: put(mdString(`a${i}\\${COSTLY}`)) }))]) }]);
+  await writeFile(join(dir, "inputs", "slowmods.dmp"), apart.file);
+  const slow = await call(dir, { path: "inputs/slowmods.dmp", view: "module", module: "a<x>", max_seconds: 1 });
+  const sa = doc(slow);
+  assert.deepEqual([slow.code, sa.status, sa.out_of_time, sa.modules], [1, "failed", true, M]);
+  assert.match(sa.error, /max_seconds \(1\) was reached while the module names were compared with the one asked for \(\d+ of 1500 compared\): no module was chosen/);
+  assert.ok(sa.compared > 0 && sa.compared < M, `${sa.compared} names were compared`);
+  assert.ok(slow.ms < 15_000, `the call with max_seconds 1 took ${slow.ms} ms`);
+  // a name that differs in its own text is ruled out without being judged: the same list answers at once
+  const quick = await call(dir, { path: "inputs/slowmods.dmp", view: "module", module: "kernel32.dll", max_seconds: 1 });
+  assert.match(doc(quick).error, /no module of the module list has that name/);
+  // and a page of view modules over them ends at the clock with the rows it has and the offset of the next
+  const page = doc(await call(dir, { path: "inputs/slowmods.dmp", view: "modules", limit: 1000, max_seconds: 1 }));
+  assert.deepEqual([page.status, page.page.truncated, page.page.next_offset], ["partial", true, page.page.returned]);
+});
+
+test("find, stopped by the clock, by max_hits or by a read that fails, resumes where the unsearched bytes begin: the calls together give every hit once", { timeout: 300_000 }, async () => {
+  const A = 0x100000n, C = 0x200000n;
+  const ab = Buffer.alloc(1300, 0x2e), c = Buffer.alloc(500, 0x2e);       // A is 1,000 bytes, B the 300 after it (adjacent); C is elsewhere
+  const narrow = Buffer.from("NeedleXY", "latin1"), wide = Buffer.from("NeedleXY", "utf16le");
+  for (const at of [56, 250, 630, 990, 1270]) wide.copy(ab, at);           // across pieces of 64 bytes, and across A and B
+  for (let at = 5; at + 8 <= 1300; at += 61) if (ab.subarray(at - 1, at + 9).every((b) => b === 0x2e)) narrow.copy(ab, at);
+  narrow.copy(ab, 996);                                                     // across A and B
+  Buffer.from("Need", "latin1").copy(ab, 1296);                             // the end of B and the start of C are not adjacent:
+  Buffer.from("leXY", "latin1").copy(c, 0);                                 // this is no hit
+  for (const at of [10, 60, 250, 492]) narrow.copy(c, at);
+  const built = assemble(() => [{ type: 9, body: Buffer.concat([u64(3), u64(0), u64(A), u64(1000), u64(A + 1000n), u64(300), u64(C), u64(500)]) }], { flags: 2n, memory: Buffer.concat([ab, c]) });
+  await writeFile(join(dir, "inputs", "chain.dmp"), built.file);
+  // the hits, from the buffers: [va, form, file offset], in address order
+  const expected: Array<[string, string, number]> = [];
+  for (const [base, buf, fileAt] of [[A, ab, built.memoryAt], [C, c, built.memoryAt + 1300]] as Array<[bigint, Buffer, number]>)
+    for (const [form, bytes] of [["utf-8", narrow], ["utf-16le", wide]] as Array<[string, Buffer]>)
+      for (let at = buf.indexOf(bytes); at >= 0; at = buf.indexOf(bytes, at + 1)) expected.push([hex(base + BigInt(at)), form, fileAt + at]);
+  expected.sort((x, y) => (BigInt(x[0]) < BigInt(y[0]) ? -1 : 1));
+  assert.ok(expected.length > 25 && expected.some(([, form]) => form === "utf-16le"));
+  const base = { path: "inputs/chain.dmp", view: "find", needle: "NeedleXY" };
+  const whole = await ask(base);
+  assert.deepEqual([whole.status, whole.searched.bytes], ["complete", 1800]);
+  assert.deepEqual(whole.hits.map((h: any) => [h.va, h.form, h.file_offset]), expected);
+  const chain = (more: Record<string, unknown>, mode: { chunk?: number; lateAfter?: number }): { hits: Array<[string, string, number]>; calls: number; searched: number; reasons: Set<string> } => {
+    const hits: Array<[string, string, number]> = [];
+    const reasons = new Set<string>();
+    let start = "0x0", calls = 0, searched = 0;
+    for (;;) {
+      const a = inProcess(dir, { ...base, ...more, va_start: start }, mode);
+      calls++;
+      hits.push(...a.hits.map((h: any) => [h.va, h.form, h.file_offset] as [string, string, number]));
+      searched += a.searched.bytes;
+      if (a.page.resume_va === null) { assert.equal(a.status, "complete"); break; }
+      assert.equal(a.status, "partial");
+      reasons.add((a.status_basis.match(/stopped early: ([a-z_]+)/) as RegExpMatchArray)[1]);
+      assert.match(a.page.how_to_continue, /every hit that starts below that address is in this answer and none that starts at or above it is/);
+      assert.ok(a.hits.every((h: any) => BigInt(h.va) < BigInt(a.page.resume_va)), "no hit at or above the resume address is in the answer");
+      assert.ok(BigInt(a.page.resume_va) > BigInt(start), `the resume address ${a.page.resume_va} is above ${start}`);
+      start = a.page.resume_va;
+      assert.ok(calls < 400);
+    }
+    return { hits, calls, searched, reasons };
+  };
+  // (1) the clock, looked at after every piece of 64 bytes: a hit across the resume address was lost (766 of 767 in the verifier's chain)
+  for (const lateAfter of [1, 2, 5]) {
+    const timed = chain({}, { chunk: 64, lateAfter });
+    assert.deepEqual(timed.hits, expected, `lateAfter ${lateAfter}: every hit, in order, none twice`);
+    assert.equal(timed.searched, 1800, "the calls searched every byte once between them");
+    assert.ok(timed.calls > 5 && timed.reasons.has("max_seconds"), `${timed.calls} calls`);
+  }
+  // (2) max_hits, with two forms of different lengths around every piece boundary
+  for (const max_hits of [1, 3]) {
+    const counted = chain({ max_hits }, { chunk: 64 });
+    assert.deepEqual(counted.hits, expected, `max_hits ${max_hits}`);
+    assert.equal(counted.searched, 1800);
+    assert.equal(counted.calls, Math.ceil(expected.length / max_hits), "a call stops at max_hits only when a further hit exists");
+  }
+  // (3) both at once
+  assert.deepEqual(chain({ max_hits: 2 }, { chunk: 64, lateAfter: 3 }).hits, expected);
+  // (4) a read that comes back short at file offset memory + 700: the search stops there, says so, and gives every hit below its resume
+  // address; the search from that address (the file whole again) gives the rest
+  const cut = inProcess(dir, base, { chunk: 64, failAt: built.memoryAt + 700 });
+  assert.equal(cut.status, "partial");
+  assert.match(cut.status_basis, new RegExp(`the dump could not be read at file offset ${built.memoryAt + 700}; memory from 0x[0-9a-f]+ on was not searched`));
+  assert.match(JSON.stringify(cut.problems), /a read of 64 bytes returned 60/);
+  const resume = BigInt(cut.page.resume_va);
+  assert.ok(resume > A + 600n && resume <= A + 640n, `the resume address ${cut.page.resume_va} is at or before the piece that failed, by less than a needle`);
+  assert.deepEqual(cut.hits.map((h: any) => h.va), expected.map((e) => e[0]).filter((va) => BigInt(va) < resume));
+  assert.equal(cut.searched.bytes, Number(resume - A));
+  const rest = await ask({ ...base, va_start: cut.page.resume_va });
+  assert.equal(rest.status, "complete");
+  assert.deepEqual([...cut.hits, ...rest.hits].map((h: any) => [h.va, h.form, h.file_offset]), expected);
+});
+
+test("summary counts every handle's type: a type name that was not read, not listed or not readable is counted apart and the answer is partial", async () => {
+  const handles = (types: number, o: { untyped?: number; lost?: number } = {}): Buffer => assemble((put) => {
+    const rows: Buffer[] = [];
+    for (let i = 0; i < 600; i++) rows.push(handleEntry(4 * (i + 1), put(mdString(`Type${i % types}`))));    // a string a handle, as a writer lays them out
+    for (let i = 0; i < (o.untyped ?? 0); i++) rows.push(handleEntry(0x4000 + 4 * i, 0));
+    for (let i = 0; i < (o.lost ?? 0); i++) rows.push(handleEntry(0x5000 + 4 * i, 0x7fff0000 + 64 * i));
+    return [{ type: 12, body: Buffer.concat([u32(16), u32(32), u32(rows.length), u32(0), ...rows]) }];
+  }).file;
+  const expect300 = Object.fromEntries(Array.from({ length: 300 }, (_, i) => [`Type${i}`, 2]));
+  // 300 names over 600 strings: the 44 names past the 256 most frequent RVAs were "without a type name", with status complete
+  await writeFile(join(dir, "inputs", "handles.dmp"), handles(300, { untyped: 5 }));
+  const all = await ask({ path: "inputs/handles.dmp" });
+  assert.equal(all.status, "complete", JSON.stringify(all.problems));
+  assert.deepEqual(all.handles.by_type, expect300);
+  assert.deepEqual([all.handles.handles, all.handles.without_a_type_name, all.handles.type_name_unreadable, all.handles.type_name_not_listed, all.handles.type_name_not_read, all.handles.type_name_strings_read],
+    [605, 5, 0, 0, 0, 600]);
+  // three handles whose type name is past the end of the file: counted apart, each in problems, and the answer is partial
+  await writeFile(join(dir, "inputs", "handles-lost.dmp"), handles(300, { untyped: 5, lost: 3 }));
+  const lost = await ask({ path: "inputs/handles-lost.dmp" });
+  assert.equal(lost.status, "partial");
+  assert.deepEqual(lost.handles.by_type, expect300);
+  assert.deepEqual([lost.handles.without_a_type_name, lost.handles.type_name_unreadable], [5, 3]);
+  assert.equal(lost.problems.filter((x: any) => x.stream === "HandleData" && /a handle's type name: 4 bytes are needed/.test(x.problem)).length, 3);
+  assert.match(lost.status_basis, /the handle count by type is not whole: 0 handle\(s\) have a type name that was not read, 0 one past the names listed, 3 one the file does not hold/);
+  // more distinct names than the answer lists: the handles of the names past the bound are counted apart, and said
+  await writeFile(join(dir, "inputs", "handles-many.dmp"), handles(600, { untyped: 5 }));
+  const many = await ask({ path: "inputs/handles-many.dmp" });
+  assert.equal(many.status, "partial");
+  assert.deepEqual([Object.keys(many.handles.by_type).length, many.handles.type_name_not_listed, many.handles.without_a_type_name, many.handles.type_names_listed_at_most], [512, 88, 5, 512]);
+  assert.match(JSON.stringify(many.problems), /more than 512 distinct type names: 88 handle\(s\)/);
+  // the clock: after a hundred strings it is over; the 500 handles left are "type name not read", never "without a type name"
+  const timed = inProcess(dir, { path: "inputs/handles.dmp" }, { lateAfter: 101 });
+  assert.equal(timed.status, "partial");
+  assert.deepEqual([timed.handles.type_name_strings_read, timed.handles.type_name_not_read, timed.handles.without_a_type_name], [100, 500, 5]);
+  assert.equal(Object.values(timed.handles.by_type as Record<string, number>).reduce((n, v) => n + v, 0), 100);
+  assert.match(JSON.stringify(timed.problems), /max_seconds was reached after the type names at 100 of 600 distinct TypeNameRva values were read: 500 handle\(s\)/);
+});
+
+test("modules: a PDB record that is declared and cannot be read whole is in problems and partial, and is told apart from a module without one; a cut path says so", async () => {
+  const longPath = "D:\\" + Array.from({ length: 30 }, (_, i) => `build directory ${i}`).join("\\") + "\\payload.pdb";       // 608 characters, no component over 128
+  assert.ok(longPath.length > 560);
+  const rsds = (path: string, nul = true): Buffer => Buffer.concat([Buffer.from("RSDS"), Buffer.from("00112233445566778899aabbccddeeff", "hex"), u32(7), Buffer.from(path + (nul ? "\0" : ""), "utf8")]);
+  const build = (kinds: string[]): { file: Buffer; memoryAt: number; at: Record<number, number> } => assemble((put) => {
+    const name = kinds.map((k, i) => put(mdString(`C:\\app\\m${i}-${k}.dll`)));
+    const cv: Record<string, [number, number]> = {
+      none: [0, 0], past: [64, 0x7fff0000], cut: [64, 0],                 // "cut" is pointed at the last ten bytes of the file below
+      long: [24 + longPath.length + 1, put(rsds(longPath))], good: [24 + 7, put(rsds("ok.pdb"))], nb10: [30, put(Buffer.concat([Buffer.from("NB10"), Buffer.alloc(26, 0x61)]))],
+    };
+    return [{ type: 4, body: Buffer.concat([u32(kinds.length), ...kinds.map((k, i) => moduleEntry({ base: 0x10000n * BigInt(i + 1), size: 0x1000, nameRva: name[i], cv: cv[k] }))]) }];
+  }, { memory: Buffer.concat([Buffer.from("RSDS"), Buffer.alloc(6, 1)]) });
+  const kinds = ["none", "past", "cut", "long", "good", "nb10"];
+  const bad = build(kinds);
+  bad.file.writeUInt32LE(bad.memoryAt, bad.at[4] + 4 + 108 * 2 + 80);        // the CvRecord RVA of module 2: ten bytes before the end of the file
+  await writeFile(join(dir, "inputs", "cv.dmp"), bad.file);
+  const a = await ask({ path: "inputs/cv.dmp", view: "modules" });
+  assert.equal(a.status, "partial");
+  assert.match(a.status_basis, /malformed in ModuleList/);
+  const [none, past, cut, long, good, nb10] = a.modules;
+  assert.deepEqual(a.modules.map((m: any) => m.pdb_record), ["none declared", "declared, not readable", "declared, not readable", "read", "read", "read, not RSDS"]);
+  assert.equal(none.pdb, null);
+  assert.deepEqual([past.pdb.read, past.pdb.format, past.pdb.declared_bytes, past.pdb.file_offset], [false, null, 64, 0x7fff0000]);
+  assert.match(past.pdb.why_not, /declared and not readable, which is not a module without a record/);
+  assert.deepEqual([cut.pdb.read, cut.pdb.format, cut.pdb.file_offset], [false, "RSDS", bad.memoryAt], "the record begins with RSDS and the file ends ten bytes into it");
+  assert.deepEqual([long.pdb.read, long.pdb.format, long.pdb.age, long.pdb.path_cut, long.pdb.path_bytes_read, long.pdb.path], [true, "RSDS", 7, true, 520, longPath.slice(0, 520)]);
+  assert.match(long.pdb.path_note, /the first 520 bytes of its path were read and the path does not end in them/);
+  assert.deepEqual([good.pdb.read, good.pdb.path, good.pdb.path_cut, good.pdb.guid], [true, "ok.pdb", false, "33221100554477668899AABBCCDDEEFF"]);
+  assert.deepEqual([nb10.pdb.read, nb10.pdb.format], [true, "not RSDS"]);
+  const said = a.problems.map((x: any) => [x.stream, x.file_offset, x.problem.replace(/:.*/, "")]);
+  assert.deepEqual(said, [["ModuleList", 0x7fff0000, "the CodeView (PDB) record of module 1"], ["ModuleList", bad.memoryAt, "the CodeView (PDB) record of module 2"],
+    ["ModuleList", long.pdb.file_offset, "the CodeView (PDB) record of module 3"]]);
+  assert.match(a.problems[1].problem, /64 bytes are needed at file offset \d+ and the file \(\d+ bytes\) holds 10 of them/);
+  // the same list without the three faulty records is complete, and a module with no record is still "none declared"
+  await writeFile(join(dir, "inputs", "cv-ok.dmp"), build(["none", "good", "nb10"]).file);
+  const ok = await ask({ path: "inputs/cv-ok.dmp", view: "modules" });
+  assert.deepEqual([ok.status, ok.problems, ok.modules.map((m: any) => m.pdb_record)], ["complete", [], ["none declared", "read", "read, not RSDS"]]);
+  // view module reads the same record: a module whose record cannot be read is partial there too
+  const one = await ask({ path: "inputs/cv.dmp", view: "module", base: "0x20000" });
+  assert.deepEqual([one.module.pdb_record, one.status], ["declared, not readable", "partial"]);
+});
+
+test("memory: the protect and type filters ask every region a range lies over, and the row says which part met them", async () => {
+  // range 1 lies over a READWRITE and an EXECUTE_READWRITE private region (a writer joins neighbours); range 2 over a READWRITE private
+  // region and an EXECUTE_READ image one
+  const regions = [{ base: 0x10000n, size: 0x1000, protect: RW, type: PRIVATE }, { base: 0x11000n, size: 0x1000, protect: RWX, type: PRIVATE },
+    { base: 0x20000n, size: 0x1000, protect: RW, type: PRIVATE }, { base: 0x21000n, size: 0x1000, protect: RX, type: IMAGE }];
+  const build = (order: typeof regions): Buffer => assemble(() => [
+    { type: 16, body: Buffer.concat([u32(16), u32(48), u64(order.length), ...order.map(memoryInfo)]) },
+    { type: 9, body: Buffer.concat([u64(2), u64(0), u64(0x10000n), u64(0x2000), u64(0x20000n), u64(0x2000)]) },
+  ], { flags: 2n, memory: Buffer.alloc(0x4000, 0x90) }).file;
+  await writeFile(join(dir, "inputs", "joined.dmp"), build(regions));
+  const path = "inputs/joined.dmp";
+  const rwx = await ask({ path, view: "memory", protect: "execute_write", type: "private" });
+  assert.equal(rwx.status, "complete");
+  assert.deepEqual(rwx.ranges.map((x: any) => [x.va, x.bytes, x.region.protect, x.regions_spanned]), [["0x10000", 0x2000, "READWRITE", 2]], "the range was not returned: its first region is READWRITE");
+  assert.deepEqual(rwx.ranges[0].matched, { regions: 1, bytes: 0x1000, whole_range: false,
+    first: { va: "0x11000", end: "0x12000", region: { base: "0x11000", bytes: 0x1000, state: "COMMIT", protect: "EXECUTE_READWRITE", type: "PRIVATE", allocation_base: "0x11000", allocation_protect: "READWRITE" } } });
+  assert.deepEqual([rwx.totals.ranges, rwx.totals.ranges_matching, rwx.page.total], [2, 1, 1]);
+  assert.match(rwx.filter.rule, /any region it overlaps meets the filter/);
+  // list regions and list ranges agree
+  const asRegions = await ask({ path, view: "memory", protect: "execute_write", type: "private", list: "regions" });
+  assert.deepEqual(asRegions.regions.map((x: any) => x.base), ["0x11000"]);
+  // the two filters are asked of the same region: range 2 has a writable region and an executable one, and no region that is both
+  assert.deepEqual((await ask({ path, view: "memory", protect: "execute_write" })).ranges.map((x: any) => x.va), ["0x10000"]);
+  assert.deepEqual((await ask({ path, view: "memory", protect: "execute", type: "private" })).ranges.map((x: any) => x.va), ["0x10000"]);
+  const exec = await ask({ path, view: "memory", protect: "execute" });
+  assert.deepEqual(exec.ranges.map((x: any) => [x.va, x.matched.first.va, x.matched.first.region.type, x.matched.bytes]), [["0x10000", "0x11000", "PRIVATE", 0x1000], ["0x20000", "0x21000", "IMAGE", 0x1000]]);
+  const write = await ask({ path, view: "memory", protect: "write" });
+  assert.deepEqual(write.ranges.map((x: any) => [x.va, x.matched.regions, x.matched.bytes, x.matched.whole_range]), [["0x10000", 2, 0x2000, true], ["0x20000", 1, 0x1000, false]]);
+  assert.equal((await ask({ path, view: "memory" })).ranges[0].matched, undefined, "without a filter there is no matched part");
+  // a MemoryInfoList that is not in address order gives the same rows, and the answer says it was sorted
+  await writeFile(join(dir, "inputs", "unsorted.dmp"), build([...regions].reverse()));
+  const unsorted = await ask({ path: "inputs/unsorted.dmp", view: "memory", protect: "execute_write", type: "private" });
+  assert.deepEqual(unsorted.ranges.map((x: any) => [x.va, x.matched.first.va]), [["0x10000", "0x11000"]]);
+  assert.equal(unsorted.status, "partial");
+  assert.match(JSON.stringify(unsorted.problems), /MemoryInfoList.*the regions are not in address order \(entry 1, at 0x20000, comes after one at 0x21000\): they were sorted/);
+});
+
+test("smaller truths: a ThreadExList beside a ThreadList, names the summary does not read, and a Windows path of more than 128 characters", async () => {
+  // both thread lists: the ThreadList is the one read, and the other is named as not read
+  const lists = (types: number[]): Buffer => assemble(() => types.map((type) => ({ type, body: u32(0) }))).file;
+  await writeFile(join(dir, "inputs", "threads-both.dmp"), lists([3, 8]));
+  const bothLists = await ask({ path: "inputs/threads-both.dmp" });
+  assert.deepEqual(bothLists.streams_not_read, ["ThreadExList"]);
+  assert.match(bothLists.streams_not_read_note, /the threads are read from the ThreadList/);
+  await writeFile(join(dir, "inputs", "threads-ex.dmp"), lists([8]));
+  const exOnly = await ask({ path: "inputs/threads-ex.dmp" });
+  assert.deepEqual([exOnly.streams_not_read, exOnly.streams_not_read_note], [[], undefined], "alone, the ThreadExList is the list that is read");
+  // a module whose name RVA is outside the file: the summary does not read names and says so; view modules reads them and is partial
+  const longPath = "C:\\Program Files\\Vendor Suite\\" + Array.from({ length: 8 }, (_, i) => `component directory ${i}`).join("\\") + "\\library.dll";
+  assert.ok(longPath.length > 128 && !longPath.includes("/"));
+  const mods = assemble((put) => [{ type: 4, body: Buffer.concat([u32(2), moduleEntry({ base: 0x10000n, size: 0x1000, nameRva: 0x7ffffff0 }), moduleEntry({ base: 0x20000n, size: 0x1000, nameRva: put(mdString(longPath)) })]) }]).file;
+  await writeFile(join(dir, "inputs", "names.dmp"), mods);
+  const sum = await ask({ path: "inputs/names.dmp" });
+  assert.equal(sum.status, "complete");
+  assert.match(sum.status_basis, /module names, PDB records and thread contexts are not read in this view/);
+  assert.match(sum.not_read_in_this_view, /a module's name and PDB record.*are read by the views modules and threads/);
+  const listed = await ask({ path: "inputs/names.dmp", view: "modules" });
+  assert.equal(listed.status, "partial");
+  assert.deepEqual([listed.modules[0].name, listed.modules[0].name_why_not], [null, "the name string at file offset 2147483632 could not be read (problems)"]);
+  // the long path: every component is short, so it is printed (it was withheld whole, as one component, for want of a `/`), and it names the module
+  assert.deepEqual([listed.modules[1].name, listed.modules[1].path], ["library.dll", longPath]);
+  const byPath = await ask({ path: "inputs/names.dmp", view: "module", module: longPath.toUpperCase() });
+  assert.equal(byPath.module.base, "0x20000");
+  // a component of more than 128 characters is still withheld, and so is a long path with a token in it
+  const tokenish = Array.from({ length: 28 }, (_, i) => (i % 5 === 4 ? "0123456789"[Math.floor(r() * 10)] : B62[Math.floor(r() * 62)])).join("");
+  const held = assemble((put) => [{ type: 4, body: Buffer.concat([u32(2),
+    moduleEntry({ base: 0x10000n, size: 0x1000, nameRva: put(mdString(`C:\\Users\\bob\\${"d".repeat(129)}\\x.dll`)) }),
+    moduleEntry({ base: 0x20000n, size: 0x1000, nameRva: put(mdString(`${longPath.slice(0, -12)}\\${tokenish}\\y.dll`)) })]) }]).file;
+  await writeFile(join(dir, "inputs", "held.dmp"), held);
+  const kept = await ask({ path: "inputs/held.dmp", view: "modules" });
+  assert.match(kept.modules[0].path, /^<withheld \d+ characters: a component over 128 characters>$/);
+  assert.equal(kept.modules[0].name, "x.dll");
+  for (let i = 0; i + 12 <= tokenish.length; i++) assert.ok(!JSON.stringify(kept).includes(tokenish.slice(i, i + 12)), `a piece of the token at ${i}`);
+  assert.match(kept.modules[1].path, /^<withheld \d+ characters: /, "the backstop reads the path as it stands and calls the token a secret: withheld whole");
 });

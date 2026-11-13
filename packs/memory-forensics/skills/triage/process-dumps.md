@@ -20,7 +20,7 @@ Use when a file that begins with `MDMP` is in the evidence: a `.dmp` that procdu
 2. A module read from a dump can have gaps. `view: module` gives `coverage_percent` and each section's share; with gaps it writes only on `allow_gaps: true`, zero-fills them, names the file `.gaps` and lists them in a map file. State the coverage beside any claim built on that image, and do not hash it against the file on disk: it is a memory layout.
 3. Search a dump for a constant or a string with `view: find` (or with the ransomware pack's `cipher_state_scan` when that tool is loaded), which gives the virtual address and the file offset of each hit; then `view: read` for the bytes around one.
 
-Order: `summary`, `modules`, then the question (`find`, `module`, `threads`, or `memory` with `protect: execute_write` and `type: private` for memory that is executable and writable in no module, a lead and not a finding).
+Order: `summary`, `modules`, then the question (`find`, `module`, `threads`, or `memory` with `protect: execute_write` and `type: private` for private memory that is executable and writable, a lead and not a finding; a range is listed when any region under it matches, and `matched` says which part). A `partial` from `find` gives `resume_va`: pass it as `va_start` until the status is `complete`, and the calls together give each hit once.
 
 **Does not show.** That the process was malicious; what it did before or after the instant of the dump; that a string in it was used (`strings/discipline`); anything of a page the writer left out. The command line is what the process's own memory said, and a process can rewrite it. A module's timestamp is a field its author sets.
 

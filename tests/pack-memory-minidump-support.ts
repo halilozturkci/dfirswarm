@@ -12,7 +12,7 @@
  * whose .rdata page is NOT in the dump (a gap); ntdll.dll is whole. The TEB, the PEB and the process parameters are in the dump, so the
  * command line can be reached. Every address-to-offset fact the tests compare with comes from this generator (`offsetOf`).
  */
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { PYTHON3 } from "./host-gates.ts";
 import { ROOT } from "./tool-library-harness.ts";
@@ -292,6 +292,84 @@ export function bareDump(ranges: Array<{ va: bigint; size: number }>, extra?: { 
     name, mod, u64(ranges.length), u64(memoryAt), ...ranges.map((r) => Buffer.concat([u64(r.va), u64(r.size)])),
   ]);
   return { head, memoryAt };
+}
+
+/** A MINIDUMP_STRING: a u32 byte length, the text as UTF-16LE, a terminator. */
+export const mdString = (t: string): Buffer => Buffer.concat([u32(Buffer.byteLength(t, "utf16le")), wide(t), Buffer.alloc(2)]);
+/** A MINIDUMP_MODULE (108 bytes): base, size, checksum, time stamp, name RVA, VS_FIXEDFILEINFO (52), the CodeView record's size and RVA, the misc record, two reserved. */
+export const moduleEntry = (m: { base: bigint; size: number; nameRva: number; cv?: [number, number] }): Buffer =>
+  Buffer.concat([u64(m.base), u32(m.size), u32(0x1234), u32(0x60000000), u32(m.nameRva), Buffer.alloc(52), u32(m.cv?.[0] ?? 0), u32(m.cv?.[1] ?? 0), u32(0), u32(0), u64(0), u64(0)]);
+/** A MINIDUMP_MEMORY_INFO (48 bytes). */
+export const memoryInfo = (r: { base: bigint; size: number; protect: number; type: number; state?: number }): Buffer =>
+  Buffer.concat([u64(r.base), u64(r.base), u32(RW), u32(0), u64(r.size), u32(r.state ?? COMMIT), u32(r.protect), u32(r.type), u32(0)]);
+/** A MINIDUMP_HANDLE_DESCRIPTOR (32 bytes). */
+export const handleEntry = (handle: number, typeRva: number, nameRva = 0): Buffer => Buffer.concat([u64(handle), u32(typeRva), u32(nameRva), u32(0), u32(0x120089), u32(1), u32(2)]);
+
+/**
+ * A dump of any streams, laid out here and not by the tool: the header, then whatever `make` places with `put` (strings, records; each at
+ * a multiple of four, its file offset returned), then the bodies of the streams `make` returns, the directory, and `memory` last (its
+ * offset is `memoryAt`, which a Memory64List's BaseRva is set to when `memory` is given: the u64 at byte 8 of the stream of type 9). A
+ * stream's `size` is what the directory declares for it when that is not the body's length.
+ */
+export function assemble(make: (put: (b: Buffer) => number) => Array<{ type: number; body: Buffer; size?: number }>, o: { flags?: bigint; memory?: Buffer } = {}): { file: Buffer; at: Record<number, number>; memoryAt: number } {
+  const parts: Buffer[] = [Buffer.alloc(32)];
+  let cursor = 32;
+  const put = (b: Buffer): number => {
+    const pad = (4 - (cursor % 4)) % 4;
+    if (pad) { parts.push(Buffer.alloc(pad)); cursor += pad; }
+    const at = cursor;
+    parts.push(b);
+    cursor += b.length;
+    return at;
+  };
+  const streams = make(put);
+  const at: Record<number, number> = {};
+  const entries = streams.map((st) => { const where = put(st.body); at[st.type] = where; return Buffer.concat([u32(st.type), u32(st.size ?? st.body.length), u32(where)]); });
+  const directory = put(Buffer.concat(entries));
+  put(Buffer.alloc(0));
+  const memoryAt = cursor;
+  const file = Buffer.concat([...parts, o.memory ?? Buffer.alloc(0)]);
+  Buffer.concat([Buffer.from("MDMP"), u32(0xa793), u32(streams.length), u32(directory), u32(0), u32(1772366400), u64(o.flags ?? 0n)]).copy(file, 0);
+  if (o.memory && at[9] !== undefined) file.writeBigUInt64LE(BigInt(memoryAt), at[9] + 8);
+  return { file, at, memoryAt };
+}
+
+/**
+ * The tool's own functions, called in one Python process with three things a test cannot make happen from outside at a chosen moment:
+ * `chunk` (the bytes `find` reads a piece, so that a small dump has many piece boundaries), `lateAfter` (once the dump's tables are read,
+ * the clock says "not yet" that many times it is looked at and "max_seconds is over" ever after, so that a search stops after every piece
+ * it may stop after) and `failAt` (a read that reaches this file offset comes back short, as from a file that was cut while the tool
+ * ran). The answer is the tool's, printed by its own `emit`.
+ */
+export function inProcess(cwd: string, args: Record<string, unknown>, mode: { chunk?: number; lateAfter?: number; failAt?: number }): Record<string, any> {
+  const code = [
+    "import importlib.util, json, sys, time",
+    "spec = importlib.util.spec_from_file_location('minidump_map_run', sys.argv[1])",
+    "m = importlib.util.module_from_spec(spec)",
+    "spec.loader.exec_module(m)",
+    "mode = json.loads(sys.argv[3])",
+    "p = m.parse_args(json.loads(sys.argv[2]))",
+    "p['started'] = time.monotonic()",
+    "p['deadline'] = p['started'] + p['seconds']",
+    "m.CLOCK['deadline'], m.CLOCK['seconds'] = p['deadline'], p['seconds']",
+    "dump = m.load(p['path'])",
+    "if mode.get('chunk'): m.CHUNK = mode['chunk']",
+    "looks = [0]",
+    "def late():",
+    "    looks[0] += 1",
+    "    return looks[0] > mode['lateAfter']",
+    "if mode.get('lateAfter') is not None: m.late = late",
+    "if mode.get('failAt') is not None:",
+    "    whole = m.Dump.read",
+    "    def short(self, offset, length):",
+    "        data = whole(self, offset, length)",
+    "        return data[:max(0, mode['failAt'] - offset)] if offset + length > mode['failAt'] else data",
+    "    m.Dump.read = short",
+    "getattr(m, 'view_' + p['view'])(dump, p)",
+  ].join("\n");
+  const ran = spawnSync(PYTHON3, ["-c", code, SCRIPT, JSON.stringify(args), JSON.stringify(mode)], { cwd, encoding: "utf8", env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" }, maxBuffer: 1 << 26 });
+  if (ran.status !== 0 || /Traceback/.test(ran.stderr)) throw new Error(`in-process call failed (exit ${ran.status}): ${ran.stderr.slice(-800)}`);
+  return JSON.parse(ran.stdout) as Record<string, any>;
 }
 
 export type Run = { code: number | null; signal: string | null; stdout: string; stderr: string; ms: number };
