@@ -210,6 +210,33 @@ HERDR_BIN="$TMP/bin/herdr" bash "$ROOT/scripts/idle-nudge.sh" --sandbox "$WS" --
 grep '^w0	' "$PROMPT_LOG" | grep -q 'You ended your turn 6 minutes ago' || fail "the echo of a prompt counted as the agent's activity: $(cat "$PROMPT_LOG")"
 pass "the echo of a nudge (hub_prompt) does not count as the agent's activity"
 
+# --- a seat silent in one long call --------------------------------------------
+# Run s082123: a seat sat in one shell call for 178 minutes. Herdr said working,
+# so it was never nudged, and nobody was told.
+LS="$TMP/longcall"
+mkdir -p "$LS"/{traces,done/agents,threads/main,inbox/l0,.pi-sessions/l0,locks}
+printf '{"swarm_id":"l","n":1,"agents":[{"id":"l0","role":"worker"}]}\n' > "$LS/team.json"
+printf '{"main": 0}\n' > "$LS/inbox/l0/cursors.json"
+: > "$LS/.pi-sessions/l0/session.jsonl"
+touch -t "$(date -v-3000S +%Y%m%d%H%M.%S 2>/dev/null || date -d '3000 seconds ago' +%Y%m%d%H%M.%S)" "$LS/.pi-sessions/l0/session.jsonl"
+{ row l0 post 3100 '{"tag":"result"}'; row l0 read 3000; } > "$LS/traces/events.jsonl"
+call_once() { HERDR_BIN="$TMP/bin/herdr-working" bash "$ROOT/scripts/idle-nudge.sh" --sandbox "$LS" --once --idle-sec 180 "$@" >/dev/null 2>&1; }
+: > "$PROMPT_LOG"
+call_once --call-stall-sec 3600
+ls "$LS"/threads/main/*.md >/dev/null 2>&1 && fail "a call inside --call-stall-sec was reported"
+call_once --call-stall-sec 2400
+post="$(cat "$LS"/threads/main/*.md 2>/dev/null || true)"
+grep -q "SEAT SILENT: l0 has been in one call for 50 minutes with nothing on its session or the trace" <<<"$post" || fail "a seat silent past --call-stall-sec was not said on the board: $post"
+grep -q '^tag: hold' <<<"$post" || fail "the report is not a hold post: $post"
+grep -q '"tool":"call_stalled","args":{"agent":"l0","by":"watchdog","limit_ms":2400000},"result":{"ok":true,"silent_seconds":' <<<"$(trace_of "$LS")" \
+  || fail "the silent seat is not on the trace: $(trace_of "$LS" | grep call_stalled)"
+call_once --call-stall-sec 2400
+[[ "$(ls "$LS"/threads/main/*.md | wc -l | tr -d ' ')" == 1 ]] || fail "the silent seat was reported twice in one silence"
+[[ "$(grep -c '^l0	' "$PROMPT_LOG")" -eq 0 ]] || fail "a working seat was prompted"
+call_once --call-stall-sec 0
+[[ "$(ls "$LS"/threads/main/*.md | wc -l | tr -d ' ')" == 1 ]] || fail "--call-stall-sec 0 should report nothing"
+pass "a seat working with nothing on its session or trace past --call-stall-sec is said once, on the board and the trace, and not prompted"
+
 # --- a seat whose compaction runs ---------------------------------------------
 # Pi refuses every prompt while a hand-off's compaction runs. On s6895a8 the
 # watchdog spent three nudges on s6895a803 there, and when the compaction never

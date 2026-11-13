@@ -43,3 +43,11 @@ errors were what `evidence/ad1` says. Now a call to a tool a skill lists under `
 the skill's card: its `card:` front-matter line, or the lines that say when to use it, its first example call and what it does not show. Once
 per skill and seat in a context; a compaction shows it again, and the hand-off header carries the cards of the skills it took out. A tool
 more than three skills list shows the list of those skills instead. `--skill-cards off` leaves skills to `skill(id)`; `skill_card` on the trace.
+
+### Fixed: a seat can no longer sit unseen in one call for hours
+
+On one run a seat waited 178 minutes on a shell call in its VM that never returned (another, 112 minutes), and nobody was told: Pi's bash
+has no limit unless the model names one, and the watchdog leaves a seat its pane calls working alone. A shell call in a seat's VM now gets
+a limit (900 s when it names none, 1800 s at most; `SWARM_SHELL_TIMEOUT_S`, `SWARM_SHELL_TIMEOUT_MAX_S`), and one stopped there is told that
+longer work is a job (`shell_timeout`). The watchdog says a seat that is working with nothing on its session or the trace past
+`--call-stall-sec` (2400 s) once per silence, on the board and the trace (`call_stalled`).

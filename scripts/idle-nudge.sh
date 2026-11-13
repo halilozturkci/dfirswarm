@@ -53,10 +53,19 @@
 # past the fifteen minutes after which the seat's own harness stops one) has
 # lost its seat, and that is said once on the board and the trace.
 #
+# A seat Herdr (or the hub) reports as working is left to work, but not
+# unseen for ever: on run s082123 a seat sat in one shell call for 178
+# minutes, writing nothing, and nobody was told. A seat working with no
+# session or trace activity past --call-stall-sec (2400 by default, past the
+# 1800 seconds the seat's harness gives a shell call at most) is said once
+# per silence on the board and the trace (`call_stalled`); a prompt would not
+# reach it until the call returns.
+#
 # Usage:
 #   idle-nudge.sh --sandbox DIR [--idle-sec 180] [--news-sec 45] [--interval 30]
 #                 [--max-nudges 3] [--local-first-turn-sec 600]
-#                 [--wait-idle-sec 600] [--compact-stall-sec 1200] [--once]
+#                 [--wait-idle-sec 600] [--compact-stall-sec 1200]
+#                 [--call-stall-sec 2400] [--once]
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -67,6 +76,7 @@ IDLE_SEC="${SWARM_IDLE_SEC:-180}"
 NEWS_SEC="${SWARM_NEWS_SEC:-45}"
 WAIT_IDLE_SEC="${SWARM_WAIT_IDLE_SEC:-600}"
 COMPACT_STALL_SEC="${SWARM_COMPACT_STALL_SEC:-1200}"
+CALL_STALL_SEC="${SWARM_CALL_STALL_SEC:-2400}"
 # How recent an agent's last wait must be for it to be waiting still: the
 # wait tool's longest call (WAIT_MAX_SECONDS, 300) and two minutes for the
 # model's turn around it.
@@ -93,6 +103,7 @@ while [[ $# -gt 0 ]]; do
     --news-sec) NEWS_SEC="$2"; shift 2 ;;
     --wait-idle-sec) WAIT_IDLE_SEC="$2"; shift 2 ;;
     --compact-stall-sec) COMPACT_STALL_SEC="$2"; shift 2 ;;
+    --call-stall-sec) CALL_STALL_SEC="$2"; shift 2 ;;
     --interval) INTERVAL="$2"; shift 2 ;;
     --max-nudges) MAX_NUDGES="$2"; shift 2 ;;
     --local-first-turn-sec) LOCAL_FIRST_TURN_SEC="$2"; shift 2 ;;
@@ -628,6 +639,24 @@ report_stalled_compaction() { # <agent id> <started, epoch seconds> <open second
   echo "idle-nudge: ${id}'s compaction has been open ${open}s; said on the board (posted=$posted)" >&2
 }
 
+report_stalled_call() { # <agent id> <silent seconds>
+  local id="$1" silent="$2" mark="$SANDBOX/traces/idle-nudge.calls" start held body posted=false line
+  start=$(( $(date +%s) - silent ))
+  # Once per silence: the start of this one is the same, give or take the loop's own seconds.
+  awk -v id="$id" -v s="$start" '$1 == id && ($2 - s < 120 && s - $2 < 120) { found = 1 } END { exit !found }' "$mark" 2>/dev/null && return 0
+  echo "$id $start" >> "$mark"
+  held="$(held_by "$id")"
+  body="SEAT SILENT: ${id} has been in one call for $((silent / 60)) minutes with nothing on its session or the trace. Its pane says it is working, so no prompt reaches it until the call returns; a shell call in its VM is stopped by its harness at 30 minutes, so this is a call that limit does not reach (a model call, or a tool that does not end).${held:+ It still holds: ${held}; the leases lapse on their own.} If its slice matters to the goal, say on the board that you are taking it over. The operator can look at its pane."
+  node --experimental-strip-types --no-warnings -e '
+    const [protocol, S, body] = process.argv.slice(1);
+    import(protocol).then((P) => P.systemPost(S, { tag: "hold", body })).catch(() => process.exit(1));
+  ' "$ROOT/extensions/protocol.ts" "$SANDBOX" "$body" >/dev/null 2>&1 && posted=true
+  line="$(jq -cn --arg ts "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" --arg agent "$id" --argjson silent "$silent" --argjson limit "$((CALL_STALL_SEC * 1000))" --argjson posted "$posted" \
+    '{ts: $ts, agent: "system", tool: "call_stalled", args: {agent: $agent, by: "watchdog", limit_ms: $limit}, result: {ok: true, silent_seconds: $silent, posted: $posted}}')"
+  trace_emit "$ROOT" "$SANDBOX" "$line"
+  echo "idle-nudge: ${id} has been silent in one call for ${silent}s; said on the board (posted=$posted)" >&2
+}
+
 # "id n idle_at_last_nudge" lines. The count is per silence: if the agent has
 # done anything since we last nudged it — its idle clock is shorter than it was
 # then — this is a new silence and the budget starts again.
@@ -779,7 +808,10 @@ while :; do
       else
         status="$("$HERDR" agent get "$id" 2>/dev/null | jq -r '.result.agent.agent_status // empty' 2>/dev/null || true)"
       fi
-      [[ "$status" == "working" ]] && continue
+      if [[ "$status" == "working" ]]; then
+        [[ "$CALL_STALL_SEC" -gt 0 && "$idle" -ge "$CALL_STALL_SEC" ]] && report_stalled_call "$id" "$idle"
+        continue
+      fi
     fi
     # An agent whose last turn ended in a provider error is not idle in the
     # usual sense: a nudge buys another identical failure while the error

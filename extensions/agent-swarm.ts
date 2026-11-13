@@ -285,6 +285,31 @@ export const SWARM_TOOLS = new Set([
   "premise_propose",
 ]);
 
+/**
+ * The limit of one shell call in a seat's own VM, in seconds: a call that names
+ * none gets SWARM_SHELL_TIMEOUT_S (900), and one that names more than
+ * SWARM_SHELL_TIMEOUT_MAX_S (1800) gets that. A job (job_run) is where longer
+ * work goes: it has a limit of its own and the seat goes on working meanwhile.
+ */
+export const SHELL_TIMEOUT_DEFAULT_S = 900;
+export const SHELL_TIMEOUT_MAX_S = 1800;
+export type ShellLimit = { seconds: number; why: "default" | "capped" | null; asked?: number };
+export function shellTimeout(asked: unknown, env: NodeJS.ProcessEnv = process.env): ShellLimit {
+  const num = (v: string | undefined, d: number) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? n : d;
+  };
+  const max = num(env.SWARM_SHELL_TIMEOUT_MAX_S, SHELL_TIMEOUT_MAX_S);
+  const dflt = Math.min(num(env.SWARM_SHELL_TIMEOUT_S, SHELL_TIMEOUT_DEFAULT_S), max);
+  if (typeof asked !== "number" || !Number.isFinite(asked) || asked <= 0) return { seconds: dflt, why: "default" };
+  if (asked > max) return { seconds: max, why: "capped", asked };
+  return { seconds: asked, why: null };
+}
+export function shellTimeoutNote(l: ShellLimit): string {
+  const was = l.why === "capped" ? `the ${l.asked} s it asked for is over the harness's limit of ${l.seconds} s for one shell call in your VM` : `a shell call in your VM that names no timeout has the harness's limit of ${l.seconds} s`;
+  return `The call was stopped at its limit: ${was}. Run longer work as a job (job_run with command, or a tool): it has a limit of its own, its output is kept in the store, and you go on working while it runs (job_status, or wait for its post).`;
+}
+
 /** A bash command run this many times by one agent earns a hint to forge a tool. */
 const FORGE_HINT_AT = 8;
 /** Command words that are the shell itself, not a tool: no hint for these. */
@@ -497,6 +522,8 @@ export default function (pi: ExtensionAPI) {
   useHarnessTrace((root, line) => logEvent(root, agentId, line.tool, line.args, line.result));
   /** Start times per tool call, so every trace row can carry its duration. */
   const toolStarts = new Map<string, number>();
+  /** The limit the harness gave a shell call that named none, or named more than the most: said with its result when it is stopped there. */
+  const shellLimits = new Map<string, ShellLimit>();
   /** Watched-path snapshot taken before a bash call, keyed by tool call id. */
   const bashSnapshots = new Map<string, { at: number; snapshot: WatchSnapshot; command: string }>();
   /** Limits this process has already steered on; the clock itself is shared. */
@@ -1461,6 +1488,13 @@ export default function (pi: ExtensionAPI) {
   pi.on("tool_call", async (event, ctx) => {
     const callId = (event as { toolCallId?: string }).toolCallId;
     if (callId) toolStarts.set(callId, Date.now());
+    // A shell call in the seat's own VM has a limit (Pi's bash has none unless the model gives one). A seat of the run s082123 waited 178 minutes on
+    // one that never returned, and nothing saw it: the nudger leaves a seat that is working alone. Longer work is a job, which has its own limit.
+    if ((event.toolName === "bash" || event.toolName === "powershell") && event.input && typeof event.input === "object") {
+      const limited = shellTimeout((event.input as { timeout?: unknown }).timeout);
+      (event.input as { timeout?: number }).timeout = limited.seconds;
+      if (callId && limited.why) shellLimits.set(callId, limited);
+    }
 
     // Once the sentinel exists the run is over by definition, and the only
     // tool left to call is `done`. An agent that keeps going anyway — a model
@@ -1939,6 +1973,13 @@ export default function (pi: ExtensionAPI) {
     let fullOutputError: string | undefined;
     let content = (event as unknown as { content?: Array<Record<string, unknown>> }).content;
     let contentChanged = false;
+    const limit = callId ? shellLimits.get(callId) : undefined;
+    if (callId) shellLimits.delete(callId);
+    if (limit && isError && /timeout|timed out/i.test(JSON.stringify(content ?? ""))) {
+      content = [...(Array.isArray(content) ? content : []), { type: "text", text: shellTimeoutNote(limit) }];
+      contentChanged = true;
+      if (agentId) await logEvent(ctx.cwd, agentId, "shell_timeout", { tool: name }, { ok: true, seconds: limit.seconds, why: limit.why }).catch(() => undefined);
+    }
     const hostSpill = details?.fullOutputPath;
     if ((name === "bash" || name === "powershell") && hostSpill && agentId) {
       try {
