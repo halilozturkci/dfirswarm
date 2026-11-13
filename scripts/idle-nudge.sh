@@ -744,6 +744,87 @@ ensure_hub() {
   echo "idle-nudge: the hub was down; restarted (ok=$ok)" >&2
 }
 
+# A seat whose process has ended (its link to the hub is down and stays down) is said, started again, and after
+# SEAT_RELAUNCH_MAX tries recorded dead. On the run s5d814f all eight seats' links closed within ten minutes of a 76 MB
+# message; nothing marked them, 40 prompts went to nobody, and the run sat dead for 33 to 43 minutes until it was
+# stopped by hand. A session that holds a line too large to load is set aside first, so the seat starts a fresh one:
+# the ledger, the leads, the board and the store are the run's memory, not the session.
+SEAT_DOWN_SEC="${SWARM_SEAT_DOWN_SEC:-180}"
+SEAT_RELAUNCH_MAX="${SWARM_SEAT_RELAUNCH_MAX:-3}"
+SEAT_LINE_MAX_BYTES="${SWARM_SEAT_LINE_MAX_BYTES:-8388608}"
+SEAT_DOWN_STATE="$SANDBOX/traces/seat-down.state"
+trace_system() { # <tool> <args json> <result json>
+  local line
+  line="$(jq -nc --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg t "$1" --argjson a "$2" --argjson r "$3" '{ts: $ts, agent: "system", tool: $t, args: $a, result: $r}')"
+  printf '%s' "$line" | node "$ROOT/scripts/trace-emit.mjs" "$SANDBOX" >/dev/null 2>&1 || { [[ -n "${HUB_DIR:-}" ]] && printf '%s\n' "$line" >> "$HUB_DIR/hub-spill.jsonl"; } || true
+}
+seat_down_get() { awk -v id="$1" '$1 == id { print $2, $3, $4 }' "$SEAT_DOWN_STATE" 2>/dev/null; }
+seat_down_set() { # <id> <first seen> <attempts> <last attempt>; no further arguments clears it
+  local tmp="$SEAT_DOWN_STATE.tmp.$$"
+  { grep -v "^$1 " "$SEAT_DOWN_STATE" 2>/dev/null || true; if [[ $# -ge 4 ]]; then printf '%s %s %s %s\n' "$1" "$2" "$3" "$4"; fi; } > "$tmp"
+  mv "$tmp" "$SEAT_DOWN_STATE"
+}
+# Whether a seat's newest session holds a line too large to be loaded again.
+session_poisoned() { # <id>
+  local f
+  f="$(ls -t "$SANDBOX/.pi-sessions/$1"/*.jsonl 2>/dev/null | head -1)"
+  [[ -n "$f" ]] || return 1
+  LC_ALL=C awk -v max="$SEAT_LINE_MAX_BYTES" 'length($0) > max { found = 1; exit } END { exit !found }' "$f"
+}
+seat_down_check() {
+  [[ -n "$HUB_STATUS" && -f "$HUB_STATUS" && -n "${HUB_DIR:-}" ]] || return 0
+  local id idx=-1 connected now first attempts last pane fresh retired all_gone=1 any=0
+  now="$(date +%s)"
+  for id in $(jq -r '.agents[].id' "$SANDBOX/team.json" 2>/dev/null); do
+    idx=$((idx + 1)); any=1
+    if [[ -e "$SANDBOX/done/agents/$id.done" || -e "$SANDBOX/done/agents/$id.dead" ]]; then continue; fi
+    all_gone=0
+    connected="$(jq -r --arg id "$id" '.agents[$id].connected | tostring' "$HUB_STATUS" 2>/dev/null || true)"
+    if [[ "$connected" != false ]]; then
+      if [[ -n "$(seat_down_get "$id")" ]]; then seat_down_set "$id"; fi
+      continue
+    fi
+    read -r first attempts last <<<"$(seat_down_get "$id")"
+    if [[ -z "${first:-}" ]]; then seat_down_set "$id" "$now" 0 0; continue; fi
+    [[ $((now - first)) -ge "$SEAT_DOWN_SEC" ]] || continue
+    if [[ "$attempts" -eq 0 ]]; then
+      trace_system seat_down "$(jq -nc --arg a "$id" --argjson s "$((now - first))" '{agent: $a, down_seconds: $s}')" '{"ok":true}'
+      echo "idle-nudge: $id's link to the hub has been down for $((now - first))s: its process has ended"
+    elif [[ $((now - last)) -lt "$SEAT_DOWN_SEC" ]]; then
+      continue
+    fi
+    if [[ "$attempts" -ge "$SEAT_RELAUNCH_MAX" ]]; then
+      mkdir -p "$SANDBOX/done/agents"
+      printf 'recorded dead by the watchdog at %s: its link to the hub stayed down through %s relaunch(es)\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$attempts" > "$SANDBOX/done/agents/$id.dead"
+      trace_system seat_dead "$(jq -nc --arg a "$id" --argjson n "$attempts" '{agent: $a, relaunches: $n}')" '{"ok":true}'
+      echo "idle-nudge: $id did not come back after $attempts relaunch(es): recorded dead (done/agents/$id.dead)"
+      seat_down_set "$id"
+      continue
+    fi
+    fresh=false
+    if session_poisoned "$id"; then
+      retired="$SANDBOX/.pi-sessions/$id/retired-$now"
+      mkdir -p "$retired" && mv "$SANDBOX/.pi-sessions/$id"/*.jsonl "$retired"/ 2>/dev/null && fresh=true
+    fi
+    pane="$(jq -r --argjson i "$idx" '.panes[$i] // empty' "$SANDBOX/layout.json" 2>/dev/null || true)"
+    if [[ -n "$pane" && -f "$HUB_DIR/launch-$id.sh" ]] && "$HERDR" pane run "$pane" "sh $HUB_DIR/launch-$id.sh" >/dev/null 2>&1; then
+      prompt_agent "$id" "The harness started you again: your process had ended.$([[ "$fresh" == true ]] && printf ' Your earlier conversation was set aside because it held a message too large to load, so you start with none of it.') Nothing of the run was lost: the ledger, the leads, the board and the store are as they were, and your own files are in work/$id/. Call inbox and leads to see what you hold, then go on with it. This message is the harness, not a person: do not answer it with a status." followUp || true
+      trace_system seat_relaunched "$(jq -nc --arg a "$id" --arg p "$pane" --argjson n "$((attempts + 1))" --argjson f "$fresh" '{agent: $a, pane: $p, attempt: $n, fresh_session: $f}')" '{"ok":true}'
+      echo "idle-nudge: started $id again in $pane (attempt $((attempts + 1)) of $SEAT_RELAUNCH_MAX$([[ "$fresh" == true ]] && printf ', with a fresh session: the old one held a line over %s bytes' "$SEAT_LINE_MAX_BYTES"))"
+    else
+      trace_system seat_relaunched "$(jq -nc --arg a "$id" --arg p "${pane:-}" --argjson n "$((attempts + 1))" '{agent: $a, pane: $p, attempt: $n}')" '{"ok":false,"reason":"the pane or the launch script is not there, or herdr refused"}'
+      echo "idle-nudge: could not start $id again (pane ${pane:-unknown}, launch script $HUB_DIR/launch-$id.sh)" >&2
+    fi
+    seat_down_set "$id" "$first" "$((attempts + 1))" "$now"
+  done
+  # Every seat done or dead, and at least one of them dead: nobody is left to finish, and the run says so.
+  if [[ "$any" -eq 1 && "$all_gone" -eq 1 ]] && ls "$SANDBOX"/done/agents/*.dead >/dev/null 2>&1 && [[ ! -e "$SANDBOX/done/SWARM_DONE" && ! -e "$SANDBOX/done/ALL_AGENTS_DEAD" ]]; then
+    printf 'every seat is done or dead (%s)\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$SANDBOX/done/ALL_AGENTS_DEAD"
+    trace_system all_agents_dead '{}' '{"ok":true}'
+    echo "idle-nudge: every seat is done or dead: done/ALL_AGENTS_DEAD written"
+  fi
+}
+
 # Each line of the log says when (SWARM_LOG_TS=1, set where the kickoff starts the watchdog): a log without times could
 # not be laid beside the trace (the runs s17fdfe and s5d814f).
 log_ts() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
@@ -758,6 +839,7 @@ while :; do
   # away. On s17fdfe 28 prompts and a regroup went to seats whose VMs were already stopped.
   [[ -n "${HUB_DIR:-}" && -e "$HUB_DIR/.stop" ]] && exit 0
   ensure_hub
+  seat_down_check
   host_backstop
   host_token_alerts
   provider_limit_check
@@ -882,6 +964,10 @@ while :; do
       backoff=$(( IDLE_SEC * (1 << (n - MAX_NUDGES + 1)) ))
       [[ "$backoff" -gt 1800 ]] && backoff=1800
       [[ $(( clock - mark )) -ge "$backoff" ]] || continue
+    fi
+    # A seat whose link is down takes no prompt: it is not counted as nudged (seat_down_check starts it again).
+    if [[ -n "$HUB_STATUS" ]] && [[ "$(jq -r --arg id "$id" '.agents[$id].connected | tostring' "$HUB_STATUS" 2>/dev/null || true)" == false ]]; then
+      continue
     fi
     n=$((n + 1))
     set_count "$id" "$n" "$clock"

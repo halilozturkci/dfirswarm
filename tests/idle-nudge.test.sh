@@ -500,6 +500,56 @@ out="$(SWARM_HUB_DIR="$STOP_HUB" HERDR_BIN="$TMP/bin/herdr" bash "$ROOT/scripts/
 [[ "$(grep -c '^k0	' "$PROMPT_LOG")" -eq 0 ]] || fail "a seat was nudged while the run was being stopped"
 pass "once a stop has begun the watchdog exits and nudges nobody"
 
+# --- a seat whose process has ended --------------------------------------------
+# On s5d814f every seat's link closed after a 76 MB message and nothing started
+# them again. The watchdog says a seat is down, sets a session with a line too
+# large to load aside, starts the seat again in its pane, and after the tries
+# are spent records it dead; when all are, the run says so.
+DS="$TMP/down"; DH="$TMP/downhub"
+mkdir -p "$DS"/{traces,done/agents,threads/main,inbox/d0,inbox/d1,.pi-sessions/d0,.pi-sessions/d1,locks} "$DH"
+printf '{"swarm_id":"d","n":2,"agents":[{"id":"d0","role":"worker"},{"id":"d1","role":"worker"}]}\n' > "$DS/team.json"
+printf '{"n":2,"panes":["wD:p1","wD:p2"]}\n' > "$DS/layout.json"
+printf '{"main": 0}\n' > "$DS/inbox/d0/cursors.json"; printf '{"main": 0}\n' > "$DS/inbox/d1/cursors.json"
+: > "$DS/traces/events.jsonl"
+printf '#!/bin/sh\n' > "$DH/launch-d0.sh"; printf '#!/bin/sh\n' > "$DH/launch-d1.sh"
+printf '{"agents":{"d0":{"connected":false,"state":"gone"},"d1":{"connected":true,"state":"working"}}}\n' > "$DH/status.json"
+printf '{"type":"message","message":{"role":"user"}}\n' > "$DS/.pi-sessions/d0/s.jsonl"
+head -c 3000 /dev/zero | tr '\0' 'x' >> "$DS/.pi-sessions/d0/s.jsonl"; printf '\n' >> "$DS/.pi-sessions/d0/s.jsonl"
+printf '{"type":"message"}\n' > "$DS/.pi-sessions/d1/s.jsonl"
+PANE_LOG="$TMP/pane.log"; : > "$PANE_LOG"
+cat > "$TMP/bin/herdr-down" <<SH
+#!/bin/sh
+if [ "\$1" = pane ] && [ "\$2" = run ]; then printf '%s\t%s\n' "\$3" "\$4" >> "$PANE_LOG"; exit 0; fi
+exit 0
+SH
+chmod +x "$TMP/bin/herdr-down"
+down_once() { SWARM_HUB_DIR="$DH" SWARM_HUB_STATUS="$DH/status.json" SWARM_SEAT_DOWN_SEC="${1:-0}" SWARM_SEAT_LINE_MAX_BYTES=2000 SWARM_SEAT_RELAUNCH_MAX=2 HERDR_BIN="$TMP/bin/herdr-down" bash "$ROOT/scripts/idle-nudge.sh" --sandbox "$DS" --once --idle-sec 100000 2>&1; }
+out="$(down_once 100000)"
+[[ ! -s "$PANE_LOG" ]] || fail "a seat whose link had just gone down was started again at once: $(cat "$PANE_LOG")"
+grep -q '^d0 ' "$DS/traces/seat-down.state" || fail "the seat's link going down was not noted: $out"
+out="$(down_once 0)"
+grep -q "^wD:p1	sh $DH/launch-d0.sh$" "$PANE_LOG" || fail "the seat was not started again in its own pane: $(cat "$PANE_LOG") / $out"
+grep -q 'wD:p2' "$PANE_LOG" && fail "a seat whose link is up was started again"
+ls "$DS"/.pi-sessions/d0/retired-*/s.jsonl >/dev/null 2>&1 || fail "the session with a line too large to load was not set aside: $(ls -R "$DS/.pi-sessions/d0")"
+[[ -z "$(ls "$DS"/.pi-sessions/d0/*.jsonl 2>/dev/null)" ]] || fail "the oversized session is still the seat's newest"
+[[ -f "$DS/.pi-sessions/d1/s.jsonl" ]] || fail "another seat's session was touched"
+grep -q 'started d0 again in wD:p1 (attempt 1 of 2, with a fresh session' <<<"$out" || fail "the relaunch was not said: $out"
+pass "a seat whose link stays down is said and started again in its pane, with a fresh session when the old one cannot be loaded"
+out="$(down_once 0)"; out="$(down_once 0)"
+[[ -f "$DS/done/agents/d0.dead" ]] || fail "a seat that did not come back after its relaunches is not recorded dead: $out / $(cat "$DS/traces/seat-down.state")"
+[[ "$(grep -c 'launch-d0.sh' "$PANE_LOG")" -eq 2 ]] || fail "the seat was started $(grep -c 'launch-d0.sh' "$PANE_LOG") times, not the 2 it is allowed"
+[[ ! -e "$DS/done/ALL_AGENTS_DEAD" ]] || fail "the run was called dead while a seat is up"
+printf '{"agents":{"d0":{"connected":false},"d1":{"connected":true}}}\n' > "$DH/status.json"
+: > "$DS/done/agents/d1.done"
+out="$(down_once 0)"
+[[ -f "$DS/done/ALL_AGENTS_DEAD" ]] || fail "every seat is done or dead and the run does not say so: $out"
+pass "after its relaunches a seat is recorded dead, and a run whose seats are all done or dead says so"
+printf '{"agents":{"d0":{"connected":true},"d1":{"connected":true}}}\n' > "$DH/status.json"
+rm -f "$DS/done/agents/d0.dead" "$DS/done/ALL_AGENTS_DEAD" "$DS/done/agents/d1.done"; printf 'd0 1 1 1\n' > "$DS/traces/seat-down.state"
+out="$(down_once 0)"
+grep -q '^d0 ' "$DS/traces/seat-down.state" && fail "a seat that came back is still counted down"
+pass "a seat whose link came back is no longer counted"
+
 # --- the log says when --------------------------------------------------------
 : > "$PROMPT_LOG"
 out="$(SWARM_LOG_TS=1 HERDR_BIN="$TMP/bin/herdr" bash "$ROOT/scripts/idle-nudge.sh" --sandbox "$CS" --once --idle-sec 30 --compact-grace-sec 1 2>&1)"
