@@ -1,7 +1,7 @@
 /**
  * The process sweep's coverage is a checked fact (docs/packs.md, "What a program leaves behind"; AGENTS.md rule 2).
  *
- * The sweep put one shared PROCESS block (`# BEGIN SHARED PROCESS`, 62 copies) into every tool that starts a program, and wired each tool to say
+ * The sweep put one shared PROCESS block (`# BEGIN SHARED PROCESS`, 64 copies) into every tool that starts a program, and wired each tool to say
  * what the block ended. A new tool that starts a program, or an old one that loses its call, would be skipped by the sweep without any test noticing.
  * tests/process-sweep-coverage.json lists every carrier (a python file under packs/ or tool-library/ outside tests/ that starts a program, and every shell
  * file there), with its class, and this file holds the list to the code. It is static: no program runs, the whole file reads about eighty sources.
@@ -222,14 +222,14 @@ test("the registry covers every carrier and every claim in it holds", async () =
   assert.deepEqual(problems, []);
 });
 
-test("the registry names the 62 copies of the block and every class it documents", async () => {
+test("the registry names the 64 copies of the block and every class it documents", async () => {
   const registry = await loadRegistry();
   const counts: Record<string, number> = {};
   for (const e of registry.entries) counts[e.class] = (counts[e.class] ?? 0) + 1;
   const read = readerFor(ROOT);
   let withBlock = 0;
   for (const e of registry.entries) if ((await read(e.path))?.includes(BLOCK_BEGIN)) withBlock++;
-  assert.equal(withBlock, 62);
+  assert.equal(withBlock, 64);
   for (const c of ["held", "pipe-only", "local-mechanism", "twin"]) assert.ok((counts[c] ?? 0) > 0, );
 });
 

@@ -567,22 +567,22 @@ result.
 ## 7. The packs in this repository
 
 Thirteen, all under the same AGPL-3.0-or-later as the harness, in `packs/`:
-328 skills, 142 tools and 15 goal templates. Every one of them is sealed,
+335 skills, 153 tools and 15 goal templates. Every one of them is sealed,
 checksummed, and installs and verifies in the test suite.
 
 | Pack | Skills | Tools | Goals | What it is for |
 | --- | --- | --- | --- | --- |
-| `computer-forensics-base` | 30 | 20 | — | the method true of any platform; everything else depends on it |
-| `windows-forensics` | 53 | 27 | 3 | ten artefact families, from `$MFT` to what anti-forensics leaves behind |
+| `computer-forensics-base` | 35 | 24 | — | the method true of any platform; everything else depends on it |
+| `windows-forensics` | 53 | 30 | 3 | ten artefact families, from `$MFT` to what anti-forensics leaves behind |
 | `linux-forensics` | 35 | 11 | 2 | auth logs, the journal, accounts, systemd and cron, ext4, containers |
 | `macos-forensics` | 25 | 11 | 1 | property lists, the unified log, FSEvents, KnowledgeC, TCC, quarantine, Biome, APFS |
 | `mobile-forensics` | 18 | 7 | 1 | iOS and Android extractions, app databases, protobuf |
-| `memory-forensics` | 28 | 8 | 1 | containers, what works with no framework, injection, credentials |
+| `memory-forensics` | 29 | 9 | 1 | containers, what works with no framework, injection, credentials |
 | `network-forensics` | 19 | 11 | 1 | captures, sessions, DNS and TLS metadata, beacons, exfiltration |
 | `reverse-engineering` | 25 | 13 | 1 | static triage of a binary or a document, under quarantine |
 | `encrypted-containers` | 18 | 9 | 1 | which scheme, which protectors, and where the key already is |
 | `cloud-forensics` | 20 | 6 | 1 | Microsoft 365, Entra, AWS, Workspace, and the tokens behind them |
-| `ransomware-response` | 25 | 8 | 1 | scoping, recovery impairment, family candidates and recovery validation, each with its limits |
+| `ransomware-response` | 26 | 11 | 1 | scoping, recovery impairment, family candidates and recovery validation, each with its limits |
 | `triage-collection` | 20 | 8 | 1 | a collector's output, which is how most cases arrive |
 | `virtualization-backup-forensics` | 12 | 3 | 1 | the control plane of virtualization and backup: hypervisor records, disk and snapshot chains, backup catalogues, and which recovery points survive |
 
