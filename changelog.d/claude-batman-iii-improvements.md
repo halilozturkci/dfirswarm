@@ -27,3 +27,10 @@ A supplied program copied into `$OUT` (mounted no-exec) could not run, and a scr
 "Permission denied" 26 times and was `ok`, with no word of why. The job is still `ok`, and its reason and its requester's post now say
 "exit 0, but a program it ran could not be executed" with the way to run it, as they do for a job that ends 126. Only the shell's own line for
 a file that exists in the job's `$OUT` is read at exit 0.
+
+### Fixed: `cd <run root>` names nothing in the store sweep, and a held hit is told where to name 200 objects
+
+A seat's `cd /…/runs/<id> && grep … ledger/ledger.md` read the bare root as a path outside the run, so its kept output held as a hit; a `cd`
+or `pushd` to the run's root now names nothing, while a bare root anywhere else (`grep -r x <root>`) still reads as the whole run. The
+`sweep_hits` fix said to name each object in `refs`, which hold 20: a seat that followed it in the same run dropped objects named before and
+had them come back as hits. It now says `result_refs`, which hold 200 and count the same.

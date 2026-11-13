@@ -234,6 +234,12 @@ test("the run paths a maker's words name, and the harness's own events that keep
   assert.deepEqual(at("grep -i alice inputs/logs/b.log ./ledger/entries.jsonl"), ["inputs/logs/b.log", "ledger/entries.jsonl"]);
   assert.deepEqual(at(`python3 -c "open('${root}/store/jobs/j1/out/x.csv')"`), ["store/jobs/j1/out/x.csv"], "the run's absolute path is the run");
   assert.deepEqual(at("cat $PWD/SWARM.md"), ["SWARM.md"]);
+  // cd to the run's root, with no slash after it, names nothing: what follows is read from there (the run sf4406b's seats).
+  assert.deepEqual(at(`cd ${root} && grep -n Nj1ypLD8 ledger/ledger.md`), ["ledger/ledger.md"]);
+  assert.deepEqual(at(`cd "${root}"; sed -n 1,40p ledger/ledger.md`), ["ledger/ledger.md"]);
+  assert.deepEqual(at(`pushd ${root}/ >/dev/null && cat SWARM.md`), ["SWARM.md"]);
+  assert.deepEqual(at(`grep -r Nj1ypLD8 ${root}`), [root], "a bare root anywhere else is still the root: read as unnamed evidence");
+  assert.deepEqual(at(`cd ${root}x && cat SWARM.md`), [`${root}x`, "SWARM.md"], "another directory whose name begins with the root's is not the root");
   assert.deepEqual(at("for f in a b; do echo $f; done"), [], "a word the layout shares, unquoted and bare, is a word");
   assert.deepEqual(at("os.walk('inputs')"), ["inputs/"], "a directory's name quoted whole is the directory");
   assert.deepEqual(at("grep -r alice ."), ["."], "the root: read as unnamed evidence");

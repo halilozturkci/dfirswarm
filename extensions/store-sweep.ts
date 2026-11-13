@@ -552,6 +552,10 @@ function stringsIn(v: unknown, depth = 0): string[] {
  */
 export function runPathsIn(words: string, top: ReadonlySet<string>, roots: readonly string[] = []): { text: string; paths: string[] } {
   let w = words;
+  // `cd <run root>` (or pushd), with no slash after it, only moves to where the run's own paths are read from: it names nothing (the run sf4406b's
+  // seats ran `cd /…/runs/sf4406b && grep … ledger/ledger.md`, and the bare root read as a path elsewhere). A bare root anywhere else still is one.
+  const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  for (const r of roots) if (r && r !== "/") w = w.replace(new RegExp(`\\b(cd|pushd)\\s+(["']?)${esc(r.replace(/\/+$/, ""))}\\/?\\2(?=[\\s;&|)]|$)`, "g"), "$1 ");
   for (const r of roots) if (r && r !== "/") w = w.split(`${r.replace(/\/+$/, "")}/`).join("");
   w = w.replace(/\$\{?PWD\}?\/|\$\(pwd\)\//g, "");
   const paths: string[] = [];
