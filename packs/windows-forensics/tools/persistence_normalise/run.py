@@ -531,6 +531,7 @@ install_signal_handlers(lambda signum: interrupted_answer(signum))
 # past one is said, never followed.
 import itertools
 import logging
+import struct
 import warnings
 
 KEY_CELL_BYTES = 76
@@ -569,8 +570,42 @@ def withhold_library_output():
     warnings.simplefilter("ignore")
 
 
+INLINE_DATA = 0x80000000                  # a value record whose data size has this bit set holds its data (four bytes at most) in the offset field
+
+
+def bound_value_reads():
+    """regipy reads the data of every value with stream.read(data_size) at the record's data offset, before it looks at the type. For a value
+    whose data is inside the record (the size has its top bit set) that is a read of up to 2 GiB at a place the four data bytes name: the rest
+    of the hive file. regipy then drops what it read for the types it knows to be inline (REG_SZ, REG_BINARY, REG_DWORD, REG_QWORD,
+    REG_MULTI_SZ) and RETURNS it for every other type: a device property (a type above 0xFFFF0000, which Windows writes under
+    the Properties keys of Control/Class and Enum by the thousand), REG_LINK, REG_FILETIME or a type it does not know came back as
+    megabytes of the hive, and the data budget below then stopped the walk (a 12 MB SYSTEM hive: 184 of 70,010 values read). The reader is
+    replaced once: a record with inline data gives its own bytes, and every other record is read as before. Returns whether the reader is in
+    place (False where the library is a stand-in without it)."""
+    try:
+        import regipy.registry as reg
+        record, made = reg.NKRecord, reg.VKRecord
+        real = record.read_value
+    except Exception:  # noqa: BLE001 - no library, or one without this reader: nothing to replace
+        return False
+    if getattr(real, "bounded_inline", False):
+        return True
+
+    def read_value(vk, stream):
+        size = vk.data_size
+        if isinstance(size, int) and size >= INLINE_DATA:
+            data = struct.pack("<I", int(vk.data_offset) & 0xFFFFFFFF)[:min(size - INLINE_DATA, 4)]
+            return made(value_type=vk.data_type, value_type_str=str(vk.data_type), value=data, size=size)
+        return real(vk, stream)
+
+    read_value.bounded_inline = True
+    record.read_value = staticmethod(read_value)
+    return True
+
+
 class HiveBounds:
     def __init__(self, hive_path, size=None):
+        self.inline_values_bounded = bound_value_reads()
         size = os.path.getsize(hive_path) if size is None else size
         self.hive_bytes = size
         self.key_cells = max(size // KEY_CELL_BYTES, 1)
@@ -2386,7 +2421,7 @@ OWN_NAMES.update((
     "layout", "layout_basis", "library_messages_withheld", "locator", "logon_type", "matched", "not_attempted", "not_examined", "not_provided", "observation_counts",
     "observations", "observations_note", "parser", "path", "present", "problem_count", "problems", "problems_not_listed", "provided", "raw_length", "reason", "registration",
     "result", "returned", "run_level", "signal", "software", "source", "state", "status", "status_basis", "taskcache", "tasks_dir", "tasks_key", "transaction_logs_beside_hive",
-    "transaction_logs_replayed", "tree", "tree_sd", "triggers", "triggers_length", "actions_length", "truncated", "unsupported", "user_id", "walk_stopped_by_time_limit", "what", "where",
+    "transaction_logs_looked_for", "transaction_logs_replayed", "tree", "tree_sd", "triggers", "triggers_length", "actions_length", "truncated", "unsupported", "user_id", "walk_stopped_by_time_limit", "what", "where",
     "wmi_repository", "working_directory", "xml", "xml_file", "xml_rejected", "created", "created_filetime", "uri", "record_id", "event_id", "channel", "time", "time_utc",
     "actions_hex", "triggers_hex", "dynamic_info_hex", "autorun", "autorun_kind", "control_set", "cross_check", "current_control_set", "display_name", "failure_actions_hex",
     "failure_actions_length", "hives", "image_path", "items_by_mechanism", "mechanism", "ntuser", "not_run", "object_name", "scheduled_task", "service", "service_dll",
@@ -2400,7 +2435,7 @@ OWN_NAMES.update((
 # What the boundary is told about the fields of this tool's answers: the type of what a key holds. A key that is not listed holds free text.
 FIELDS.update({
     "software": "path", "tasks_dir": "path", "evtx_results": "path", "path": "path", "xml_file": "path", "uri": "path", "tree": "key", "tasks_key": "key", "locator": "name",
-    "all_results": "path", "all_problems": "path", "transaction_logs_beside_hive": "path", "guid": "guid", "id": "guid", "source": "name", "layout": "name", "kind": "name",
+    "all_results": "path", "all_problems": "path", "transaction_logs_beside_hive": "path", "transaction_logs_looked_for": "path", "guid": "guid", "id": "guid", "source": "name", "layout": "name", "kind": "name",
     "created": "time", "last_run": "time", "last_success": "time", "time_utc": "time", "date": "time", "created_filetime": "number", "last_run_filetime": "number",
     "last_success_filetime": "number", "last_result": "number", "task_state": "number", "raw_length": "number", "record_id": "number", "event_id": "number", "channel": "key",
     "actions_length": "number", "triggers_length": "number", "trigger_count": "number", "user_id": "name", "group_id": "name", "run_level": "name", "logon_type": "name",
@@ -2485,9 +2520,7 @@ class Reader:
         return list(self.bounds.values(node, where, self.problems, trim_values=False))
 
     def info(self):
-        hdr = self.h.header
-        return {"hive_dirty": hdr.primary_sequence_num != hdr.secondary_sequence_num, "hive_sequence_numbers": [hdr.primary_sequence_num, hdr.secondary_sequence_num],
-                "transaction_logs_beside_hive": [self.path + sfx for sfx in (".LOG1", ".LOG2", ".LOG") if os.path.isfile(self.path + sfx)], "transaction_logs_replayed": False}
+        return hive_state(self.h, self.path)
 GROUPS = ("Plain", "Boot", "Logon", "Maintenance")
 MAX_XML_BYTES = 8 << 20
 MAX_ACTIONS = 50
@@ -2495,7 +2528,37 @@ MAX_EVENTS_PER_TASK = 200
 EVENTS = {"security": (4698, 4699, 4700, 4701, 4702), "microsoft-windows-taskscheduler/operational": (106, 140, 141, 200, 201)}
 FILETIME_EPOCH = datetime.datetime(1601, 1, 1, tzinfo=datetime.timezone.utc)
 DEADLINE_SECONDS = 294            # the manifest allows 300; the seal stop (296.5) is 2.5 seconds later
-PARSER = "persistence_normalise/3"
+PARSER = "persistence_normalise/4"
+
+
+LOG_SUFFIXES = (".LOG1", ".LOG2", ".LOG")
+
+
+def hive_state(h, hive_path):
+    """Whether the hive file is dirty (its two sequence numbers differ: a write was not finished in the file, and the newest state is in the
+    transaction logs), the log files the tool looked for beside it and the ones that are there. The logs are never replayed by this tool."""
+    header = h.header
+    looked = [hive_path + s for s in LOG_SUFFIXES]
+    return {"hive_dirty": header.primary_sequence_num != header.secondary_sequence_num,
+            "hive_sequence_numbers": [header.primary_sequence_num, header.secondary_sequence_num],
+            "transaction_logs_looked_for": looked,
+            "transaction_logs_beside_hive": [path for path in looked if os.path.isfile(path)],
+            "transaction_logs_replayed": False}
+
+
+def dirty_caveat(state):
+    """Why an answer read from a dirty hive is not complete, in the tool's own words and counts (None for a clean hive). The tool cannot show
+    that the key or value asked about is outside the pages the logs would rewrite, so every answer from a dirty hive carries it."""
+    if not state.get("hive_dirty"):
+        return None
+    there = len(state.get("transaction_logs_beside_hive") or [])
+    return ("the hive is dirty (its sequence numbers %s and %s differ) and no transaction log was replayed: the tool looked for %s beside the hive "
+            "(transaction_logs_looked_for) and %s, and it replays none, so what is read here is the hive file as it is and keys and values may differ from "
+            "the live registry (give registry_recover the hive and its logs and read the copy it makes)" % (
+                state["hive_sequence_numbers"][0], state["hive_sequence_numbers"][1], ", ".join(LOG_SUFFIXES[:-1]) + " and " + LOG_SUFFIXES[-1],
+                "found none (they are not in what this job can read)" if not there else "found %d (transaction_logs_beside_hive)" % there))
+
+
 READ_SECONDS = DEADLINE_SECONDS - min(30.0, DEADLINE_SECONDS / 10)     # the reading stops here; the rest of DEADLINE_SECONDS is for writing what was read
 ORDER_CAP = 100000                # most items of one list put in print order (above it: a random order)
 ORDER_COST = 0.0003               # seconds one item may take to put in print order (about three times what it takes); a list is ordered only if it fits half of the time left
@@ -3317,6 +3380,10 @@ def main():
         reasons.append("contains looks only in the text the answer prints: %d item(s) were not matched and have text withheld, so the needle may be in what is withheld (contains_blind_records)" % n["blind"])
     if n["failed"]:
         reasons.append("%d key(s), value(s) or file(s) could not be read" % n["failed"])
+    for role in sorted(hives):
+        caveat = dirty_caveat(hives[role])
+        if caveat:
+            reasons.append("the %s hive: %s" % (role, caveat))
     out = {
         "parser": PARSER,
         "status": "partial" if reasons else "complete",

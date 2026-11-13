@@ -548,6 +548,7 @@ install_signal_handlers(lambda signum: interrupted_answer(signum))
 # past one is said, never followed.
 import itertools
 import logging
+import struct
 import warnings
 
 KEY_CELL_BYTES = 76
@@ -586,8 +587,42 @@ def withhold_library_output():
     warnings.simplefilter("ignore")
 
 
+INLINE_DATA = 0x80000000                  # a value record whose data size has this bit set holds its data (four bytes at most) in the offset field
+
+
+def bound_value_reads():
+    """regipy reads the data of every value with stream.read(data_size) at the record's data offset, before it looks at the type. For a value
+    whose data is inside the record (the size has its top bit set) that is a read of up to 2 GiB at a place the four data bytes name: the rest
+    of the hive file. regipy then drops what it read for the types it knows to be inline (REG_SZ, REG_BINARY, REG_DWORD, REG_QWORD,
+    REG_MULTI_SZ) and RETURNS it for every other type: a device property (a type above 0xFFFF0000, which Windows writes under
+    the Properties keys of Control/Class and Enum by the thousand), REG_LINK, REG_FILETIME or a type it does not know came back as
+    megabytes of the hive, and the data budget below then stopped the walk (a 12 MB SYSTEM hive: 184 of 70,010 values read). The reader is
+    replaced once: a record with inline data gives its own bytes, and every other record is read as before. Returns whether the reader is in
+    place (False where the library is a stand-in without it)."""
+    try:
+        import regipy.registry as reg
+        record, made = reg.NKRecord, reg.VKRecord
+        real = record.read_value
+    except Exception:  # noqa: BLE001 - no library, or one without this reader: nothing to replace
+        return False
+    if getattr(real, "bounded_inline", False):
+        return True
+
+    def read_value(vk, stream):
+        size = vk.data_size
+        if isinstance(size, int) and size >= INLINE_DATA:
+            data = struct.pack("<I", int(vk.data_offset) & 0xFFFFFFFF)[:min(size - INLINE_DATA, 4)]
+            return made(value_type=vk.data_type, value_type_str=str(vk.data_type), value=data, size=size)
+        return real(vk, stream)
+
+    read_value.bounded_inline = True
+    record.read_value = staticmethod(read_value)
+    return True
+
+
 class HiveBounds:
     def __init__(self, hive_path, size=None):
+        self.inline_values_bounded = bound_value_reads()
         size = os.path.getsize(hive_path) if size is None else size
         self.hive_bytes = size
         self.key_cells = max(size // KEY_CELL_BYTES, 1)

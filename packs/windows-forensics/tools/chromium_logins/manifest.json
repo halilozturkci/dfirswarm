@@ -1,0 +1,69 @@
+{
+  "name": "chromium_logins",
+  "description": "SENSITIVE: decrypt the logins a Chromium-family browser saved (Chrome, Edge, Brave, Opera, Vivaldi) from a profile's Login Data (SQLite), with a key source. RULES: (1) a v10 secret needs the profile key; (2) look where the user keeps secrets (notes, exports, password files, backups) before attacking DPAPI: a key found there is given as a file; (3) a negative from your own crypto counts only after the tool's self-test passed (selftest: true, and self_test in every answer). Every job of this tool is run as secret output (`secret_output: \"required\"`); outside such a job (SECRET_OUTPUT=1, JOB_ID, OUT) it refuses as JSON before it reads or creates anything. KEY SOURCE, one of: key_file (the 32-byte profile key: raw, 64 hexadecimal digits or base64); or local_state (User Data/Local State, whose os_crypt.encrypted_key is base64 of 'DPAPI' and a DPAPI blob) with the DPAPI material that opens it: masterkey (the user's master key file or files, or the Protect/<SID> directory), sid (or the name of that directory) and one of password_file, hash_file and empty_password; or local_state with masterkey_keys_file (the sealed dpapi_masterkey-keys.jsonl of an earlier dpapi_masterkey job). WHAT IS DECRYPTED: a value that begins v10 or v11 (AES-256-GCM under the profile key: a 12-byte nonce, the cipher text, a 16-byte tag, the tag verified before a byte is returned), and a bare DPAPI blob (what Chrome wrote before version 80) where the master key of its GUID is verified. NOT decrypted, and said per row: a v20 value (app-bound encryption of Chrome 127 and later, whose key is under the SYSTEM account's DPAPI), an unknown scheme, a value over 64 KiB. Cookies and Web Data use the same profile key and are not read by this tool. OUTPUT: one row per login in table order (rowid): origin (scheme, host, port and path; the user-info, query and fragment are left out and counted in origin_left_out), username (512 characters shown), created, last_used and password_modified as ISO 8601 UTC with six fractional digits beside the raw value (microseconds since 1601-01-01 UTC), times_used, never_save, password_present, password_value_bytes (the stored length), scheme, decrypted (true only when the tag or the signature verified; null for a row with no stored value) and why_not. A WRONG KEY IS AN ANSWER, never an exception: every row says decrypted false with why_not, not_decrypted_by_reason counts the reasons, and profile_key.why_not says at which step the key was not obtained (no encrypted_key, not base64, not 'DPAPI', a malformed or unsupported blob, no verified master key of its GUID, a signature that did not verify). STATUS: complete only when every row of the table was read (rows_read equals the table's own count, every_row_read true) and every stored password was decrypted; partial when a password was not decrypted, the clock (45 s of the manifest's 60) or the row bound (1,000,000) stopped the read, the table could not be read to its end, a master key file was not tried, or a -wal or -journal that is not empty lies beside the database (sidecars_beside; the database file is opened alone, read-only and immutable, and nothing is replayed, so rows in a log are not read); failed when the file is not an SQLite database with a logins table. The database is read through an authorizer that lets only the read of the logins table through. WHERE THE VALUES ARE: chromium_logins-values.jsonl under $OUT (mode 0600, created exclusively before anything is read, never replaced; a file already there refuses the call): one line per decrypted login with the whole origin_url, action_url, signon_realm, username and the password (UTF-8, or hexadecimal with password_encoding hex), and a first line with the profile key when this call opened it from Local State (a key handed in as key_file is not written again). The answer holds no password, no key, no fragment and no digest of one; secret_values says the file and how many lines. A user name or an origin that is itself a secret is printed: only the query, fragment and user-info of an origin are left out. The inline page is `limit` rows (default 100, at most 1000) and the whole list of rows is a JSON Lines file named in all_results when there are more. SELF-TEST: every call first runs every primitive against a known answer and a wrong key against each (AES-256 by FIPS 197, AES-256-GCM by the GCM specification's test cases 14 and 16, MD4 by RFC 1320 and a known NT hash, a DPAPI master key by its SHA-1 and by its NT pre-key, a DPAPI blob, a Chromium v10 value); a failed check refuses the call (status failed), because a negative from a reader that does not reproduce its known answers is not a finding. selftest: true alone prints the checks and runs anywhere (it reads no evidence). The primitives are in the standard library alone (no cryptography module is needed) and were compared with the cryptography library's AES-CBC and AES-GCM on random inputs where the tests have it. DPAPI as read here: the pre-key is HMAC-SHA1 over the SID in UTF-16LE with its terminator, keyed by the SHA-1 of the password in UTF-16LE, by its NT hash, and by the NT hash through PBKDF2-SHA256 (10,000 rounds, then one; the newer domain scheme); PBKDF2 with the file's own salt and rounds gives the AES key and IV; a master key is verified only when its own HMAC matches, a blob's clear text returned only when its signature verifies. ONLY SHA-512 (0x800E) with AES-256 (0x6610) is read, what Windows 10 and 11 write: a master key or a blob of other algorithm ids (3DES with SHA-1 of Windows 7 and earlier) answers supported false with the ids and is not attempted, a file that declares more than 1,000,000 PBKDF2 rounds is not attempted, and neither is a blob whose cipher text is over 256 KiB (this AES is Python's). NOT read: the domain backup key, the credential history file (a key under an older password), a machine (SYSTEM) master key, DPAPI-NG. NOT CHECKED AGAINST WINDOWS: the derivation was checked against vectors made by forward implementations written apart from the reader (one with the cryptography library, one with node:crypto in the tests), and the layout of a real Windows 10 master key file and a real Local State blob was read (sizes, GUIDs, algorithm ids, 8,000 rounds), but no real master key was opened with its known password. SECRETS ARE FILES: a password (password_file: UTF-8, one trailing line break dropped), a hash (hash_file: the SHA-1 of the password in UTF-16LE as 20 bytes or 40 hexadecimal digits, or its NT hash as 16 bytes or 32 digits), a key and the keys of an earlier job are named as files of at most 4096 bytes (regular files; a link, a pipe or a device is refused), never given as values: the arguments are recorded in the trace. empty_password: true stands for an account with no password. VERIFIED ON REAL DATA: the v10 reader was run against a Login Data and its profile key from a real Windows 10 Chrome profile (every tag verified, and a wrong key was refused for every row). SIGTERM, SIGINT and SIGHUP end it with one JSON document (status failed, interrupted true, exit 128 plus the signal); a values file made by then holds whole lines and stays a sealed output. A wrong-type or unknown argument is refused as JSON. Not for the logins without their passwords (origin, user name and dates anywhere, no key needed): use browser_history. Not for Firefox (logins.json and key4.db are another scheme).",
+  "params": {
+    "login_data": {
+      "type": "string",
+      "description": "The profile's Login Data file (SQLite). Opened read-only and immutable; a -wal or -journal beside it is named, not replayed"
+    },
+    "local_state": {
+      "type": "string",
+      "description": "User Data/Local State (JSON): holds the profile key under DPAPI at os_crypt.encrypted_key. Needed unless key_file is given"
+    },
+    "key_file": {
+      "type": "string",
+      "description": "A file holding the 32-byte profile key (raw, 64 hexadecimal digits, or base64): the key source when the case already holds the key. Not with masterkey"
+    },
+    "masterkey": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "The user's DPAPI master key file(s) (AppData/Roaming/Microsoft/Protect/<SID>/<GUID>), or the Protect/<SID> directory; one path may be given as a string. At most 64 files"
+    },
+    "sid": {
+      "type": "string",
+      "description": "The user's SID (S-1-5-21-...-RID). Taken from the name of the directory the master key file is in when not given"
+    },
+    "password_file": {
+      "type": "string",
+      "description": "A file holding the user's Windows password (UTF-8; one trailing line break is dropped). Never a value given inline"
+    },
+    "hash_file": {
+      "type": "string",
+      "description": "A file holding the SHA-1 of the password in UTF-16LE (20 bytes or 40 hexadecimal digits) or its NT hash (16 bytes or 32 digits)"
+    },
+    "empty_password": {
+      "type": "boolean",
+      "description": "true for an account with no password (the empty password is tried); default false"
+    },
+    "masterkey_keys_file": {
+      "type": "string",
+      "description": "The sealed dpapi_masterkey-keys.jsonl of an earlier dpapi_masterkey job, instead of masterkey and a password"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Rows shown inline (default 100, 1 to 1000, an inline page size); every row is read, and when there are more the whole list is written as JSON Lines and named in all_results"
+    },
+    "selftest": {
+      "type": "boolean",
+      "description": "true alone: run the known-answer checks and print them (no evidence is read; runs outside a job). Every other call runs them first too"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 60,
+  "example": "{\"login_data\": \"work/extracted/Default/Login Data\", \"key_file\": \"store/jobs/j000012/out/profile-key.hex\"}",
+  "by": "maintainer",
+  "at": "2026-11-13T12:00:00.000Z",
+  "version": 1,
+  "use": {
+    "names": [
+      "Login Data",
+      "Local State"
+    ]
+  },
+  "requires": [],
+  "secret_output": "required",
+  "sha256": "cfa1c47fe064d664fe582e58f3989499d50ff8b5f1a2339f0552a477052b2628"
+}

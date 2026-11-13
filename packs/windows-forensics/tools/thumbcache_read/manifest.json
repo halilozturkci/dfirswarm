@@ -1,0 +1,55 @@
+{
+  "name": "thumbcache_read",
+  "description": "Read a Windows thumbnail or icon cache (thumbcache_*.db and iconcache_*.db of Windows Vista and later, the files that begin 'CMMM') and write every image it stores to a file: one file, or every such file under a directory. RULE: on a host whose files were encrypted or wiped, the thumbnail and icon caches may hold renderings made before; read them before calling a picture lost. Per cache file: format_version (0x14 Vista, 0x15 Windows 7, 0x1A, 0x1C and 0x1E Windows 8, 0x1F Windows 8.1, 0x20 Windows 10 and later; a version outside that list is refused, not guessed), cache_type with size_class_from_header (by the table of that version) beside size_class_from_name (a disagreement is a problem line), first_entry_offset and first_free_offset from the header, the entries read and the bytes that are in no entry. Per entry, one row: file, entry (its number), offset, entry_size, entry_hash (16 hexadecimal digits), identifier (the entry's own name, which Windows writes as the hash; 128 characters shown), data_offset, data_size, declared_width and declared_height (Windows 8 and later), image_type by the image's first bytes (bmp, jpeg, png or unknown), image_width and image_height from a BMP or PNG header, the sha256 of the stored image, data_checksum and header_checksum (copied, NOT verified: checksums_verified is false), in_free_space (the entry lies past the header's first free byte: bytes of an earlier state of the cache, a candidate) and written (the file the image was copied to). An image is written under a name this tool makes (the cache's name, the entry's number and its hash; never a name from the evidence) in thumbcache_read-<id>/ under work/<your id>/ (in a job, under $OUT), and a file that is there is never replaced (the same bytes are named again, other bytes take the next free -n name). EVERY LENGTH IS CHECKED: an entry whose parts do not fit its declared size is a row with an error and a problem line, and the next 'CMMM' is looked for; a file that ends inside an entry gives a row with truncated true and its image is not written; bytes that are neither an entry nor zero are counted and named (bytes_not_in_an_entry); each makes that file, and the answer, partial. BOUNDS: max_entries (default 200,000), max_image_bytes (an image over it is hashed and not written; default 64 MiB), max_output_bytes (default 1 GiB; past it images are hashed and not written), 200 cache files of one directory, and the tool's own clock (100 s of the manifest's 120): each one reached is said and makes the status partial, with where the read stopped. status is complete only when every cache file found was read from its first entry to its end and every image was written (with extract false: hashed); failed when no file named is a cache. Not read, and answered as such: thumbcache_idx.db (the cache's index, 'IMMM') and IconCache.db (another format). What an entry does NOT hold: the path of the item it was rendered for, and any time; tying a hash to a file needs the cache index or the Windows Search database, which this tool does not read, or a comparison by content. Only regular files are opened, without blocking and without following a link; a link is not followed. VERIFIED ON REAL DATA: the Windows 10 layout (0x20) against fourteen cache files of a real profile: the size class of every type number from 16 to custom_stream agreed with the file's name, and the 38 images written (37 BMP, 1 JPEG) are valid images by an independent reader; the layouts of 0x14 to 0x1F are from the published structures (thumbcache_viewer) and were run only against fixtures built from them. SIGTERM, SIGINT and SIGHUP end it with one JSON document (status failed, interrupted true, exit 128 plus the signal) and no temporary file; the images placed before a stop are whole files. A wrong-type or unknown argument is refused as JSON.",
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "A thumbcache_*.db or iconcache_*.db file, or a directory holding them (a profile's AppData/Local/Microsoft/Windows/Explorer)"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Entry rows shown inline (default 100, 1 to 1000, an inline page size); every entry is read, and when there are more the whole list is written as JSON Lines and named in all_results"
+    },
+    "extract": {
+      "type": "boolean",
+      "description": "Write each stored image to a file (default true). false lists and hashes the entries and writes no image"
+    },
+    "include_free": {
+      "type": "boolean",
+      "description": "Read the entries past the header's first free byte too, marked in_free_space (default true). false stops at that offset"
+    },
+    "max_entries": {
+      "type": "integer",
+      "description": "Entries read in one call (default 200000, 1 to 2000000); the rest are not read and the status is partial"
+    },
+    "max_image_bytes": {
+      "type": "integer",
+      "description": "The largest stored image written (default 67108864); a larger one is hashed, listed and not written"
+    },
+    "max_output_bytes": {
+      "type": "integer",
+      "description": "The image bytes written in one call (default 1073741824, at most 8589934592); past it images are hashed, listed and not written"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 120,
+  "example": "{\"path\": \"work/extracted/Users/a/AppData/Local/Microsoft/Windows/Explorer\"}",
+  "by": "maintainer",
+  "at": "2026-11-13T12:00:00.000Z",
+  "version": 1,
+  "use": {
+    "names": [
+      "thumbcache_*.db",
+      "iconcache_*.db"
+    ],
+    "magic": [
+      {
+        "offset": 0,
+        "hex": "434d4d4d"
+      }
+    ]
+  },
+  "requires": [],
+  "sha256": "da933de9ff058010b47f06e1be21326df35ea571071907af37792d8a1e3b5f0e"
+}

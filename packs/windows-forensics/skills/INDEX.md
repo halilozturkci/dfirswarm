@@ -19,7 +19,7 @@ Core: `registry/clock`, `execution/prefetch`
 - `artifacts/shellbags` ShellBags: Read BagMRU, RecentDocs, OpenSavePidlMRU.
 - `browser/artefacts` Browser profiles: Navigation, apart from sync.
 - `browser/downloads` Download provenance: Source of a file; did it finish?
-- `browser/strings` URL strings, SQLite: URL text in raw bytes; read a SQLite file.
+- `browser/strings` URL strings, SQLite, logins: Raw URL text; a SQLite file; saved passwords.
 - `browser/webcache` WebCache, index.dat: WebCacheV01.dat or index.dat files.
 - `execution/amcache` Amcache: Identify a file by path or hash.
 - `execution/esedb` ESE databases: Export tables from SRUDB.dat and others.

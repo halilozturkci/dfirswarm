@@ -375,6 +375,14 @@ dual("a hive that is dirty is said to be, with its logs named and not replayed; 
     assert.equal(out.hive_dirty, true);
     assert.deepEqual(out.transaction_logs_beside_hive, ["work/NTUSER.DAT.LOG1"]);
     assert.equal(out.transaction_logs_replayed, false);
+    // A dirty hive whose logs were not replayed is never plainly complete: the records may differ from the live registry's.
+    assert.equal(out.status, "partial");
+    assert.match(out.status_basis, /the hive is dirty \(its sequence numbers 12 and 11 differ\) and no transaction log was replayed: the tool looked for \.LOG1, \.LOG2 and \.LOG beside the hive \(transaction_logs_looked_for\) and found 1 \(transaction_logs_beside_hive\), and it replays none/);
+    assert.match(out.status_basis, /may differ from the live registry \(give registry_recover the hive and its logs/);
+    assert.deepEqual((out as unknown as { transaction_logs_looked_for: string[] }).transaction_logs_looked_for, ["work/NTUSER.DAT.LOG1", "work/NTUSER.DAT.LOG2", "work/NTUSER.DAT.LOG"]);
+    const cleanEnv = await v.write(cwd, "work/clean/NTUSER.DAT", ntuser([{ name: rot13("a"), type: "binary", value: ua16(1, 1, FT) }]));
+    const clean = body<Answer>(await tool(TOOL, cwd, { hive: "work/clean/NTUSER.DAT" }, cleanEnv));
+    assert.deepEqual([clean.hive_dirty, clean.status], [false, "complete"], "the same hive with its sequence numbers equal is complete");
     assert.ok(out.interpretation_limits.some((l) => /not replayed/.test(l)));
     const env2 = await v.write(cwd, "work/empty.dat", { name: "ROOT", children: [{ name: "Other" }] });
     const gone = failed(await tool(TOOL, cwd, { hive: "work/empty.dat" }, env2));
@@ -553,7 +561,7 @@ test("the tool is registered: manifest names, input magic and the secret_output 
   const manifest = JSON.parse(await readFile(join(WIN, TOOL, "manifest.json"), "utf8"));
   assert.deepEqual(manifest.use.names, ["NTUSER.DAT", "SYSTEM"]);
   assert.deepEqual(manifest.secret_output, { when_args: ["write_values"] });
-  assert.equal(manifest.version, 4);
+  assert.equal(manifest.version, 5);
   assert.deepEqual(manifest.requires, [], "no second reader is started, so nothing is required");
   assert.ok(manifest.timeout_seconds > 84);
   assert.match(manifest.description, /cross_check|second reader/);

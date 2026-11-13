@@ -219,7 +219,7 @@ import tempfile
 import time
 from pathlib import Path
 
-PARSER = "registry_recover/3"
+PARSER = "registry_recover/4"
 BASE_BLOCK = 4096
 LOG_HEADER = 512
 MARVIN_SEED = 0x82EF4D887A4E55C5
@@ -238,6 +238,15 @@ MAX_DEPTH = 512
 DEFAULT_SECONDS = 90
 MAX_SECONDS = 110
 INLINE_PROBLEMS = 50
+# Every inline page is bounded by bytes as well as by rows (a SYSTEM hive gave an answer of 144.8 MB: 182 rows of 96.5 MB): a page holds at most
+# INLINE_PAGE_BYTES of rows, a row over INLINE_ROW_BYTES is shown by its small fields and its line in the file, a text of a problem or of a
+# list in the answer is cut at INLINE_TEXT, and an answer that is still over MAX_ANSWER_BYTES is printed without its inline pages. Nothing is
+# lost by any of it: every row is whole in the file the page names, and `next` says the line to read on from.
+INLINE_PAGE_BYTES = 128 << 10
+INLINE_ROW_BYTES = 4096
+INLINE_FIELD = 512
+INLINE_TEXT = 2000
+MAX_ANSWER_BYTES = 768 << 10
 BLOCK = 1 << 20
 
 # Lossless paging (the same in every library tool that pages): the page an
@@ -1575,6 +1584,7 @@ def install_signal_handlers():
 # past one is said, never followed.
 import itertools
 import logging
+import struct
 import warnings
 
 KEY_CELL_BYTES = 76
@@ -1613,8 +1623,42 @@ def withhold_library_output():
     warnings.simplefilter("ignore")
 
 
+INLINE_DATA = 0x80000000                  # a value record whose data size has this bit set holds its data (four bytes at most) in the offset field
+
+
+def bound_value_reads():
+    """regipy reads the data of every value with stream.read(data_size) at the record's data offset, before it looks at the type. For a value
+    whose data is inside the record (the size has its top bit set) that is a read of up to 2 GiB at a place the four data bytes name: the rest
+    of the hive file. regipy then drops what it read for the types it knows to be inline (REG_SZ, REG_BINARY, REG_DWORD, REG_QWORD,
+    REG_MULTI_SZ) and RETURNS it for every other type: a device property (a type above 0xFFFF0000, which Windows writes under
+    the Properties keys of Control/Class and Enum by the thousand), REG_LINK, REG_FILETIME or a type it does not know came back as
+    megabytes of the hive, and the data budget below then stopped the walk (a 12 MB SYSTEM hive: 184 of 70,010 values read). The reader is
+    replaced once: a record with inline data gives its own bytes, and every other record is read as before. Returns whether the reader is in
+    place (False where the library is a stand-in without it)."""
+    try:
+        import regipy.registry as reg
+        record, made = reg.NKRecord, reg.VKRecord
+        real = record.read_value
+    except Exception:  # noqa: BLE001 - no library, or one without this reader: nothing to replace
+        return False
+    if getattr(real, "bounded_inline", False):
+        return True
+
+    def read_value(vk, stream):
+        size = vk.data_size
+        if isinstance(size, int) and size >= INLINE_DATA:
+            data = struct.pack("<I", int(vk.data_offset) & 0xFFFFFFFF)[:min(size - INLINE_DATA, 4)]
+            return made(value_type=vk.data_type, value_type_str=str(vk.data_type), value=data, size=size)
+        return real(vk, stream)
+
+    read_value.bounded_inline = True
+    record.read_value = staticmethod(read_value)
+    return True
+
+
 class HiveBounds:
     def __init__(self, hive_path, size=None):
+        self.inline_values_bounded = bound_value_reads()
         size = os.path.getsize(hive_path) if size is None else size
         self.hive_bytes = size
         self.key_cells = max(size // KEY_CELL_BYTES, 1)
@@ -2634,8 +2678,10 @@ class Walk:
         del CELL_DAMAGE[:]
         self.hive = RegistryHive(path)
         self.bounds = HiveBounds(path)
+        self.inline_bounded = self.bounds.inline_values_bounded
         self.deadline_at = deadline_at
         self.keys = self.values = self.withheld = self.problems_count = 0
+        self.values_declared = self.values_not_yielded = self.keys_short_of_values = 0
         self.stopped_by_time = False
         self.problems = []
         self.type_counts = collections.Counter()
@@ -2677,9 +2723,13 @@ class Walk:
             on_key({"row": "key", "path": shown, "name": node.name if names else "", "depth": len(names), "last_written": ft_iso(lw), "last_written_filetime": str(lw) if lw is not None else None,
                     "subkeys": getattr(node, "subkey_count", None), "values": getattr(node, "values_count", None)})
             seen_names = collections.Counter()
+            declared = getattr(node, "values_count", None)
+            declared = declared if isinstance(declared, int) and not isinstance(declared, bool) and 0 <= declared <= self.bounds.value_cells else None
+            yielded, before = 0, self.problems_count
             try:
                 for v in self.bounds.values(node, shown, _ProblemSink(self), trim_values=False):
                     self.values += 1
+                    yielded += 1
                     seen_names[v.name] += 1
                     kind = sensitive_value(names, v.name, str(v.value_type))
                     rec, payload = value_record(v, names, shown, kind, self.bounds)
@@ -2688,6 +2738,17 @@ class Walk:
                     on_value(rec, payload, kind)
             except Exception as exc:
                 self.problem(shown, "values", "%s: %s" % (type(exc).__name__, exc))
+            if declared is not None:
+                self.values_declared += declared
+                if yielded < declared:
+                    # regipy gives no sign of a value it leaves out: it skips a value of registry type 0x00200000 by design, and ends a key's list
+                    # without an error at a value record it cannot parse. The count the key declares is the only trace, so it is said per key.
+                    self.values_not_yielded += declared - yielded
+                    self.keys_short_of_values += 1
+                    if self.problems_count == before:
+                        self.problem(shown, "values", "the key declares %d value(s) and regipy gave %d: the %d it left out are not in keys.jsonl (the library skips a value of "
+                                                      "registry type 0x00200000 and ends a key's list at a value record it cannot parse, in both cases without an error)"
+                                     % (declared, yielded, declared - yielded))
             self.drain(shown)
             if not descend:
                 continue
@@ -2956,23 +3017,112 @@ class FilePage(NoReplacePage):
         super().__init__("registry_recover", key, limit)
         self.path = directory / name
         self.shown = shown_path(self.path)
+        self.inline_bytes = 0
+        self.inline_open = True
+        self.cut_by = None             # what closed the inline page before the last row: "rows" or "bytes"
+        self.shortened = 0             # rows of the inline page shown by their small fields only
+
+    def _open(self):
+        """The hidden temporary file, made and registered with the stop signals held (as NoReplacePage.add does)."""
+        before = None
+        try:
+            before = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+        except (AttributeError, ValueError, OSError):
+            pass
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            fd, name = tempfile.mkstemp(dir=self.path.parent, prefix=".%s-" % self.path.name)
+            self._tmp = Path(name)
+            self._out = os.fdopen(fd, "w", encoding="utf-8")
+        except OSError as exc:
+            self._cannot_write(exc)
+        finally:
+            if before is not None:
+                signal.pthread_sigmask(signal.SIG_SETMASK, before)
+
+    def add(self, row):
+        """Every row goes to the file as it comes (the whole result is always a file the answer names, and no row is held in memory for it); the
+        inline page takes the first rows while it has room in rows AND in bytes, and is a prefix of the file: row n of the page is line n."""
+        if self._out is None:
+            self._open()
+        self.total += 1
+        self._write(row)
+        if not self.inline_open:
+            return
+        if len(self.page) >= self.limit:
+            self.inline_open, self.cut_by = False, "rows"
+            return
+        shown, size = inline_row(row, self.total)
+        if self.inline_bytes + size > INLINE_PAGE_BYTES:
+            self.inline_open, self.cut_by = False, "bytes"
+            return
+        if shown is not row:
+            self.shortened += 1
+        self.inline_bytes += size
+        self.page.append(shown)
 
     def finish(self):
-        if self._out is None and self.total:
-            # the whole result is always a file the answer names, even when it fits in the inline page
-            try:
-                self.path.parent.mkdir(parents=True, exist_ok=True)
-                fd, name = tempfile.mkstemp(dir=self.path.parent, prefix=".%s-" % self.path.name)
-                self._tmp = Path(name)
-                self._out = os.fdopen(fd, "w", encoding="utf-8")
-            except OSError as exc:
-                self._cannot_write(exc)
-            for kept in self.page:
-                self._write(kept)
         result = super().finish()
         if result.get("all_results"):
             result["all_results"] = shown_path(self.path)
         return result
+
+    def said(self, result):
+        """What the answer says of this page: how much is inline, what cut it, and where to read on (a line of the file, counted from 1)."""
+        out = {"file": result.get("all_results"), "total": self.total, "returned": len(self.page), "inline_bytes": self.inline_bytes,
+               "inline_limits": {"rows": self.limit, "page_bytes": INLINE_PAGE_BYTES, "row_bytes": INLINE_ROW_BYTES},
+               "cut_by": self.cut_by, "rows_shortened_inline": self.shortened,
+               "next": {"file": result.get("all_results"), "line": len(self.page) + 1} if self.total > len(self.page) else None}
+        if self.shortened:
+            out["rows_shortened_note"] = ("a row longer than %d bytes is shown inline by its small fields, with inline_omitted naming its size and its line in the file, "
+                                          "where it is whole" % INLINE_ROW_BYTES)
+        return out
+
+
+def row_bytes(row):
+    return len(json.dumps(row, ensure_ascii=True, default=str))
+
+
+def clip(text, limit=INLINE_TEXT):
+    """A text of the answer cut at `limit` characters, the cut said in it."""
+    if not isinstance(text, str) or len(text) <= limit:
+        return text
+    return text[:limit] + " ... [%d more characters; the whole is in the file the answer names]" % (len(text) - limit)
+
+
+def clip_all(value, limit=INLINE_TEXT):
+    """`value` with every text in it cut at `limit` characters (lists and maps are walked; nothing else is changed)."""
+    if isinstance(value, str):
+        return clip(value, limit)
+    if isinstance(value, list):
+        return [clip_all(v, limit) for v in value]
+    if isinstance(value, dict):
+        return {k: clip_all(v, limit) for k, v in value.items()}
+    return value
+
+
+def inline_row(row, line):
+    """The row as the inline page shows it, and the bytes it takes there. A row within INLINE_ROW_BYTES is shown as it is (the same object). A longer
+    one keeps its numbers and its short texts; a text over INLINE_FIELD characters or a list is replaced by its size, and inline_omitted says how
+    long the row is and which line of the file holds it whole. A row still too long after that (a key path of thousands of characters) is its
+    line and size alone."""
+    size = row_bytes(row)
+    if size <= INLINE_ROW_BYTES:
+        return row, size
+    short = {}
+    for k, v in row.items():
+        if isinstance(v, str) and len(v) > INLINE_FIELD:
+            short[k] = {"omitted_characters": len(v)}
+        elif isinstance(v, (list, dict)):
+            short[k] = {"omitted_items": len(v)}
+        else:
+            short[k] = v
+    short["inline_omitted"] = {"row_bytes": size, "line": line}
+    after = row_bytes(short)
+    if after > INLINE_ROW_BYTES:
+        short = {"row": row.get("row") or row.get("change"), "inline_omitted": {"row_bytes": size, "line": line}}
+        after = row_bytes(short)
+    return short, after
 
 
 def sha256_file(path):
@@ -3166,8 +3316,10 @@ def main():
                 export_receipt.update({
                     "status": "complete" if not walk.stopped_by_time and not walk.problems_count else "partial",
                     "keys": walk.keys, "values": walk.values, "value_types": dict(sorted(walk.type_counts.items())),
+                    "values_declared_by_keys": walk.values_declared, "values_not_yielded_by_regipy": walk.values_not_yielded,
+                    "keys_short_of_values": walk.keys_short_of_values, "inline_values_bounded": walk.inline_bounded,
                     "withheld_values": len(sensitive_log), "problem_count": walk.problems_count, "walk_stopped_by_time_limit": walk.stopped_by_time,
-                    "keys_file": keys_result.get("all_results"), "keys_inline": key_page.page,
+                    "keys_file": keys_result.get("all_results"), "keys_inline": key_page.page, "keys_page": key_page.said(keys_result),
                     "library_messages_withheld": LibraryLog.messages,
                 })
                 if comparing and compare_failed:
@@ -3175,7 +3327,7 @@ def main():
                 elif comparing:
                     both_whole = not original.stopped_by_time and not walk.stopped_by_time
                     export_receipt["changes"] = {"compared": both_whole, "count": changes_result["matched"], "removed": removed,
-                                                 "file": changes_result.get("all_results"), "inline": changes_page.page,
+                                                 "file": changes_result.get("all_results"), "inline": changes_page.page, "page": changes_page.said(changes_result),
                                                  "note": "keys and values of the recovered copy that are not in the original, are not in the recovered copy, or differ; a withheld value is compared by its bytes and shown by place only"}
                     if not both_whole:
                         export_receipt["status"] = "partial"
@@ -3183,11 +3335,16 @@ def main():
                 reader = regfexport_counts(read_from, max(5.0, CLOCK["deadline"] - time.monotonic() - 2)) if not walk.stopped_by_time else {"ran": False, "why": "the walk stopped at the time limit, so its counts are not whole"}
                 if reader.get("ran") and reader.get("finished"):
                     reader["agrees"] = reader["keys"] == walk.keys and reader["values"] == walk.values
-                    reader["regipy"] = {"keys": walk.keys, "values": walk.values}
+                    reader["regipy"] = {"keys": walk.keys, "values": walk.values, "values_declared_by_keys": walk.values_declared,
+                                        "values_not_yielded": walk.values_not_yielded}
+                    # The difference is explained when the values regfexport counted are the ones the keys declare: what is missing is then
+                    # exactly what regipy left out (said per key under problems), and nothing else differs between the two readers.
+                    reader["difference_explained"] = (not reader["agrees"] and reader["keys"] == walk.keys
+                                                      and reader["values"] == walk.values + walk.values_not_yielded and walk.values_not_yielded > 0)
                 export_receipt["independent_reader"] = {"regfexport": reader}
                 if reader.get("agrees") is False:
                     export_receipt["status"] = "partial"
-                problems = walk.problems[:INLINE_PROBLEMS]
+                problems = clip_all(walk.problems[:INLINE_PROBLEMS])
                 export_receipt["problems"] = problems
                 if walk.problems_count > INLINE_PROBLEMS:
                     export_receipt["problems_not_shown"] = walk.problems_count - INLINE_PROBLEMS
@@ -3199,11 +3356,11 @@ def main():
     elif export:
         export_receipt.update(status="failed", why="the hive has no 'regf' base block: no record was read")
     receipt["records"] = export_receipt
-    receipt["sensitive_values_withheld"] = sensitive_log[:INLINE_PROBLEMS]
+    receipt["sensitive_values_withheld"] = clip_all(sensitive_log[:INLINE_PROBLEMS], INLINE_FIELD)
     receipt["sensitive_values_withheld_count"] = len(sensitive_log)
     values_file.close()
     receipt["values_file"] = values_file.shown
-    receipt["unrecovered"] = unrecovered[:INLINE_PROBLEMS]
+    receipt["unrecovered"] = bounded_list(unrecovered[:INLINE_PROBLEMS])
     receipt["unrecovered_count"] = len(unrecovered)
     if len(unrecovered) > INLINE_PROBLEMS:
         receipt["unrecovered_not_shown"] = len(unrecovered) - INLINE_PROBLEMS
@@ -3217,13 +3374,27 @@ def main():
         if unrecovered:
             reasons.append("%d log entr%s or range%s were not applied (unrecovered)" % (len(unrecovered), "y" if len(unrecovered) == 1 else "ies", "" if len(unrecovered) == 1 else "s"))
         if export and export_receipt.get("status") != "complete":
-            reasons.append("the key and value records are %s%s" % (export_receipt.get("status"), (": " + export_receipt["why"]) if export_receipt.get("why") else ""))
+            said_why = []
+            if export_receipt.get("why"):
+                said_why.append(clip(str(export_receipt["why"])))
+            if export_receipt.get("problem_count"):
+                said_why.append("%d problem(s), the first %d under records.problems" % (export_receipt["problem_count"], min(export_receipt["problem_count"], INLINE_PROBLEMS)))
+            if export_receipt.get("values_not_yielded_by_regipy"):
+                said_why.append("%d of the %d value(s) the keys declare were not given by regipy and are not in keys.jsonl" % (
+                    export_receipt["values_not_yielded_by_regipy"], export_receipt.get("values_declared_by_keys", 0)))
+            if export_receipt.get("walk_stopped_by_time_limit"):
+                said_why.append("the walk stopped at the time limit")
+            reasons.append("the key and value records are %s%s" % (export_receipt.get("status"), (": " + "; ".join(said_why)) if said_why else ""))
         reader_said = (export_receipt.get("independent_reader") or {}).get("regfexport") or {}
         if reader_said.get("ran") and not reader_said.get("finished"):
             reasons.append(reader_said["why_not_finished"])
         if reader_said.get("agrees") is False:
-            reasons.append("regfexport counted %d keys and %d values where regipy counted %d and %d" % (
-                reader_said["keys"], reader_said["values"], reader_said["regipy"]["keys"], reader_said["regipy"]["values"]))
+            reasons.append("regfexport counted %d keys and %d values where regipy counted %d and %d%s" % (
+                reader_said["keys"], reader_said["values"], reader_said["regipy"]["keys"], reader_said["regipy"]["values"],
+                (": the difference is the %d value(s) the keys declare and regipy did not give (%d key(s), each named under records.problems; the library skips a value of "
+                 "registry type 0x00200000 and ends a list at a value record it cannot parse), and those values are not in keys.jsonl"
+                 % (reader_said["regipy"]["values_not_yielded"], export_receipt.get("keys_short_of_values", 0))) if reader_said.get("difference_explained") else
+                (" (the keys walked declare %d values, and regipy did not give %d of them)" % (reader_said["regipy"]["values_declared_by_keys"], reader_said["regipy"]["values_not_yielded"]))))
         if hive.get("problems"):
             reasons.append("the hive's base block has a problem: " + "; ".join(hive["problems"]))
         if not_hashed:
@@ -3258,7 +3429,52 @@ def main():
               "sensitive_values_withheld_count": len(sensitive_log), "values_file": values_file.shown,
               "contains_secret_values": values_file.written > 0,
               "elapsed_seconds": round(time.monotonic() - started, 2)}
-    print(json.dumps(answer, indent=1))
+    print(bounded_answer(answer))
+
+
+def bounded_list(items, budget=INLINE_PAGE_BYTES):
+    """The first items that fit in `budget` bytes, texts cut at INLINE_TEXT (the receipt and the answer carry this list; the count beside it is of all)."""
+    out, used = [], 0
+    for item in items:
+        item = clip_all(item)
+        size = row_bytes(item)
+        if used + size > budget:
+            break
+        used += size
+        out.append(item)
+    return out
+
+
+def bounded_answer(answer):
+    """The answer as text, never over MAX_ANSWER_BYTES. Each inline page is bounded where it is made; what a hostile hive or log can still make long
+    (a status basis that quotes a reason, a path, a base block's problem list) is cut here, and an answer still too long is printed without its
+    inline pages, which says so and names the files and the receipt that hold everything."""
+    text = json.dumps(answer, indent=1)
+    if len(text) <= MAX_ANSWER_BYTES:
+        return text
+    answer = clip_all(answer)
+    text = json.dumps(answer, indent=1)
+    if len(text) <= MAX_ANSWER_BYTES:
+        return text
+    records = answer.get("records") if isinstance(answer.get("records"), dict) else {}
+    dropped = []
+    for holder, key in ((answer, "keys_inline"), (records.get("changes") if isinstance(records.get("changes"), dict) else {}, "inline"), (records, "problems"),
+                        (answer, "unrecovered")):
+        if holder.get(key):
+            holder[key] = []
+            dropped.append(key)
+    for page in (records.get("keys_page"), (records.get("changes") or {}).get("page") if isinstance(records.get("changes"), dict) else None):
+        if isinstance(page, dict) and page.get("total"):
+            page.update(returned=0, cut_by="answer_bytes", next={"file": page.get("file"), "line": 1})
+    answer["inline_dropped"] = {"why": "the answer was over %d bytes with its inline pages, so they are not printed: every row is in the files named, from line 1" % MAX_ANSWER_BYTES,
+                                "dropped": dropped}
+    text = json.dumps(answer, indent=1)
+    if len(text) <= MAX_ANSWER_BYTES:
+        return text
+    return json.dumps({"parser": answer.get("parser"), "status": answer.get("status"), "status_basis": clip(str(answer.get("status_basis")), INLINE_TEXT),
+                       "receipt": clip(str(answer.get("receipt")), INLINE_TEXT), "recovered_copy": clip(str(answer.get("recovered_copy")), INLINE_TEXT) if answer.get("recovered_copy") else None,
+                       "inline_dropped": {"why": "the answer was over %d bytes even without its inline pages: only its status and the receipt's name are printed, and the receipt holds the rest" % MAX_ANSWER_BYTES}},
+                      indent=1)
 
 
 def forget_placed():

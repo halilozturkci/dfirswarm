@@ -24,7 +24,7 @@ Ran
 
 Files
 `filesystem/mft` `filesystem/ads` streams; `filesystem/indx` slack; `filesystem/journals` USN
-`filesystem/timestamps` NTFS times; `filesystem/recycle-bin`; `filesystem/deleted` recoverable?
+`filesystem/timestamps` NTFS times; `filesystem/recycle-bin`; `filesystem/deleted` recoverable, thumbnails
 `filesystem/shadowcopies` list; `filesystem/shadowcopies-open` read
 
 Touched
@@ -42,7 +42,8 @@ Persist
 `persistence/mechanisms` `persistence/tasks-com-wmi`
 
 Browser
-`browser/artefacts` `browser/downloads` `browser/webcache` `browser/strings` raw
+`browser/artefacts` `browser/downloads` `browser/webcache`
+`browser/strings` raw text, SQLite, saved logins
 
 Memory
 `memory/windows` `memory/hibernation-pagefile`

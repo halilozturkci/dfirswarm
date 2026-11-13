@@ -3,7 +3,7 @@ id: filesystem/deleted
 title: Deleted content
 when: Missing files: recoverable here?
 needs: []
-tools: [mft_records, icat_extract, sig_carve, file_carver]
+tools: [mft_records, icat_extract, sig_carve, file_carver, thumbcache_read]
 requires_host: [fls, istat, tsk_recover]
 ---
 
@@ -14,6 +14,7 @@ Use when you ask whether deleted content exists and can be read back. Not for th
 - An extraction returns what the clusters hold now. If they were reused, it is another file's bytes under this name. Validate what `icat_extract` returned beyond its header: length against the record, the format's own structure (parse it with the tool that fits the type), the extents, any independent identifier such as a hash from another source, and a second parser where it matters (`filesystem/mft`). `tsk_recover` extracts every deleted file whose record the Sleuth Kit reads; its output is candidates, validated one by one, and it neither carves nor checks that the clusters are still the file's.
 - Keep apart deletion, later reuse, overwrite, storage discard (SSD or virtual-disk TRIM and unmap) and gaps in the acquisition. To claim an overwrite, show it in the extents and the surviving content for the part you mean, allowing for sparse allocation, compression and encryption, which also give zeros or noise.
 - Before you write "not recovered", name each route and its result: the record and extents (`istat`), the extraction and its validation, `tsk_recover`, a signature scan of unallocated space (`sig_carve`), a cut of a hit (`file_carver`: offset, size and hash, no name or times, so the image offset is its only provenance; `filesystem/carving`), the bin's $R, and the shadow copies and backups acquired (`filesystem/shadowcopies`). Record a secondary source that was not acquired or would not open.
+- On a host whose files were encrypted or wiped, the thumbnail and icon caches may hold renderings made before: `thumbcache_read`.
 
 Shows: content is, or is not, readable from these sources by these routes. Does not show: who deleted the file, why or whether on purpose, that it was copied elsewhere, that what came back is what the file held, or that it cannot be recovered from sources not supplied. Record: record number and sequence, the three sizes, each route with its result and validation.
 Sensitive output: recovered content can hold secrets; extract in a job with `secret_output: true`. Describe a found secret by where it sits, its kind, length and what it grants, never its value, a fragment or a digest.

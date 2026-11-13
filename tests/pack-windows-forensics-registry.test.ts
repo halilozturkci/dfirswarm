@@ -538,6 +538,11 @@ dual("amcache_apps says a hive is dirty, names the transaction logs beside it, a
     assert.equal(out.hive_dirty, true);
     assert.deepEqual(out.transaction_logs_beside_hive, ["work/Amcache.hve.LOG1"]);
     assert.equal(out.transaction_logs_replayed, false);
+    // A dirty hive whose logs were not replayed is never plainly complete: the inventory may differ from the live registry's.
+    const said = out as unknown as { status: string; status_basis: string; transaction_logs_looked_for: string[] };
+    assert.equal(said.status, "partial");
+    assert.match(said.status_basis, /the hive is dirty \(its sequence numbers 9 and 8 differ\) and no transaction log was replayed: the tool looked for \.LOG1, \.LOG2 and \.LOG beside the hive \(transaction_logs_looked_for\) and found 1 \(transaction_logs_beside_hive\), and it replays none/);
+    assert.deepEqual(said.transaction_logs_looked_for, ["work/Amcache.hve.LOG1", "work/Amcache.hve.LOG2", "work/Amcache.hve.LOG"]);
   });
 });
 
@@ -786,6 +791,25 @@ dual("shellbags walks every BagMRU root the hive has, names them, and lists a nu
     assert.equal(out.values_without_subkey[0].slot, "5");
     assert.equal(out.values_without_subkey[0].no_subkey, true);
     assert.equal(out.values_without_subkey[0].item.name, "A Folder With No Bag");
+  });
+});
+
+dual("shellbags on a dirty hive says so, names the logs it looked for, replays none and is partial; the same hive clean is complete", async (v) => {
+  // It did not look at the hive's sequence numbers at all: a hive copied while in use was walked and answered complete.
+  await withCwd(async (cwd) => {
+    const bags: Node = { name: "BagMRU", values: [{ name: "0", type: "binary", value: volumeItem("E:\\") }, { name: "MRUListEx", type: "binary", value: mruList(0) }], children: [{ name: "0" }] };
+    const root: Node = { name: "ROOT", children: [nest(["Local Settings", "Software", "Microsoft", "Windows", "Shell"], bags)] };
+    type Said = { status: string; status_basis: string; hive_dirty: boolean; hive_sequence_numbers: number[]; transaction_logs_looked_for: string[]; transaction_logs_beside_hive: string[]; transaction_logs_replayed: boolean };
+    const env = await v.write(cwd, "work/UsrClass.dat", root, { primarySeq: 7, secondarySeq: 6 });
+    const out = body<Said>(await tool("shellbags", cwd, { hive: "work/UsrClass.dat" }, env));
+    assert.deepEqual([out.hive_dirty, out.hive_sequence_numbers, out.transaction_logs_replayed, out.status], [true, [7, 6], false, "partial"]);
+    assert.deepEqual(out.transaction_logs_looked_for, ["work/UsrClass.dat.LOG1", "work/UsrClass.dat.LOG2", "work/UsrClass.dat.LOG"]);
+    assert.deepEqual(out.transaction_logs_beside_hive, []);
+    assert.match(out.status_basis, /the hive is dirty \(its sequence numbers 7 and 6 differ\) and no transaction log was replayed/);
+    assert.match(out.status_basis, /found none \(they are not in what this job can read\)/);
+    const cleanEnv = await v.write(cwd, "work/clean/UsrClass.dat", root);
+    const clean = body<Said>(await tool("shellbags", cwd, { hive: "work/clean/UsrClass.dat" }, cleanEnv));
+    assert.deepEqual([clean.hive_dirty, clean.status], [false, "complete"]);
   });
 });
 

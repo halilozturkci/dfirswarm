@@ -531,6 +531,7 @@ install_signal_handlers(lambda signum: interrupted_answer(signum))
 # past one is said, never followed.
 import itertools
 import logging
+import struct
 import warnings
 
 KEY_CELL_BYTES = 76
@@ -569,8 +570,42 @@ def withhold_library_output():
     warnings.simplefilter("ignore")
 
 
+INLINE_DATA = 0x80000000                  # a value record whose data size has this bit set holds its data (four bytes at most) in the offset field
+
+
+def bound_value_reads():
+    """regipy reads the data of every value with stream.read(data_size) at the record's data offset, before it looks at the type. For a value
+    whose data is inside the record (the size has its top bit set) that is a read of up to 2 GiB at a place the four data bytes name: the rest
+    of the hive file. regipy then drops what it read for the types it knows to be inline (REG_SZ, REG_BINARY, REG_DWORD, REG_QWORD,
+    REG_MULTI_SZ) and RETURNS it for every other type: a device property (a type above 0xFFFF0000, which Windows writes under
+    the Properties keys of Control/Class and Enum by the thousand), REG_LINK, REG_FILETIME or a type it does not know came back as
+    megabytes of the hive, and the data budget below then stopped the walk (a 12 MB SYSTEM hive: 184 of 70,010 values read). The reader is
+    replaced once: a record with inline data gives its own bytes, and every other record is read as before. Returns whether the reader is in
+    place (False where the library is a stand-in without it)."""
+    try:
+        import regipy.registry as reg
+        record, made = reg.NKRecord, reg.VKRecord
+        real = record.read_value
+    except Exception:  # noqa: BLE001 - no library, or one without this reader: nothing to replace
+        return False
+    if getattr(real, "bounded_inline", False):
+        return True
+
+    def read_value(vk, stream):
+        size = vk.data_size
+        if isinstance(size, int) and size >= INLINE_DATA:
+            data = struct.pack("<I", int(vk.data_offset) & 0xFFFFFFFF)[:min(size - INLINE_DATA, 4)]
+            return made(value_type=vk.data_type, value_type_str=str(vk.data_type), value=data, size=size)
+        return real(vk, stream)
+
+    read_value.bounded_inline = True
+    record.read_value = staticmethod(read_value)
+    return True
+
+
 class HiveBounds:
     def __init__(self, hive_path, size=None):
+        self.inline_values_bounded = bound_value_reads()
         size = os.path.getsize(hive_path) if size is None else size
         self.hive_bytes = size
         self.key_cells = max(size // KEY_CELL_BYTES, 1)
@@ -2384,7 +2419,7 @@ OWN_NAMES.update((
     "last_modified_filetime", "layout", "layout_basis", "library_messages_withheld", "matched", "metadata_values_not_listed", "name_decoded", "name_raw",
     "not_attempted", "not_run", "parser", "path", "present", "problem_count", "problems", "problems_not_listed", "raw_hex", "raw_length", "raw_not_shown", "reason",
     "record_count", "records", "records_by_source", "result", "returned", "run_count", "session_id", "shim_flags", "shimcache", "sid", "sid_applied",
-    "sid_basis", "signal", "source", "sources", "status", "status_basis", "transaction_logs_beside_hive", "transaction_logs_replayed", "truncated", "unsupported",
+    "sid_basis", "signal", "source", "sources", "status", "status_basis", "transaction_logs_beside_hive", "transaction_logs_looked_for", "transaction_logs_replayed", "truncated", "unsupported",
     "unsupported_count", "userassist", "value_type", "walk_stopped_by_time_limit", "what", "where", "looked_for"
 ))
 
@@ -2392,7 +2427,7 @@ OWN_NAMES.update((
 # What the boundary is told about the fields of this tool's answers: the type of what a key holds. A key that is not listed holds free text.
 FIELDS.update({
     "hive": "path", "key": "key", "guid": "name", "control_set": "name", "name_raw": "path", "name_decoded": "path", "path": "path", "sid": "sid",
-    "all_results": "path", "all_problems": "path", "transaction_logs_beside_hive": "path", "value_type": "name", "source": "name", "layout": "name",
+    "all_results": "path", "all_problems": "path", "transaction_logs_beside_hive": "path", "transaction_logs_looked_for": "path", "value_type": "name", "source": "name", "layout": "name",
     "last_execution": "time", "last_execution_filetime": "number", "last_modified": "time", "last_modified_filetime": "number",
     "run_count": "number", "focus_count": "number", "focus_time_ms": "number", "session_id": "number", "data_length": "number", "raw_length": "number",
     "entry_position": "number", "insert_flags": "number", "shim_flags": "number", "hive_type": "name",
@@ -2422,7 +2457,37 @@ ROT13 = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", "N
 import random
 
 DEADLINE_SECONDS = 84             # the manifest allows 90; the seal stop (86.5) is 2.5 seconds later
-PARSER = "userassist_bam_shimcache/2"
+PARSER = "userassist_bam_shimcache/3"
+
+
+LOG_SUFFIXES = (".LOG1", ".LOG2", ".LOG")
+
+
+def hive_state(h, hive_path):
+    """Whether the hive file is dirty (its two sequence numbers differ: a write was not finished in the file, and the newest state is in the
+    transaction logs), the log files the tool looked for beside it and the ones that are there. The logs are never replayed by this tool."""
+    header = h.header
+    looked = [hive_path + s for s in LOG_SUFFIXES]
+    return {"hive_dirty": header.primary_sequence_num != header.secondary_sequence_num,
+            "hive_sequence_numbers": [header.primary_sequence_num, header.secondary_sequence_num],
+            "transaction_logs_looked_for": looked,
+            "transaction_logs_beside_hive": [path for path in looked if os.path.isfile(path)],
+            "transaction_logs_replayed": False}
+
+
+def dirty_caveat(state):
+    """Why an answer read from a dirty hive is not complete, in the tool's own words and counts (None for a clean hive). The tool cannot show
+    that the key or value asked about is outside the pages the logs would rewrite, so every answer from a dirty hive carries it."""
+    if not state.get("hive_dirty"):
+        return None
+    there = len(state.get("transaction_logs_beside_hive") or [])
+    return ("the hive is dirty (its sequence numbers %s and %s differ) and no transaction log was replayed: the tool looked for %s beside the hive "
+            "(transaction_logs_looked_for) and %s, and it replays none, so what is read here is the hive file as it is and keys and values may differ from "
+            "the live registry (give registry_recover the hive and its logs and read the copy it makes)" % (
+                state["hive_sequence_numbers"][0], state["hive_sequence_numbers"][1], ", ".join(LOG_SUFFIXES[:-1]) + " and " + LOG_SUFFIXES[-1],
+                "found none (they are not in what this job can read)" if not there else "found %d (transaction_logs_beside_hive)" % there))
+
+
 INLINE_PROBLEMS = 40
 ORDER_CAP = 100000                # most items of one list put in print order (above it: a random order)
 ORDER_COST = 0.0003               # seconds one item may take to put in print order (about three times what it takes); a list is ordered only if it fits half of the time left
@@ -2950,9 +3015,7 @@ def main():
 
     if LibraryLog.messages:
         problem_page.add("regipy logged %d message(s) (%d of them errors) while reading; its text can hold bytes of a value or a name and is not shown" % (LibraryLog.messages, LibraryLog.errors))
-    header = h.header
-    dirty = header.primary_sequence_num != header.secondary_sequence_num
-    logs = [hive + suffix for suffix in (".LOG1", ".LOG2", ".LOG") if os.path.isfile(hive + suffix)]
+    state = hive_state(h, hive)
     page = records.finish()
     problem_result = problem_page.finish()
     reasons = []
@@ -2971,6 +3034,9 @@ def main():
         reasons.append("the filters look only in the text the answer prints: %d record(s) were not matched and have text withheld, so the needle may be in what is withheld (contains_blind_records)" % n["blind"])
     if n["failed"]:
         reasons.append("%d key(s) or value(s) could not be read" % n["failed"])
+    caveat = dirty_caveat(state)
+    if caveat:
+        reasons.append(caveat)
     out = {
         "parser": PARSER,
         "status": "partial" if reasons else "complete",
@@ -2995,10 +3061,7 @@ def main():
         "problems_not_listed": problem_result["matched"] - len(problem_page.page),
         "walk_stopped_by_time_limit": stopped[0] is not None,
         "library_messages_withheld": LibraryLog.messages,
-        "hive_dirty": dirty,
-        "hive_sequence_numbers": [header.primary_sequence_num, header.secondary_sequence_num],
-        "transaction_logs_beside_hive": logs,
-        "transaction_logs_replayed": False,
+        **state,
         **page,
     }
     if problem_result.get("all_results"):
