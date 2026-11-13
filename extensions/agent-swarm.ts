@@ -214,6 +214,7 @@ import { installChunkedEgress } from "./vm-egress.ts";
 import { toolsListing } from "./tools-view.ts";
 import { lastKnown } from "./last-known.ts";
 import { pngForModel } from "./png-scale.ts";
+import { coerceArgs } from "./forged-args.ts";
 
 /** How long a read made before a model call may take before the call goes out on the last known value. */
 const PRECALL_DEADLINE_MS = 1500;
@@ -3188,6 +3189,9 @@ export default function (pi: ExtensionAPI) {
         // where they are and writes the rest to its $OUT.
         const rerunnable = Boolean(manifest.pack && process.env.SWARM_PACK_PROGRAMS_IN_JOBS);
         const held = rerunnable ? await heldOwnPaths(toolCtx.cwd, (params ?? {}) as Record<string, unknown>, agentId).catch(() => new Set<string>()) : new Set<string>();
+        // What an argument plainly is under its declared type is taken as that (forged-args.ts).
+        const typed = coerceArgs(manifest.params as Record<string, { type?: string }>, (params ?? {}) as Record<string, unknown>);
+        params = typed.args as typeof params;
         const run = await runForgedTool(toolCtx.cwd, manifest, (params ?? {}) as Record<string, unknown>, {
           signal: signal as AbortSignal | undefined,
           agentId,
@@ -3393,6 +3397,7 @@ export default function (pi: ExtensionAPI) {
         ),
         timeout_seconds: Type.Optional(Type.Number({ description: `Kill the script after this long (default ${TOOL_TIMEOUT_DEFAULT_SECONDS}, max ${TOOL_TIMEOUT_MAX_SECONDS})` })),
         example: Type.Optional(Type.String({ description: "One example call, shown to peers" })),
+        selftest: Type.Optional(Type.Object({ args: Type.Record(Type.String(), Type.Any(), { description: "The arguments of one call whose answer you know" }), expect: Type.String({ description: "Text the tool's output must hold for that call" }) }, { description: "A known-answer test, run now, before the tool is shared: a tool that was never run against an answer its author knows returned garbage for hours in three runs. Give it." })),
         requires: Type.Optional(Type.Array(Type.String(), { description: "Programs the script calls (e.g. fls, yara), so a later case knows what its image must hold" })),
       }),
       async execute(_id, params, _signal, _onUpdate, toolCtx: ToolCtx) {
@@ -3428,14 +3433,26 @@ export default function (pi: ExtensionAPI) {
           Date.now() - started,
         );
         await loadForgedTools(toolCtx.cwd);
+        // The tool's own known-answer test, run now: peers are told whether it passed, failed, or was never given.
+        const st = (params as { selftest?: { args?: Record<string, unknown>; expect?: string } }).selftest;
+        let selftest: { ran: boolean; ok?: boolean; said: string } = { ran: false, said: "no self-test was given: it has not been run against an answer its author knows, so test it on input whose answer you know before you rely on it" };
+        if (st && typeof st.expect === "string" && st.expect !== "") {
+          const typed = coerceArgs(m.params as Record<string, { type?: string }>, st.args ?? {});
+          const run = await runForgedTool(toolCtx.cwd, m, typed.args, { agentId }).catch((err: Error) => ({ ok: false, exit_code: null, stdout: "", stderr: err.message, timed_out: false }) as { ok: boolean; exit_code: number | null; stdout: string; stderr: string; timed_out: boolean });
+          const passed = run.ok && run.stdout.includes(st.expect);
+          selftest = { ran: true, ok: passed, said: passed ? "its self-test passed (a call whose answer its author knew gave that answer)" : `ITS SELF-TEST FAILED (${run.timed_out ? "timed out" : run.ok ? "the output did not hold the expected text" : `exit ${run.exit_code}: ${(run.stderr || run.stdout).trim().split("\n").slice(-1)[0]?.slice(0, 200) ?? ""}`}): do not rely on it until its author fixes it` };
+          await logEvent(toolCtx.cwd, agentId, "make_tool", { name: m.name, selftest: true }, { ok: passed, exit: run.exit_code, timed_out: run.timed_out }).catch(() => undefined);
+        }
         // The board is how peers learn; the harness posts on the author's behalf
         // so a tool never exists without an announcement.
         await postMessage(ctxFrom(toolCtx.cwd, agentId), {
           tag: "result",
           to: "all",
-          body: `Forged tool \`${m.name}\` v${m.version} (${m.runtime}): ${m.description} Params: ${paramSummary(m)}.${m.example ? ` Example: ${m.example}` : ""} It is in your tool list after your next inbox or wait.`,
+          body: `Forged tool \`${m.name}\` v${m.version} (${m.runtime}): ${m.description} Params: ${paramSummary(m)}.${m.example ? ` Example: ${m.example}` : ""} Tested: ${selftest.said}. It is in your tool list after your next inbox or wait.`,
         }).catch(() => undefined);
-        return okResult({ ok: true, name: m.name, version: m.version, created: result.created, sha256: shortHash(m.sha256), entry: `${TOOLS_DIR}/${m.name}/${m.entry}` });
+        const made = { ok: true, name: m.name, version: m.version, created: result.created, sha256: shortHash(m.sha256), entry: `${TOOLS_DIR}/${m.name}/${m.entry}`, selftest };
+        if (selftest.ran && !selftest.ok) return { content: [{ type: "text" as const, text: `${JSON.stringify(made, null, 2)}\nThe tool was written and shared, and ${selftest.said}. Fix the script and call make_tool again with the same name (it replaces this version).` }], details: made, isError: true };
+        return okResult(made);
       },
     });
 
