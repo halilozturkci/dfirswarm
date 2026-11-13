@@ -50,7 +50,7 @@ const defectsOf = (r: Awaited<ReturnType<typeof checkLedgerAnswers>>, section: s
 async function before() {
   const c = await run();
   const lead2 = await planned(c.a0, "2");
-  const abs2 = ok(await rec(c.a0, { kind: "absence", value: "a remote tool", source: "inputs/disk.E01", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
+  const abs2 = ok(await rec(c.a0, { kind: "absence", value: "a remote tool", source: "inputs/disk.E01", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["2"] })).entry;
   const cov2 = ok(await rec(c.a0, coverage("2", ["input:disk.E01"], [`E-${abs2.seq}`, "job:j000001/hits.txt"], { looked_for: ["alice"] }))).entry;
   const ans2 = ok(await rec(c.a1, { kind: "answer", section: "question:2", value: "No evidence of a remote tool was found on the disk", reasoning: `E-${cov2.seq}`, ...A, result: "bounded_negative" })).entry;
   await attested(c.a2, { seq: cov2.seq, how: "ran the search again from job:j000001", review: REVIEW });
@@ -61,7 +61,7 @@ async function before() {
   await covers(c.a0, "1");
   await attested(c.a2, { seq: ans1.seq, how: "re-read line 12", ...ESTABLISHED });
   await planned(c.a3, "4");
-  const abs4 = ok(await rec(c.a3, { kind: "absence", value: "a start time", source: "inputs/logs/a.log", evidence: "a search", refs: ["job:j000002/hits.txt"], answers: ["4"] })).entry;
+  const abs4 = ok(await rec(c.a3, { kind: "absence", value: "a start time", source: "inputs/logs/a.log", evidence: "a search", refs: ["job:j000002/hits.txt"], control: { ref: "job:j000002/hits.txt", found: "the same search finds a planted row" }, answers: ["4"] })).entry;
   const cov4 = ok(await rec(c.a3, coverage("4", ["input:logs/a.log"], [`E-${abs4.seq}`], { looked_for: ["dave"], acquisition_none_why: "no source records it" }))).entry;
   const cov4b = ok(await rec(c.a3, coverage("4", ["input:logs/a.log"], [`E-${abs4.seq}`], { supersedes: cov4.seq, acquisition_none_why: "no source records it" }))).entry;
   await SW.awaitSweeps(c.S);
@@ -243,7 +243,7 @@ test("evidence_stale clears only on a delta: an entry that interprets the import
   let prev = c.ans2;
   let cov = c.cov2;
   for (const [what, o] of tries) {
-    const d = ok(await rec(c.a0, { kind: "absence", value: `a tool in the export (${what})`, source: "the export", evidence: "read whole", answers: ["2"], ...o })).entry;
+    const d = ok(await rec(c.a0, { kind: "absence", value: `a tool in the export (${what})`, source: "the export", evidence: "read whole", answers: ["2"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, ...o })).entry;
     cov = ok(await rec(c.a0, coverage("2", ["input:disk.E01", imp], [`E-${c.abs2.seq}`, `E-${d.seq}`], { looked_for: ["alice"], supersedes: cov.seq }))).entry;
     prev = ok(await rec(c.a1, { kind: "answer", section: "question:2", value: `No evidence of a remote tool was found on the disk or the export (${what})`, reasoning: `E-${cov.seq}`, ...A, result: "bounded_negative", supersedes: prev.seq })).entry;
     await attested(c.a2, { seq: cov.seq, how: "ran the search again over both", review: REVIEW, second_review_why: `the export (${what})` });

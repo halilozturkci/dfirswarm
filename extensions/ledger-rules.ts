@@ -5,7 +5,7 @@
  * each other both ways, so it is not split further. It imports the core statically.
  */
 
-import { formatMiss, formatNote } from "./answer-format.ts";
+import { firstLine, formatMiss, formatNote, questionFormat } from "./answer-format.ts";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
@@ -127,10 +127,192 @@ export type LedgerInput = {
   premises?: unknown;
   /** An answer to a question that presumes an event: the test of that premise, {outcome, refs} (premises.ts PremiseTest; docs/adr/0011, "What a question presumes"). */
   premise_tested?: unknown;
+  /** An answer to a question: what qualifies the asked string in value (a candidate, the part still open, the words around it). The format check reads value only. */
+  qualifier?: string;
+  /** An answer's revision that changes the asked string: why, naming the entry (E-<seq>) that shows the earlier value wrong (reviewValueRule). */
+  value_changed_because?: string;
+  /** A negative from the seat's own scanner: the run in which the same scanner found a planted or known value, {ref, found} or a list (negativeBasis). */
+  control?: unknown;
+  /** A negative about pictures: the images read (job:<id>/<file>); the hub fills it from the trace when it is left out. */
+  images_read?: string[] | string;
+  /** A finding's carrier table: [{carrier, state: decoded | undecodable | not_examined, why}] (carriersOpen). */
+  carriers?: unknown;
 };
 
 function listOf(v: string[] | string | undefined): string[] {
   return [...new Set((Array.isArray(v) ? v.map(String) : String(v ?? "").split(/[\s,]+/)).map((x) => x.trim()).filter(Boolean))];
+}
+
+/**
+ * Everything wrong with one entry, collected, and what was taken as it was
+ * plainly meant. The checks used to stop at the first defect: on the run
+ * sf4406b `record` refused 353 of 776 calls, one rule a refusal, and one
+ * coverage record took eight refusals in 190 s, each try resending 4K
+ * characters (seat 05, session lines 784-800: kind, time_range, failures,
+ * alternatives, result_refs three times). A check adds its defect and goes
+ * on with an empty value, so the answer names every one; `need` also keeps
+ * the name of a required field that is missing, for the line that lists
+ * them. `took` is the other half: what the hub understood without asking
+ * (a ref written as the shell shows it, "question:9" for "9", the kind the
+ * fields allow), said in the reply and never a refusal.
+ */
+export class Defects {
+  readonly list: string[] = [];
+  readonly missing: string[] = [];
+  readonly taken: string[] = [];
+  add(reason: string): void {
+    if (!this.list.includes(reason)) this.list.push(reason);
+  }
+  need(field: string, reason: string): void {
+    if (!this.missing.includes(field)) this.missing.push(field);
+    this.add(reason);
+  }
+  took(note: string): void {
+    if (!this.taken.includes(note)) this.taken.push(note);
+  }
+  text(r: { ok: true; value: string } | { ok: false; reason: string }): { ok: true; value: string } {
+    if (r.ok) return r;
+    this.add(r.reason);
+    return { ok: true, value: "" };
+  }
+  one<V>(r: { ok: true; value?: V } | { ok: false; reason: string }): { ok: true; value?: V } {
+    if (r.ok) return r;
+    this.add(r.reason);
+    return { ok: true };
+  }
+  seqs(r: { ok: true; seqs: number[] } | { ok: false; reason: string }): { ok: true; seqs: number[] } {
+    if (r.ok) return r;
+    this.add(r.reason);
+    return { ok: true, seqs: [] };
+  }
+  get any(): boolean {
+    return this.list.length > 0;
+  }
+  /** The refusal that names them all (refusalWords), or null when there is none. */
+  refusal(kind: string): { ok: false; reason: string; defects: string[] } | null {
+    return this.any ? { ok: false, reason: refusalWords(kind, this), defects: [...this.list] } : null;
+  }
+  /** `reason` with what was taken as meant after it: a refusal from further down still says it. */
+  withTaken<R extends { ok: boolean; reason?: string; note?: string }>(r: R): R {
+    if (!this.taken.length) return r;
+    const said = `Taken as meant, nothing to change there: ${this.taken.join("; ")}`;
+    return r.ok ? { ...r, note: [said, r.note].filter(Boolean).join("; ") } : { ...r, reason: `${r.reason}. ${said}` };
+  }
+}
+
+/**
+ * One refusal for every defect of an entry. One defect is said as it always
+ * was. Several are numbered, after the line that says how many and that one
+ * more call is enough, and the required fields that are missing are listed
+ * together first: the seats fixed what the refusal named and nothing else.
+ */
+export function refusalWords(kind: string, d: { list: readonly string[]; missing: readonly string[] }): string {
+  if (d.list.length === 1) return d.list[0]!;
+  const lead = d.missing.length > 1 ? ` ${/^[aeiou]/.test(kind) ? "An" : "A"} ${kind === "coverage" ? "coverage record" : kind} also needs ${d.missing.join(", ")}.` : "";
+  return `${d.list.length} things to fix, every one named here, so one more call is enough (fix them all, then record once).${lead} ${d.list.map((x, i) => `(${i + 1}) ${x.replace(/[.;]\s*$/, "")}`).join("; ")}`;
+}
+
+/** A JSON Schema as a tool declares its parameters (TypeBox writes these): only what argsForValidator reads. */
+type ArgSchema = { type?: string; properties?: Record<string, ArgSchema>; required?: string[]; items?: ArgSchema; anyOf?: ArgSchema[]; const?: unknown; enum?: unknown[] };
+
+/** Whether a value is what a schema asks, read strictly: what does not fit is set aside for the tool's own check, never dropped. */
+function fitsSchema(schema: ArgSchema | undefined, v: unknown): boolean {
+  if (!schema || (schema.type === undefined && !schema.anyOf && schema.const === undefined && !schema.enum)) return true;
+  if (schema.anyOf) return schema.anyOf.some((x) => fitsSchema(x, v));
+  if (schema.const !== undefined) return v === schema.const;
+  if (schema.enum) return schema.enum.includes(v);
+  switch (schema.type) {
+    case "string":
+      return typeof v === "string";
+    case "number":
+    case "integer":
+      return typeof v === "number" && Number.isFinite(v);
+    case "boolean":
+      return typeof v === "boolean";
+    case "array":
+      return Array.isArray(v) && v.every((x) => fitsSchema(schema.items, x));
+    case "object":
+      return Boolean(v) && typeof v === "object" && !Array.isArray(v) && (schema.required ?? []).every((k) => k in (v as object)) && Object.entries(schema.properties ?? {}).every(([k, s]) => !(k in (v as object)) || (v as Record<string, unknown>)[k] === undefined || fitsSchema(s, (v as Record<string, unknown>)[k]));
+    default:
+      return true;
+  }
+}
+
+/** A value a schema takes, for a required place that was sent empty or wrong: read by nothing (argsAsSent takes it out again). */
+function schemaPlaceholder(schema: ArgSchema | undefined): unknown {
+  if (!schema) return "";
+  if (schema.const !== undefined) return schema.const;
+  if (schema.enum?.length) return schema.enum[0];
+  if (schema.anyOf?.length) return schemaPlaceholder(schema.anyOf[0]);
+  switch (schema.type) {
+    case "number":
+    case "integer":
+      return 0;
+    case "boolean":
+      return false;
+    case "array":
+      return [];
+    case "object":
+      return Object.fromEntries((schema.required ?? []).map((k) => [k, schemaPlaceholder(schema.properties?.[k])]));
+    default:
+      return "";
+  }
+}
+
+/** Where argsForValidator keeps what was sent: the names of required fields left out, and each value its schema would not take. */
+export const ARGS_AS_SENT = "__as_sent";
+
+/**
+ * A tool call's arguments, made to pass the tool's own schema, with what was
+ * sent kept beside them (`__as_sent`): a required field left out gets a
+ * placeholder, and a value the schema would not take is set aside. Pi checks
+ * a call against the schema before the tool runs, and what fails there is
+ * answered by Pi, with every argument echoed back: on the run sf4406b
+ * `kind` was left out 31 times and one enum was misspelt a handful, and the
+ * echoes came to 255K characters. A tool gives this as its
+ * `prepareArguments` (Pi calls it before it validates), and reads its
+ * arguments through argsAsSent: the defect is then named by the tool's own
+ * check, with the rest of the entry's, in one line each. The schema still
+ * says what is required and which values a field takes, which is what a
+ * model reads before it calls.
+ */
+export function argsForValidator(schema: unknown, args: unknown): unknown {
+  const s = (schema ?? {}) as ArgSchema;
+  if (!args || typeof args !== "object" || Array.isArray(args)) args = {};
+  const sent = args as Record<string, unknown>;
+  const out: Record<string, unknown> = { ...sent };
+  const missing: string[] = [];
+  const unfit: Record<string, unknown> = {};
+  for (const [k, ps] of Object.entries(s.properties ?? {})) {
+    const required = (s.required ?? []).includes(k);
+    const v = sent[k];
+    if (v === undefined || v === null) {
+      if (v === null) delete out[k];
+      if (required) {
+        missing.push(k);
+        out[k] = schemaPlaceholder(ps);
+      }
+      continue;
+    }
+    if (fitsSchema(ps, v)) continue;
+    unfit[k] = v;
+    if (required) out[k] = schemaPlaceholder(ps);
+    else delete out[k];
+  }
+  if (!missing.length && !Object.keys(unfit).length) return args;
+  out[ARGS_AS_SENT] = { missing, unfit };
+  return out;
+}
+
+/** The arguments as the model sent them: argsForValidator undone (placeholders out, set-aside values back). */
+export function argsAsSent<T extends Record<string, unknown>>(params: T): T {
+  const mark = params?.[ARGS_AS_SENT] as { missing?: string[]; unfit?: Record<string, unknown> } | undefined;
+  if (!mark || typeof mark !== "object") return params;
+  const out: Record<string, unknown> = { ...params };
+  delete out[ARGS_AS_SENT];
+  for (const k of mark.missing ?? []) delete out[k];
+  for (const [k, v] of Object.entries(mark.unfit ?? {})) out[k] = v;
+  return out as T;
 }
 
 function oneOf<T extends readonly string[]>(name: string, v: unknown, allowed: T): { ok: true; value?: T[number] } | { ok: false; reason: string } {
@@ -153,94 +335,88 @@ async function ledgerV3Input(
   hasTs: boolean,
   tsRaw: string | undefined,
   superseding: boolean,
-): Promise<{ ok: true; fields: Partial<LedgerEntry>; rel: Array<{ to: number; kind: (typeof LEDGER_REL_KINDS)[number] }> } | { ok: false; reason: string }> {
+  D: Defects,
+): Promise<{ fields: Partial<LedgerEntry>; rel: Array<{ to: number; kind: (typeof LEDGER_REL_KINDS)[number] }> }> {
   const fields: Partial<LedgerEntry> = {};
   const answers = listOf(input.answers);
-  if (answers.length > LEDGER_MAX_ANSWERS) return { ok: false, reason: `answers names ${answers.length} sections, more than ${LEDGER_MAX_ANSWERS}` };
+  if (answers.length > LEDGER_MAX_ANSWERS) D.add(`answers names ${answers.length} sections, more than ${LEDGER_MAX_ANSWERS}`);
   const badAnswer = answers.find((a) => !LEDGER_ANSWER_ID.test(a));
-  if (badAnswer) return { ok: false, reason: `answers takes the goal's section ids, 1-16 letters, digits, dot, dash or underscore ("3", "Q3", "allegation-2"; got ${JSON.stringify(badAnswer)})` };
+  if (badAnswer) D.add(`answers takes the goal's section ids, 1-16 letters, digits, dot, dash or underscore ("3", "Q3", "allegation-2"; got ${JSON.stringify(badAnswer)})`);
   if (answers.length) fields.answers = answers;
   const rel: Array<{ to: number; kind: (typeof LEDGER_REL_KINDS)[number] }> = [];
   for (const r of Array.isArray(input.rel) ? input.rel : []) {
-    const to = Number(String(r?.to ?? "").trim().replace(/^#/, ""));
-    if (!Number.isInteger(to) || to < 1) return { ok: false, reason: `rel.to names an entry by its seq, a whole number (got ${JSON.stringify(r?.to)})` };
-    const k = oneOf("rel.kind", r?.kind, LEDGER_REL_KINDS);
-    if (!k.ok) return k;
-    if (!k.value) return { ok: false, reason: `rel.kind is required: ${LEDGER_REL_KINDS.join(", ")}` };
-    if (!rel.some((x) => x.to === to && x.kind === k.value)) rel.push({ to, kind: k.value });
+    const to = Number(String(r?.to ?? "").trim().replace(/^(?:#|E-)/i, ""));
+    const k = D.one(oneOf("rel.kind", r?.kind, LEDGER_REL_KINDS));
+    if (!Number.isInteger(to) || to < 1) D.add(`rel.to names an entry by its seq, a whole number (got ${JSON.stringify(r?.to)})`);
+    else if (!k.value) D.add(`rel.kind is required: ${LEDGER_REL_KINDS.join(", ")}`);
+    else if (!rel.some((x) => x.to === to && x.kind === k.value)) rel.push({ to, kind: k.value });
   }
-  if (rel.length > LEDGER_MAX_REL) return { ok: false, reason: `rel links ${rel.length} entries, more than ${LEDGER_MAX_REL}` };
-  if (input.sensitive !== undefined && input.sensitive !== null && typeof input.sensitive !== "boolean") return { ok: false, reason: "sensitive is true or false" };
+  if (rel.length > LEDGER_MAX_REL) D.add(`rel links ${rel.length} entries, more than ${LEDGER_MAX_REL}`);
+  if (input.sensitive !== undefined && input.sensitive !== null && typeof input.sensitive !== "boolean") D.add("sensitive is true or false");
   if (input.sensitive === true) fields.sensitive = true;
   const clock = String(input.clock ?? "").trim();
   if (clock) {
-    if (!hasTs) return { ok: false, reason: "clock names the clock an entry's ts came from: give ts too" };
-    if (clock.length > LEDGER_CLOCK_MAX_CHARS) return { ok: false, reason: `clock is over ${LEDGER_CLOCK_MAX_CHARS} characters: name the clock ("NTFS $SI created", "device local, offset unknown")` };
+    if (!hasTs) D.add("clock names the clock an entry's ts came from: give ts too");
+    if (clock.length > LEDGER_CLOCK_MAX_CHARS) D.add(`clock is over ${LEDGER_CLOCK_MAX_CHARS} characters: name the clock ("NTFS $SI created", "device local, offset unknown")`);
     fields.clock = clock;
   }
-  const precision = oneOf("precision", input.precision, LEDGER_PRECISION);
-  if (!precision.ok) return precision;
-  if (precision.value && !hasTs) return { ok: false, reason: "precision says how precise an entry's ts is: give ts too" };
+  const precision = D.one(oneOf("precision", input.precision, LEDGER_PRECISION));
+  if (precision.value && !hasTs) D.add("precision says how precise an entry's ts is: give ts too");
   // A date alone is a day, not midnight UTC: said, unless the agent said otherwise.
   const dateOnly = tsRaw !== undefined && /^\d{4}-\d{2}-\d{2}$/.test(tsRaw.trim());
   if (precision.value) fields.precision = precision.value;
   else if (dateOnly) fields.precision = "date";
-  const basis = oneOf("basis", input.basis, LEDGER_BASIS);
-  if (!basis.ok) return basis;
+  const basis = D.one(oneOf("basis", input.basis, LEDGER_BASIS));
   if (basis.value) fields.basis = basis.value;
-  const status = oneOf("status", input.status, LEDGER_HYPOTHESIS_STATUS);
-  if (!status.ok) return status;
-  if (status.value && kind !== "hypothesis") return { ok: false, reason: "status is a hypothesis's: open, supported or refuted" };
+  const status = D.one(oneOf("status", input.status, LEDGER_HYPOTHESIS_STATUS));
+  if (status.value && kind !== "hypothesis") D.add("status is a hypothesis's: open, supported or refuted");
   if (kind === "hypothesis") fields.status = status.value ?? "open";
-  const reason = oneOf("reason", input.reason, LEDGER_LIMITATION_REASONS);
-  if (!reason.ok) return reason;
-  if (reason.value && kind !== "limitation") return { ok: false, reason: "reason is a limitation's: why the examination could not establish it" };
+  const reason = D.one(oneOf("reason", input.reason, LEDGER_LIMITATION_REASONS));
+  if (reason.value && kind !== "limitation") D.add("reason is a limitation's: why the examination could not establish it");
   if (kind === "limitation") {
-    if (!reason.value) return { ok: false, reason: `a limitation needs a reason: ${LEDGER_LIMITATION_REASONS.join(", ")}` };
-    fields.reason = reason.value;
+    if (!reason.value) D.need("reason", `a limitation needs a reason: ${LEDGER_LIMITATION_REASONS.join(", ")}`);
+    else fields.reason = reason.value;
   }
-  const completion = oneOf("completion", input.completion, LEDGER_COMPLETION);
-  if (!completion.ok) return completion;
-  if (completion.value && kind !== "absence") return { ok: false, reason: "completion is an absence's: how far the search got (complete, partial, failed)" };
+  const completion = D.one(oneOf("completion", input.completion, LEDGER_COMPLETION));
+  if (completion.value && kind !== "absence") D.add("completion is an absence's: how far the search got (complete, partial, failed)");
   if (completion.value) fields.completion = completion.value;
   if (input.attribution !== undefined && input.attribution !== null) {
     const a = input.attribution;
     const subject = String(a.subject ?? "").trim();
-    if (!subject) return { ok: false, reason: "attribution.subject is required: the account, device or person" };
-    if (subject.length > LEDGER_SUBJECT_MAX_CHARS) return { ok: false, reason: `attribution.subject is over ${LEDGER_SUBJECT_MAX_CHARS} characters` };
-    const type = oneOf("attribution.subject_type", a.subject_type ?? "unknown", LEDGER_SUBJECT_TYPES);
-    if (!type.ok) return type;
+    if (!subject) D.add("attribution.subject is required: the account, device or person");
+    if (subject.length > LEDGER_SUBJECT_MAX_CHARS) D.add(`attribution.subject is over ${LEDGER_SUBJECT_MAX_CHARS} characters`);
+    const type = D.one(oneOf("attribution.subject_type", a.subject_type ?? "unknown", LEDGER_SUBJECT_TYPES));
     const basisRefs = listOf(a.basis_refs);
-    if (basisRefs.length > LEDGER_MAX_REFS) return { ok: false, reason: `attribution.basis_refs names more than ${LEDGER_MAX_REFS} objects` };
+    if (basisRefs.length > LEDGER_MAX_REFS) D.add(`attribution.basis_refs names more than ${LEDGER_MAX_REFS} objects`);
     if (basisRefs.length) {
       const checked = await checkRefs(sandboxRoot, basisRefs);
-      if (!checked.ok) return { ok: false, reason: `attribution.basis_refs: ${checked.reason}` };
+      if (!checked.ok) D.add(`attribution.basis_refs: ${checked.reason}`);
     }
-    fields.attribution = { subject, subject_type: type.value ?? "unknown", ...(basisRefs.length ? { basis_refs: basisRefs } : {}) };
+    if (subject) fields.attribution = { subject, subject_type: type.value ?? "unknown", ...(basisRefs.length ? { basis_refs: basisRefs } : {}) };
   }
   const locators: LedgerLocator[] = [];
   for (const l of Array.isArray(input.locators) ? input.locators : []) {
     const ref = String(l?.ref ?? "").trim();
     const at = String(l?.at ?? "").trim();
-    if (!ref || !at) return { ok: false, reason: "a locator is {ref, at}: one of the entry's refs, and where in it (a row, an offset, a record id)" };
-    if (!refs.includes(ref)) return { ok: false, reason: `locator ref ${JSON.stringify(ref)} is not one of the entry's refs` };
-    if (at.length > LEDGER_LOCATOR_MAX_CHARS) return { ok: false, reason: `a locator's at is over ${LEDGER_LOCATOR_MAX_CHARS} characters` };
-    locators.push({ ref, at });
+    if (!ref || !at) D.add("a locator is {ref, at}: one of the entry's refs, and where in it (a row, an offset, a record id)");
+    else if (!refs.includes(ref)) D.add(`locator ref ${JSON.stringify(ref)} is not one of the entry's refs${refs.length ? ` (refs has ${refs.slice(0, 6).join(", ")}${refs.length > 6 ? ", …" : ""})` : ""}`);
+    else if (at.length > LEDGER_LOCATOR_MAX_CHARS) D.add(`a locator's at is over ${LEDGER_LOCATOR_MAX_CHARS} characters`);
+    else locators.push({ ref, at });
   }
-  if (locators.length > LEDGER_MAX_LOCATORS) return { ok: false, reason: `locators names more than ${LEDGER_MAX_LOCATORS} places` };
+  if (locators.length > LEDGER_MAX_LOCATORS) D.add(`locators names more than ${LEDGER_MAX_LOCATORS} places`);
   if (locators.length) fields.locators = locators;
   const because = String(input.because ?? "").trim();
   if (because) {
-    if (!superseding) return { ok: false, reason: "because says why a correction corrects: give supersedes too" };
-    if (because.length > LEDGER_BECAUSE_MAX_CHARS) return { ok: false, reason: `because is over ${LEDGER_BECAUSE_MAX_CHARS} characters` };
+    if (!superseding) D.add("because says why a correction corrects: give supersedes too");
+    if (because.length > LEDGER_BECAUSE_MAX_CHARS) D.add(`because is over ${LEDGER_BECAUSE_MAX_CHARS} characters`);
     fields.because = because;
   }
-  return { ok: true, fields, rel };
+  return { fields, rel };
 }
 
 /** The fields only an answer takes, and only a finding takes: named in a refusal when they come with another kind. */
-const ANSWER_ONLY_FIELDS = ["section", "reasoning", "contrary", "limitations", "alternatives_open", "would_change", "inconclusive", "result", "contrary_none_why", "asserts_absence", "question_rev", "material", "downgrade", "parts", "premises", "premise_tested"] as const;
-const FINDING_ONLY_FIELDS = ["indicates", "alternatives", "alternatives_none_why", "significance"] as const;
+const ANSWER_ONLY_FIELDS = ["section", "reasoning", "contrary", "limitations", "alternatives_open", "would_change", "inconclusive", "result", "contrary_none_why", "asserts_absence", "question_rev", "material", "downgrade", "parts", "premises", "premise_tested", "qualifier", "value_changed_because"] as const;
+const FINDING_ONLY_FIELDS = ["indicates", "alternatives", "alternatives_none_why", "significance", "carriers"] as const;
 /** The fields only a coverage record takes. */
 const COVERAGE_ONLY_FIELDS = ["proposition", "inventory_rev", "time_range", "search_method", "settings", "coverage_actual", "skipped", "failures", "result_refs", "result_bound", "detection_opportunity", "areas", "acquisition_ask", "acquisition_none_why", "looked_for", "looked_for_none_why"] as const;
 
@@ -276,86 +452,135 @@ async function ledgerV4Input(
   failed: Array<{ ref: string; status: string }>,
   basis: string | undefined,
   confidence: string,
-): Promise<{ ok: true; fields: Partial<LedgerEntry> } | { ok: false; reason: string }> {
+  D: Defects,
+): Promise<{ fields: Partial<LedgerEntry> }> {
   const raw = input as Record<string, unknown>;
-  const answerOnly = ANSWER_ONLY_FIELDS.find((f) => given(raw[f]));
-  if (answerOnly) return { ok: false, reason: `${answerOnly} is an answer's: record kind=answer with its section to answer a question` };
-  const coverageOnly = COVERAGE_ONLY_FIELDS.find((f) => given(raw[f]));
-  if (coverageOnly) return { ok: false, reason: `${coverageOnly} is a coverage record's: record kind=coverage for what a negative was searched over` };
-  if (kind !== "finding") {
-    const findingOnly = FINDING_ONLY_FIELDS.find((f) => given(raw[f]));
-    if (findingOnly) return { ok: false, reason: `${findingOnly} is a finding's: what an observation indicates and what else could explain it are recorded on kind=finding` };
-  }
+  // Every field of another kind, in one defect a kind: the refusal used to name the first and the next call met the second.
+  const foreign = (names: readonly string[], whose: string, then: string) => {
+    const got = names.filter((f) => given(raw[f]));
+    if (got.length) D.add(`${got.join(", ")} ${got.length === 1 ? "is" : "are"} ${whose}: ${then}`);
+  };
+  foreign(ANSWER_ONLY_FIELDS, "an answer's", "record kind=answer with its section to answer a question");
+  foreign(COVERAGE_ONLY_FIELDS, "a coverage record's", "record kind=coverage for what a negative was searched over");
+  if (kind !== "finding") foreign(FINDING_ONLY_FIELDS, "a finding's", `what an observation indicates and what else could explain it are recorded on kind=finding${kind ? `; on ${/^[aeiou]/.test(kind) ? "an" : "a"} ${kind}, leave ${FINDING_ONLY_FIELDS.filter((f) => given(raw[f])).length === 1 ? "it" : "them"} out and say it in value or evidence` : ""}`);
   const fields: Partial<LedgerEntry> = {};
-  const why = boundedText("confidence_why", input.confidence_why, LEDGER_WHY_MAX_CHARS);
-  if (!why.ok) return why;
-  if (why.value && !confidence) return { ok: false, reason: "confidence_why says why that confidence: give confidence too" };
+  const why = D.text(boundedText("confidence_why", input.confidence_why, LEDGER_WHY_MAX_CHARS));
+  if (why.value && !confidence && !given(input.confidence)) D.add("confidence_why says why that confidence: give confidence too");
   if (why.value) fields.confidence_why = why.value;
-  // What a failed job's kept bytes are still good for, ref by ref.
+  // What a failed job's kept bytes are still good for, ref by ref. A why
+  // given for the job (job:j000020, or j000020) is the why of every ref of
+  // the entry from that job: 21 refusals on the run sf4406b were "qualifies
+  // names job:j000081, which is not one of the entry's refs", each answered
+  // with the same words on the file's ref.
   const qualifies: LedgerQualify[] = [];
+  const jobOf = (ref: string) => /^job:([a-z0-9-]+)/.exec(ref)?.[1] ?? "";
+  const unusable = kind === "limitation" || kind === "absence";
   for (const q of Array.isArray(input.qualifies) ? input.qualifies : []) {
     const ref = String(q?.ref ?? "").trim();
-    const text = boundedText("a qualifies why", q?.why, LEDGER_WHY_MAX_CHARS);
-    if (!text.ok) return text;
-    if (!ref || !text.value) return { ok: false, reason: "qualifies is [{ref, why}]: one of the entry's refs whose job did not succeed, and why its kept bytes still support this entry" };
-    if (!refs.includes(ref)) return { ok: false, reason: `qualifies names ${JSON.stringify(ref)}, which is not one of the entry's refs` };
-    if (!failed.some((f) => f.ref === ref)) return { ok: false, reason: `qualifies names ${ref}, whose job succeeded: it qualifies only the output of a job that did not` };
-    if (!qualifies.some((x) => x.ref === ref)) qualifies.push({ ref, why: text.value });
+    const text = D.text(boundedText("a qualifies why", q?.why, LEDGER_WHY_MAX_CHARS));
+    if (!ref || !text.value) {
+      D.add("qualifies is [{ref, why}]: one of the entry's refs whose job did not succeed, and why its kept bytes still support this entry");
+      continue;
+    }
+    if (unusable) {
+      D.took(`qualifies is left out of this ${kind}: it says why a failed job's bytes still support a claim, and ${/^[aeiou]/.test(kind) ? "an" : "a"} ${kind} rests on what could not be done, which its own fields say`);
+      continue;
+    }
+    let targets = [ref];
+    if (!refs.includes(ref)) {
+      const job = /^(?:job:)?([a-z0-9-]+)(?:\/.*)?$/.exec(ref)?.[1] ?? "";
+      const under = failed.filter((f) => jobOf(f.ref) === job).map((f) => f.ref);
+      if (under.length) {
+        // The job itself, or another file of it: the why is the job's, and it is the why of the entry's refs from that job.
+        targets = under;
+        D.took(`qualifies ${ref} ${/^(?:job:)?[a-z0-9-]+$/.test(ref) ? "names the job" : "is not one of the entry's refs, and is of the same job"}: taken as the why of the entry's ${under.length === 1 ? "ref" : "refs"} from it (${under.join(", ")})`);
+      } else if (/^(?:job:)?j\d{6,}(?:\/|$)/.test(ref) && refs.some((r) => jobOf(r) !== "")) {
+        // A job none of the entry's failed refs is from: it qualifies nothing here, and nothing is lost by leaving it out (the refs that do need a why are named below).
+        D.took(`qualifies on ${ref} is left out: no ref of the entry from a job that failed is from that job`);
+        continue;
+      } else {
+        const use = failed.map((f) => f.ref);
+        D.add(`qualifies names ${JSON.stringify(ref)}, which is not one of the entry's refs${use.length ? `: use exactly ${use.join(" or ")}, as refs has ${use.length === 1 ? "it" : "them"}` : refs.length ? `, and no ref of the entry is from a job that failed: leave qualifies out` : ""}`);
+        continue;
+      }
+    }
+    for (const t of targets) {
+      if (!failed.some((f) => f.ref === t)) {
+        D.took(`qualifies on ${t} is left out: its job succeeded, and qualifies is only for the output of a job that did not`);
+        continue;
+      }
+      if (!qualifies.some((x) => x.ref === t)) qualifies.push({ ref: t, why: text.value });
+    }
   }
-  if (qualifies.length > LEDGER_MAX_QUALIFIES) return { ok: false, reason: `qualifies names more than ${LEDGER_MAX_QUALIFIES} refs` };
-  if (qualifies.length && (kind === "limitation" || kind === "absence")) {
-    return { ok: false, reason: `qualifies says why a failed job's bytes still support a claim; a ${kind} rests on what could not be done, and says so in its own fields` };
-  }
+  if (qualifies.length > LEDGER_MAX_QUALIFIES) D.add(`qualifies names more than ${LEDGER_MAX_QUALIFIES} refs`);
   if (failed.length && kind === "absence" && (input.completion === undefined || String(input.completion).trim().toLowerCase() === "complete" || String(input.completion).trim() === "")) {
-    return { ok: false, reason: `the output of a job that did not succeed cannot show that something is absent (${failed.map((f) => `${f.ref}: ${f.status}`).join(", ")}): record the search with completion partial or failed, and what was not reached as kind=limitation` };
+    D.add(`the output of a job that did not succeed cannot show that something is absent (${failed.map((f) => `${f.ref}: ${f.status}`).join(", ")}): record the search with completion partial or failed, and what was not reached as kind=limitation`);
   }
   if (kind === "finding") {
     const missing = failed.filter((f) => !qualifies.some((q) => q.ref === f.ref));
     if (missing.length) {
-      return { ok: false, reason: `this finding rests on the kept output of a job that did not succeed (${missing.map((f) => `${f.ref}: ${f.status}`).join(", ")}): say in qualifies [{ref, why}] why those bytes are still usable, or cite the output of a job that worked` };
+      // The call to make is written out: one row a job covers every ref from it.
+      const jobs = [...new Set(missing.map((f) => jobOf(f.ref)))];
+      const rows = jobs.map((j) => {
+        const of = missing.filter((f) => jobOf(f.ref) === j);
+        return `{ref: "${of.length === 1 ? of[0]!.ref : `job:${j}`}", why: "<why its bytes are still usable>"}`;
+      });
+      D.add(`this finding rests on the kept output of a job that did not succeed (${missing.map((f) => `${f.ref}: ${f.status}`).join(", ")}): say in qualifies [{ref, why}] why those bytes are still usable, or cite the output of a job that worked. To keep ${missing.length === 1 ? "it" : "them"}, add qualifies: [${rows.join(", ")}] (a row that names a job, job:<id>, covers every ref of the entry from it)`);
     }
   }
   if (qualifies.length) fields.qualifies = qualifies;
-  if (kind !== "finding") return { ok: true, fields };
-  if (!basis) return { ok: false, reason: "a finding says whether it was seen in the evidence or reasoned from it: basis observed or inferred" };
-  if (!confidence) return { ok: false, reason: "a finding says how sure: confidence high, medium or low, with confidence_why" };
-  const indicates = boundedText("indicates", input.indicates, LEDGER_INDICATES_MAX_CHARS);
-  if (!indicates.ok) return indicates;
-  if (!indicates.value) return { ok: false, reason: "indicates is required on a finding: what the observation means, and the step from one to the other, in one to three sentences" };
+  if (kind !== "finding") return { fields };
+  if (!basis) D.need("basis", "a finding says whether it was seen in the evidence or reasoned from it: basis observed or inferred");
+  if (!confidence && !given(input.confidence)) D.need("confidence", "a finding says how sure: confidence high, medium or low, with confidence_why");
+  const indicates = D.text(boundedText("indicates", input.indicates, LEDGER_INDICATES_MAX_CHARS));
+  if (!indicates.value) D.need("indicates", "indicates is required on a finding: what the observation means, and the step from one to the other, in one to three sentences");
   fields.indicates = indicates.value;
   if (!fields.confidence_why) {
-    return { ok: false, reason: "confidence_why is required on a finding: where the data came from, whether the method is reliable for it, how specific the observation is, and whether your sources depend on each other" };
+    D.need("confidence_why", "confidence_why is required on a finding: where the data came from, whether the method is reliable for it, how specific the observation is, and whether your sources depend on each other");
   }
   const alternatives: LedgerAlternative[] = [];
   for (const a of Array.isArray(input.alternatives) ? input.alternatives : []) {
-    const explanation = boundedText("an alternative's explanation", a?.explanation, LEDGER_WHY_MAX_CHARS);
-    if (!explanation.ok) return explanation;
-    const aWhy = boundedText("an alternative's why", a?.why, LEDGER_WHY_MAX_CHARS);
-    if (!aWhy.ok) return aWhy;
-    const status = oneOf("an alternative's status", a?.status, LEDGER_ALTERNATIVE_STATUS);
-    if (!status.ok) return status;
-    if (!explanation.value || !status.value || !aWhy.value) return { ok: false, reason: "an alternative is {explanation, status: rejected | open, why, test_refs?}: what else could explain it, whether it was rejected or is still open, and why" };
+    const explanation = D.text(boundedText("an alternative's explanation", a?.explanation, LEDGER_WHY_MAX_CHARS));
+    const aWhy = D.text(boundedText("an alternative's why", a?.why, LEDGER_WHY_MAX_CHARS));
+    const status = D.one(oneOf("an alternative's status", a?.status, LEDGER_ALTERNATIVE_STATUS));
+    if (!explanation.value || !status.value || !aWhy.value) {
+      D.add("an alternative is {explanation, status: rejected | open, why, test_refs?}: what else could explain it, whether it was rejected or is still open, and why");
+      continue;
+    }
     const testRefs = listOf(a?.test_refs);
-    if (testRefs.length > LEDGER_MAX_REFS) return { ok: false, reason: `an alternative's test_refs names more than ${LEDGER_MAX_REFS} objects` };
+    if (testRefs.length > LEDGER_MAX_REFS) D.add(`an alternative's test_refs names more than ${LEDGER_MAX_REFS} objects`);
     if (testRefs.length) {
       const checked = await checkRefs(sandboxRoot, testRefs);
-      if (!checked.ok) return { ok: false, reason: `an alternative's test_refs: ${checked.reason}` };
+      if (!checked.ok) D.add(`an alternative's test_refs: ${checked.reason}`);
     }
     alternatives.push({ explanation: explanation.value, status: status.value, why: aWhy.value, ...(testRefs.length ? { test_refs: testRefs } : {}) });
   }
-  if (alternatives.length > LEDGER_MAX_ALTERNATIVES) return { ok: false, reason: `alternatives lists more than ${LEDGER_MAX_ALTERNATIVES}: keep the ones a reader must weigh` };
-  const noneWhy = boundedText("alternatives_none_why", input.alternatives_none_why, LEDGER_WHY_MAX_CHARS);
-  if (!noneWhy.ok) return noneWhy;
-  if (noneWhy.value && alternatives.length) return { ok: false, reason: "alternatives_none_why says no alternative was considered: give it or the alternatives, not both" };
-  if (basis === "inferred" && !alternatives.length && !noneWhy.value) {
-    return { ok: false, reason: "an inferred finding lists what else could explain it in alternatives [{explanation, status: rejected | open, why}], or says in alternatives_none_why why none was considered; never invent one" };
+  if (alternatives.length > LEDGER_MAX_ALTERNATIVES) D.add(`alternatives lists more than ${LEDGER_MAX_ALTERNATIVES}: keep the ones a reader must weigh`);
+  const noneWhy = D.text(boundedText("alternatives_none_why", input.alternatives_none_why, LEDGER_WHY_MAX_CHARS));
+  if (noneWhy.value && alternatives.length) D.add("alternatives_none_why says no alternative was considered: give it or the alternatives, not both");
+  if (basis === "inferred" && !alternatives.length && !noneWhy.value && !(Array.isArray(input.alternatives) && input.alternatives.length)) {
+    D.need("alternatives", "an inferred finding lists what else could explain it in alternatives [{explanation, status: rejected | open, why}], or says in alternatives_none_why why none was considered; never invent one");
   }
   if (alternatives.length) fields.alternatives = alternatives;
   if (noneWhy.value) fields.alternatives_none_why = noneWhy.value;
-  const significance = boundedText("significance", input.significance, LEDGER_WHY_MAX_CHARS);
-  if (!significance.ok) return significance;
+  const significance = D.text(boundedText("significance", input.significance, LEDGER_WHY_MAX_CHARS));
   if (significance.value) fields.significance = significance.value;
-  return { ok: true, fields };
+  // The carrier table (carriersOpen): one row for each place the answer could be carried in.
+  if (given(raw.carriers)) {
+    const rows: CarrierRow[] = [];
+    const shape = `carriers is [{carrier, state: ${CARRIER_STATES.join(" | ")}, why}]: one row for each place the answer could be carried in (a file, a stream, a field), whether it was decoded, and why (what it decoded to, or why it cannot be)`;
+    for (const c of Array.isArray(raw.carriers) ? raw.carriers : [raw.carriers]) {
+      const o = (c && typeof c === "object" ? c : {}) as Record<string, unknown>;
+      const carrier = D.text(boundedText("a carrier", o.carrier, LEDGER_REF_MAX_CHARS)).value;
+      const state = D.one(oneOf("a carrier's state", o.state, CARRIER_STATES)).value;
+      const cWhy = D.text(boundedText("a carrier's why", o.why, LEDGER_WHY_MAX_CHARS)).value;
+      if (!carrier || !state || !cWhy) D.add(shape);
+      else if (!rows.some((r) => r.carrier === carrier)) rows.push({ carrier, state, why: cWhy });
+    }
+    if (rows.length > LEDGER_MAX_CARRIERS) D.add(`carriers lists more than ${LEDGER_MAX_CARRIERS} rows: group the ones that share a state and a why`);
+    else if (rows.length) (fields as { carriers?: CarrierRow[] }).carriers = rows;
+  }
+  return { fields };
 }
 
 /**
@@ -453,7 +678,7 @@ export function supersededBy(entries: LedgerEntry[]): Map<number, number> {
 
 export type LedgerResult =
   | ({ ok: true; entry: LedgerEntry; merged: boolean; total: number; note?: string } & WarningsDelivered)
-  | { ok: false; reason: string; quiet?: true; deferred?: { coordinator: string; generation: number } };
+  | { ok: false; reason: string; defects?: string[]; quiet?: true; deferred?: { coordinator: string; generation: number } };
 
 /**
  * The answers check's warnings a reply delivers where the decision is made
@@ -484,17 +709,27 @@ function nearestNames(want: string, names: string[], n = 5): string[] {
     .map((r) => r.x);
 }
 
+/** What every "does not resolve" ends with: said once in a refusal, however many refs it names. */
+const REF_FORMS = "A ref names an object of this run (input:<path>, job:<id>/<path>, import:<id>/<path>, member:<gen>#<n>, sha256:<hex>, or a brain's own output: tool:<seat>/<file> under tool-output/, trace:<sha256> of one trace line, which the hub seals first and cites as the import it became), or says why none can be named (unresolved:<why>).";
+
 /**
- * Every ref resolved against the run as it is now, or the first that is not,
+ * Every ref resolved against the run as it is now, and each that is not,
  * with the names nearest to it: a typo costs one turn, where a wrong ref on
- * the chain would stand for good.
+ * the chain would stand for good. An entry in place of an object (E-12 in
+ * refs) is told which form the field takes.
  */
-export async function checkRefs(sandboxRoot: string, refs: string[]): Promise<{ ok: true; resolved: Array<{ ref: string; kind: string; status?: string }> } | { ok: false; reason: string }> {
+export async function checkRefsAll(sandboxRoot: string, refs: string[]): Promise<{ resolved: Array<{ ref: string; kind: string; status?: string }>; bad: Array<{ ref: string; why: string }> }> {
   // Loaded when a ref is checked, not with the extension: a VM that mounts
   // only extensions/ still loads it, and in a VM the hub checks refs anyway.
   const { readManifest, resolveRef, storePaths } = await import("../scripts/evidence-store.ts");
   const resolved: Array<{ ref: string; kind: string; status?: string }> = [];
+  const bad: Array<{ ref: string; why: string }> = [];
   for (const ref of refs) {
+    const entry = /^(?:#|E-)(\d+)$/i.exec(ref);
+    if (entry) {
+      bad.push({ ref, why: `ref ${JSON.stringify(ref)} names a ledger entry, and refs takes the run's objects (job:<id>/<path>, input:<path>, …): cite what E-${entry[1]} itself rests on, and link the entry with rel [{to: ${entry[1]}, kind: "supports" | "derived_from" | "contradicts" | "duplicates"}]` });
+      continue;
+    }
     const r = await resolveRef(sandboxRoot, ref);
     if (r.ok) {
       resolved.push({ ref, kind: r.kind, ...(r.status ? { status: r.status } : {}) });
@@ -511,15 +746,179 @@ export async function checkRefs(sandboxRoot: string, refs: string[]): Promise<{ 
         const id = slash < 0 ? m[2] : m[2].slice(0, slash);
         const P = storePaths(sandboxRoot);
         const found = await readManifest(join(m[1] === "job" ? P.jobs : P.imports, id, "manifest.json"));
-        if (found && slash >= 0) near = nearestNames(m[2].slice(slash + 1), found.manifest.files.map((f) => f.path)).map((p) => `${m[1]}:${id}/${p}`);
-        else if (!found) near = nearestNames(id, await readdir(m[1] === "job" ? P.jobs : P.imports).catch(() => [])).map((x) => `${m[1]}:${x}`);
+        if (found && slash >= 0) {
+          const want = m[2].slice(slash + 1).replace(/^out\//, "");
+          // A directory of the job's output is not an object: the files under it are, and the job as a whole.
+          const under = found.manifest.files.map((f) => f.path).filter((f) => f.startsWith(`${want.replace(/\/+$/, "")}/`));
+          near = (under.length ? under.slice(0, 5) : nearestNames(want, found.manifest.files.map((f) => f.path))).map((p) => `${m[1]}:${id}/${p}`);
+          if (under.length) {
+            bad.push({ ref, why: `ref ${JSON.stringify(ref)} is a directory of ${m[1]} ${id}'s output (${under.length} ${under.length === 1 ? "file" : "files"} under it), and a ref names a file: cite the files the entry rests on (${near.join(", ")}${under.length > 5 ? ", …" : ""}), or the whole output as ${m[1]}:${id}` });
+            continue;
+          }
+        } else if (!found) near = nearestNames(id, await readdir(m[1] === "job" ? P.jobs : P.imports).catch(() => [])).map((x) => `${m[1]}:${x}`);
       }
     } catch {
       near = [];
     }
-    return { ok: false, reason: `ref ${JSON.stringify(ref)} does not resolve: ${r.reason}${near.length ? `; nearest: ${near.join(", ")}` : ""}. A ref names an object of this run (input:<path>, job:<id>/<path>, import:<id>/<path>, member:<gen>#<n>, sha256:<hex>, or a brain's own output: tool:<seat>/<file> under tool-output/, trace:<sha256> of one trace line, which the hub seals first and cites as the import it became), or says why none can be named (unresolved:<why>).` };
+    bad.push({ ref, why: `ref ${JSON.stringify(ref)} does not resolve: ${r.reason}${near.length ? `; nearest: ${near.join(", ")}` : ""}` });
   }
-  return { ok: true, resolved };
+  return { resolved, bad };
+}
+
+/** Every ref resolved (checkRefsAll), or the first that is not: for the fields that hold one or two. */
+export async function checkRefs(sandboxRoot: string, refs: string[]): Promise<{ ok: true; resolved: Array<{ ref: string; kind: string; status?: string }> } | { ok: false; reason: string }> {
+  const all = await checkRefsAll(sandboxRoot, refs);
+  return all.bad.length ? { ok: false, reason: `${all.bad[0]!.why}. ${REF_FORMS}` } : { ok: true, resolved: all.resolved };
+}
+
+/**
+ * A ref as it was plainly meant, when it is not one as written and the
+ * other form resolves: the path as the shell shows it
+ * (store/jobs/j000149/out/x, job:j000149/out/x) for job:j000149/x, a job id
+ * alone (j000149) for job:j000149, inputs/x for input:x. Null when the ref
+ * is already in form, or the other form does not resolve either. On the run
+ * sf4406b a seat's files were at store/jobs/<id>/out/<path> and its refs at
+ * job:<id>/<path>: 99 refusals in the eight runs were that difference.
+ */
+export async function meantRef(sandboxRoot: string, ref: string): Promise<string | null> {
+  const t = ref.trim().replace(/^\.\//, "");
+  const path = /^(?:store\/jobs\/|job:|jobs\/)?(j\d{6,})(?:\/(.*))?$/.exec(t);
+  let want: string | null = null;
+  if (path) {
+    // The job's logs by their short names (stdout, stderr) are stdout.log and stderr.log beside its output.
+    const log = /^(?:out\/)?(stdout|stderr)(?:\.txt)?$/.exec(path[2] ?? "");
+    const rest = log ? `${log[1]}.log` : (path[2] ?? "").replace(/^out(?:\/|$)/, "").replace(/\/+$/, "");
+    want = `job:${path[1]}${rest ? `/${rest}` : ""}`;
+  } else if (/^inputs\//.test(t)) want = `input:${t.slice("inputs/".length)}`;
+  else if (/^import:[a-z0-9-]+\/out\//.test(t)) want = t.replace(/^(import:[a-z0-9-]+)\/out\//, "$1/");
+  const { readManifest, resolveRef, storePaths } = await import("../scripts/evidence-store.ts");
+  if (want && (await resolveRef(sandboxRoot, want).catch(() => null))?.ok) return want === ref ? null : want;
+  // The job's own records beside its output (manifest.json, job.json, a scope file), or a directory of its output: the job, whole. A ref names a file or a whole output, and this is the one of the two that was meant.
+  const job = /^job:(j\d{6,})\/(.+?)\/*$/.exec(want ?? "");
+  if (!job) return null;
+  const whole = `job:${job[1]}`;
+  if (!(await resolveRef(sandboxRoot, whole).catch(() => null))?.ok) return null;
+  if (/^(?:manifest\.json|job\.json|scope(?:\.\d+)?\.json)$/.test(job[2]!)) return whole;
+  const found = await readManifest(join(storePaths(sandboxRoot).jobs, job[1]!, "manifest.json")).catch(() => null);
+  return found?.manifest.files.some((f) => f.path.startsWith(`${job[2]}/`)) ? whole : null;
+}
+
+/** The fields each kind takes beside the ones every kind does: what `kindFitting` reads. */
+const KIND_COMMON = ["kind", "value", "source", "evidence", "confidence", "confidence_why", "supersedes", "because", "sensitive", "qualifies"] as const;
+const KIND_OBJECT = ["ts", "refs", "answers", "rel", "clock", "precision", "basis", "attribution", "locators", "control", "images_read"] as const;
+
+/**
+ * The kinds an input's fields allow, when it names none: each kind that
+ * takes every field given. A finding's indicates, a limitation's reason, a
+ * coverage record's time_range and an answer's section each allow one kind
+ * only, and that one is taken and said; anything less is asked. The open
+ * models send their arguments in alphabetical order and `kind` fell off 90
+ * times in eight runs, the answer each time the whole argument object back.
+ */
+export function kindsFitting(raw: Record<string, unknown>): string[] {
+  const takes: Record<string, readonly string[]> = {
+    event: [...KIND_COMMON, ...KIND_OBJECT],
+    ioc: [...KIND_COMMON, ...KIND_OBJECT],
+    finding: [...KIND_COMMON, ...KIND_OBJECT, ...FINDING_ONLY_FIELDS],
+    absence: [...KIND_COMMON, ...KIND_OBJECT, "completion"],
+    hypothesis: [...KIND_COMMON, ...KIND_OBJECT, "status"],
+    limitation: [...KIND_COMMON, ...KIND_OBJECT, "reason"],
+    answer: [...KIND_COMMON, ...ANSWER_ONLY_FIELDS],
+    coverage: [...KIND_COMMON, ...COVERAGE_ONLY_FIELDS, "refs", "answers", "alternatives", "alternatives_open"],
+  };
+  // A key no kind takes (a note to self, a misspelt name) says nothing of the kind: the check does not read it either.
+  const known = new Set(Object.values(takes).flat());
+  const has = Object.keys(raw).filter((k) => given(raw[k]) && known.has(k));
+  return Object.keys(takes).filter((k) => has.every((f) => takes[k]!.includes(f)) && (k !== "event" || given(raw.ts)) && (k !== "answer" || given(raw.section)) && (k !== "coverage" || COVERAGE_ONLY_FIELDS.some((f) => given(raw[f]))));
+}
+
+/** The fields that are one kind's and no other's: a section is an answer's, a reason a limitation's. */
+const KIND_MARKS: Record<string, readonly string[]> = { coverage: COVERAGE_ONLY_FIELDS, answer: ["section", "reasoning", "result", "would_change", "contrary", "contrary_none_why", "parts", "premises", "premise_tested", "question_rev", "qualifier"], finding: ["indicates", "significance", "alternatives_none_why", "carriers"], absence: ["completion"], limitation: ["reason"], hypothesis: ["status"] };
+
+/** The kinds whose own fields an input carries (KIND_MARKS). One alone names the kind even beside a field it does not take: that field is then named as not its own. */
+export function kindsMarked(raw: Record<string, unknown>): string[] {
+  return Object.keys(KIND_MARKS).filter((k) => KIND_MARKS[k]!.some((f) => given(raw[f])));
+}
+
+/** The kind an input with no kind comes closest to: of the kinds that fit when several do (a finding first), else the one that takes the most of its fields. */
+function kindClosest(raw: Record<string, unknown>, fit: readonly string[]): string {
+  const order = ["finding", "absence", "limitation", "hypothesis", "event", "ioc", "coverage", "answer"];
+  if (fit.length) return order.find((k) => fit.includes(k)) ?? fit[0]!;
+  if (given(raw.section)) return "answer";
+  const score = (k: string) => (KIND_MARKS[k] ?? []).filter((f) => given(raw[f])).length;
+  return [...order].sort((a, b) => score(b) - score(a))[0]!;
+}
+
+/**
+ * An input as it was plainly meant, before it is checked: the kind its
+ * fields allow when it names none (kindsFitting, one kind only), section
+ * ids in the spellings the seats used ("question:9", "Question 9", "#9" for
+ * "9"), and refs in the form the shell shows them (meantRef), wherever a
+ * field holds refs. Each is said in the reply (`took`); nothing that could
+ * be read two ways is taken.
+ */
+async function inputAsMeant(sandboxRoot: string, input: LedgerInput, D: Defects): Promise<LedgerInput> {
+  const raw = { ...(input as Record<string, unknown>) };
+  if (!String(raw.kind ?? "").trim()) {
+    // The kind written as a key ({finding: "the sentence"}): the kind, and the value when none was given (four calls on the runs sf4406b and s082123).
+    const named = (LEDGER_KINDS as readonly string[]).filter((k) => k !== "external" && typeof raw[k] === "string" && (raw[k] as string).trim());
+    if (named.length === 1) {
+      const k = named[0]!;
+      raw.kind = k;
+      const text = String(raw[k]).trim();
+      const asValue = !given(raw.value) && k !== "answer";
+      if (asValue) raw.value = text;
+      delete raw[k];
+      D.took(`the field "${k}" taken as kind=${k}${asValue ? ", and what it held as value" : ""}`);
+    }
+  }
+  if (!String(raw.kind ?? "").trim()) {
+    const fit = kindsFitting(raw);
+    const marked = kindsMarked(raw);
+    if (fit.length === 1) {
+      raw.kind = fit[0];
+      D.took(`kind was left out: taken as ${fit[0]}, the one kind these fields allow`);
+    } else if (!fit.length && marked.length === 1) {
+      raw.kind = marked[0];
+      D.took(`kind was left out: taken as ${marked[0]}, the one kind whose own fields it carries (${KIND_MARKS[marked[0]!]!.filter((f) => given(raw[f])).slice(0, 4).join(", ")})`);
+    }
+  }
+  const sectionId = (a: string) => a.trim().replace(/^["'\[\s]+|["'\]>\s]+$/g, "").replace(/^(?:question|q)\s*[:#_ ]\s*(?=[\w.-]+$)/i, "").replace(/^#(?=\d)/, "");
+  if (given(raw.answers)) {
+    const list = Array.isArray(raw.answers) ? raw.answers.map(String) : String(raw.answers).split(/[\s,]+/).filter(Boolean);
+    const out = list.map(sectionId);
+    const changed = list.filter((a, i) => a.trim() !== out[i]);
+    if (changed.length) {
+      raw.answers = out;
+      D.took(`answers ${changed.map((a) => JSON.stringify(a)).join(", ")} taken as ${changed.map((a) => JSON.stringify(sectionId(a))).join(", ")}: answers takes the id alone`);
+    }
+  }
+  // Each ref taken in another form, said one by one up to four and counted beyond (one coverage record of the run sf4406b carried six, twice over).
+  const moved: string[] = [];
+  const fix = async (r: unknown, where: string): Promise<unknown> => {
+    if (typeof r !== "string" || !r.trim()) return r;
+    const m = await meantRef(sandboxRoot, r);
+    if (!m) return r;
+    const said = `${where} ${JSON.stringify(r.trim())} taken as ${m}: ${/^job:j\d+$/.test(m) && !/^(?:job:|store\/jobs\/|jobs\/)?j\d+\/?(?:out\/?)?$/.test(r.trim().replace(/^\.\//, "")) ? "a ref names a file or a job's whole output, and this names a directory or the job's own record" : "a ref has no out/ and no store path"}`;
+    if (!moved.includes(said)) moved.push(said);
+    return m;
+  };
+  const list = async (v: unknown, where: string): Promise<unknown> => (Array.isArray(v) ? Promise.all(v.map((x) => fix(x, where))) : typeof v === "string" && /[\s,]/.test(v.trim()) ? Promise.all(v.split(/[\s,]+/).filter(Boolean).map((x) => fix(x, where))) : typeof v === "string" && v.trim() ? [await fix(v, where)] : v);
+  if (given(raw.refs)) raw.refs = await list(raw.refs, "ref");
+  // result_refs names entries too: a bare seq is the entry.
+  if (given(raw.result_refs)) raw.result_refs = ((await list(raw.result_refs, "result_refs")) as unknown[]).map((x) => (typeof x === "string" && /^\d+$/.test(x.trim()) ? `E-${Number(x)}` : typeof x === "number" ? `E-${x}` : x));
+  if (Array.isArray(raw.qualifies) && raw.kind !== "answer") raw.qualifies = await Promise.all(raw.qualifies.map(async (q) => (q && typeof q === "object" ? { ...(q as object), ref: await fix((q as { ref?: unknown }).ref, "qualifies") } : q)));
+  if (Array.isArray(raw.locators)) raw.locators = await Promise.all(raw.locators.map(async (q) => (q && typeof q === "object" ? { ...(q as object), ref: await fix((q as { ref?: unknown }).ref, "locator ref") } : q)));
+  if (Array.isArray(raw.alternatives)) raw.alternatives = await Promise.all(raw.alternatives.map(async (a) => (a && typeof a === "object" && given((a as { test_refs?: unknown }).test_refs) ? { ...(a as object), test_refs: await list((a as { test_refs?: unknown }).test_refs, "test_refs") } : a)));
+  if (raw.attribution && typeof raw.attribution === "object" && given((raw.attribution as { basis_refs?: unknown }).basis_refs)) raw.attribution = { ...(raw.attribution as object), basis_refs: await list((raw.attribution as { basis_refs?: unknown }).basis_refs, "attribution.basis_refs") };
+  if (given(raw.control)) {
+    const one = async (c: unknown) => (c && typeof c === "object" && !Array.isArray(c) ? { ...(c as object), ref: await fix((c as { ref?: unknown }).ref, "control.ref") } : fix(c, "control.ref"));
+    raw.control = Array.isArray(raw.control) ? await Promise.all(raw.control.map(one)) : await one(raw.control);
+  }
+  if (given(raw.images_read)) raw.images_read = await list(raw.images_read, "images_read");
+  if (moved.length <= 4) for (const x of moved) D.took(x);
+  else D.took(`${moved.length} refs written as the shell shows them (out/, a store path) taken in the form a ref has, job:<id>/<path>: ${moved.slice(0, 2).map((x) => x.replace(/: a ref .*$/, "")).join("; ")}, and ${moved.length - 2} more`);
+  return raw as unknown as LedgerInput;
 }
 
 const TS_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -599,6 +998,13 @@ async function withWarnings<R extends { ok: boolean }>(sandboxRoot: string, r: R
 }
 
 export async function recordEntry(ctx: SwarmContext, input: LedgerInput): Promise<LedgerResult> {
+  // The whole entry is checked and every defect named in one refusal (Defects); what was plainly meant is taken first and said, whatever the answer.
+  const D = new Defects();
+  return D.withTaken(await recordChecked(ctx, input, D));
+}
+
+async function recordChecked(ctx: SwarmContext, input: LedgerInput, D: Defects): Promise<LedgerResult> {
+  input = await inputAsMeant(ctx.sandboxRoot, input, D);
   // Q-<n> names a question of the register: its section, which is n unless
   // the goal gave it its own id.
   if (typeof input.section === "string" && /^(question:)?Q-\d/i.test(input.section.trim())) input = { ...input, section: await registerSection(ctx.sandboxRoot, input.section) };
@@ -606,35 +1012,45 @@ export async function recordEntry(ctx: SwarmContext, input: LedgerInput): Promis
     const list = Array.isArray(input.answers) ? input.answers.map(String) : String(input.answers).split(/[\s,]+/);
     input = { ...input, answers: await Promise.all(list.map((a) => registerSection(ctx.sandboxRoot, a.trim()))) };
   }
-  const kind = String(input.kind ?? "").trim().toLowerCase();
+  let kind = String(input.kind ?? "").trim().toLowerCase();
+  if (!kind) {
+    // Asked only when the fields allow several kinds, or none. The rest of the entry is still checked, as the kind the fields come closest to, so that the one refusal names everything: said so, since a defect of that kind is none of another's.
+    const fit = kindsFitting(input as Record<string, unknown>);
+    const guess = kindClosest(input as Record<string, unknown>, fit);
+    D.need("kind", `kind is required: one of ${LEDGER_KINDS.filter((k) => k !== "external").join(", ")}. ${fit.length ? `The fields sent fit ${fit.join(", ")}: say which` : "The fields sent fit no one kind (a finding takes indicates, a limitation reason, an absence completion, a hypothesis status, a coverage record time_range and its other fields, an answer section)"}. The rest was checked as ${/^[aeio]/.test(guess) ? "an" : "a"} ${guess}, the kind they come closest to: what follows holds for that kind`);
+    kind = guess;
+    input = { ...input, kind };
+  }
   if (!(LEDGER_KINDS as readonly string[]).includes(kind)) {
     return { ok: false, reason: `kind must be one of ${LEDGER_KINDS.join(", ")}` };
   }
   if (kind === "external") return { ok: false, reason: "external material is recorded by the harness when it enters the run (a capture the fetch service sealed, material the operator supplied), with its provenance: cite it (net:<k>/<n>, E-<seq>) and record what it establishes as a finding of yours" };
-  if (kind === "answer") return withWarnings(ctx.sandboxRoot, await recordAnswer(ctx, input), (r) => (r.entry.section?.startsWith("question:") ? { point: "record", section: r.entry.section } : null));
-  if (kind === "coverage") return recordCoverage(ctx, input);
+  if (kind === "answer") return withWarnings(ctx.sandboxRoot, await recordAnswer(ctx, input, D), (r) => (r.entry.section?.startsWith("question:") ? { point: "record", section: r.entry.section } : null));
+  if (kind === "coverage") return recordCoverage(ctx, input, D);
   const absence = kind === "absence";
   const limitation = kind === "limitation";
   const value = String(input.value ?? "").trim();
   if (!value) {
-    return {
-      ok: false,
-      reason: absence
+    D.need(
+      "value",
+      absence
         ? "value is required: what was looked for and not found, in one sentence"
         : limitation
           ? "value is required: what the examination could not establish, in one sentence"
           : kind === "hypothesis"
             ? "value is required: the proposition under test, in one sentence"
             : "value is required: the event, the indicator or the finding, in one sentence",
-    };
+    );
   }
-  if (value.length > LEDGER_VALUE_MAX_CHARS) return { ok: false, reason: `value is over ${LEDGER_VALUE_MAX_CHARS} characters` };
-  const ts = normalizeTs(input.ts);
-  if (!ts.ok) return ts;
-  if (kind === "event" && !ts.ts) return { ok: false, reason: "an event needs a ts (ISO 8601 with its zone: Z for UTC, or the source's offset)" };
-  const confidence = String(input.confidence ?? "").trim().toLowerCase();
+  if (value.length > LEDGER_VALUE_MAX_CHARS) D.add(`value is over ${LEDGER_VALUE_MAX_CHARS} characters`);
+  const tsChecked = normalizeTs(input.ts);
+  const ts: { ts?: string; raw?: string } = tsChecked.ok ? tsChecked : {};
+  if (!tsChecked.ok) D.add(tsChecked.reason);
+  else if (kind === "event" && !ts.ts) D.need("ts", "an event needs a ts (ISO 8601 with its zone: Z for UTC, or the source's offset)");
+  let confidence = String(input.confidence ?? "").trim().toLowerCase();
   if (confidence && !(LEDGER_CONFIDENCE as readonly string[]).includes(confidence)) {
-    return { ok: false, reason: `confidence must be one of ${LEDGER_CONFIDENCE.join(", ")}` };
+    D.add(`confidence must be one of ${LEDGER_CONFIDENCE.join(", ")}`);
+    confidence = "";
   }
   // Provenance is not optional. Across fifteen cases every one of 1501
   // ledger entries already carried both, so this costs a working run
@@ -642,42 +1058,56 @@ export async function recordEntry(ctx: SwarmContext, input: LedgerInput): Promis
   // cannot be checked, which is the one a reader has no way to spot.
   const source = String(input.source ?? "").trim();
   if (!source) {
-    return {
-      ok: false,
-      reason: absence
+    D.need(
+      "source",
+      absence
         ? "source is required: what was searched — the path, image, log or artefact the search ran over. 'Not found' is only ever 'not found there'."
         : limitation
           ? "source is required: what could not be examined — the object, volume, artefact or scope"
           : "source is required: where it was seen — a path, a log, a plugin, a registry key",
-    };
+    );
   }
   if (source.length > LEDGER_SOURCE_MAX_CHARS) {
-    return { ok: false, reason: `source is over ${LEDGER_SOURCE_MAX_CHARS} characters: name where it was seen, and put the material itself in a work/ file` };
+    D.add(`source is over ${LEDGER_SOURCE_MAX_CHARS} characters: name where it was seen, and put the material itself in a work/ file`);
   }
   const evidence = String(input.evidence ?? "").trim();
   if (!evidence) {
-    return {
-      ok: false,
-      reason: absence
+    D.need(
+      "evidence",
+      absence
         ? "evidence is required: the query, the tool and its version, and the scope searched — allocated files only, or unallocated space and slack too, and the time range. An empty result holds only for that query and that scope."
         : limitation
           ? "evidence is required: what was tried and why it could not be done — the command, the error, the missing key or tool"
           : "evidence is required: how to check it — the command, the inode, the record id, the hash",
-    };
+    );
   }
   if (evidence.length > LEDGER_EVIDENCE_MAX_CHARS) {
-    return { ok: false, reason: `evidence is over ${LEDGER_EVIDENCE_MAX_CHARS} characters: say how to check it, and put the material itself in a work/ file` };
+    D.add(`evidence is over ${LEDGER_EVIDENCE_MAX_CHARS} characters: say how to check it, and put the material itself in a work/ file`);
   }
-  const refs = [...new Set((Array.isArray(input.refs) ? input.refs.map(String) : String(input.refs ?? "").split(/[\s,]+/)).map((r) => r.trim()).filter(Boolean))];
-  if (refs.length > LEDGER_MAX_REFS) return { ok: false, reason: `refs names ${refs.length} objects, more than ${LEDGER_MAX_REFS}: name the ones the entry rests on, and the rest in evidence` };
+  let refs = [...new Set((Array.isArray(input.refs) ? input.refs.map(String) : String(input.refs ?? "").split(/[\s,]+/)).map((r) => r.trim()).filter(Boolean))];
+  if (refs.length > LEDGER_MAX_REFS) D.add(`refs names ${refs.length} objects, more than ${LEDGER_MAX_REFS}: name the ones the entry rests on, and the rest in evidence`);
   const long = refs.find((r) => r.length > LEDGER_REF_MAX_CHARS);
-  if (long) return { ok: false, reason: `a ref is over ${LEDGER_REF_MAX_CHARS} characters: ${JSON.stringify(long.slice(0, 80))}…` };
+  if (long) {
+    D.add(`a ref is over ${LEDGER_REF_MAX_CHARS} characters: ${JSON.stringify(long.slice(0, 80))}…`);
+    refs = refs.filter((r) => r.length <= LEDGER_REF_MAX_CHARS);
+  }
   // The refs whose job did not succeed, as resolveRef reads the job's own status.
   const failed: Array<{ ref: string; status: string }> = [];
   if (refs.length) {
-    const checked = await checkRefs(ctx.sandboxRoot, refs);
-    if (!checked.ok) return checked;
+    // Every ref that does not resolve, each with its nearest names, and what a ref is said once.
+    const checked = await checkRefsAll(ctx.sandboxRoot, refs.slice(0, LEDGER_MAX_REFS));
+    for (const [i, x] of checked.bad.entries()) D.add(i === checked.bad.length - 1 ? `${x.why}. ${REF_FORMS}` : x.why);
     for (const r of checked.resolved) if (r.kind === "job" && r.status && r.status !== "ok") failed.push({ ref: r.ref, status: r.status });
+    // A ref that does not resolve hides what its job's status asks next: said now, so that the corrected call carries it (on the run sf4406b a finding met the bad ref, then the failed job, then qualifies, one call each).
+    if (kind === "finding" && checked.bad.length) {
+      const { resolveRef } = await import("../scripts/evidence-store.ts");
+      const said = new Set((Array.isArray(input.qualifies) ? input.qualifies : []).map((q) => /^(?:job:)?([a-z0-9-]+)/.exec(String(q?.ref ?? "").trim())?.[1]));
+      for (const j of new Set(checked.bad.map((x) => /^job:([a-z0-9-]+)\//.exec(x.ref)?.[1]).filter((x): x is string => Boolean(x)))) {
+        if (said.has(j) || failed.some((f) => f.ref.startsWith(`job:${j}/`))) continue;
+        const st = await resolveRef(ctx.sandboxRoot, `job:${j}`).catch(() => null);
+        if (st?.ok && st.status && st.status !== "ok") D.add(`job ${j} did not succeed (${st.status}): once its ref is right, the finding also says why those bytes are still usable, qualifies: [{ref: "job:${j}", why: "<why its bytes are still usable>"}]`);
+      }
+    }
   }
   // A finding with no ref is taken, and told what would let a reader check
   // it: the ask rides in the answer, never as an error.
@@ -692,14 +1122,34 @@ export async function recordEntry(ctx: SwarmContext, input: LedgerInput): Promis
       : undefined;
   let supersedes: number | undefined;
   if (input.supersedes !== undefined && input.supersedes !== null && String(input.supersedes).trim() !== "") {
-    const n = Number(String(input.supersedes).trim().replace(/^#/, ""));
-    if (!Number.isInteger(n) || n < 1) return { ok: false, reason: `supersedes names an entry by its seq, a whole number (got ${JSON.stringify(input.supersedes)})` };
-    supersedes = n;
+    const n = Number(String(input.supersedes).trim().replace(/^(?:#|E-)/i, ""));
+    if (!Number.isInteger(n) || n < 1) D.add(`supersedes names an entry by its seq, a whole number (got ${JSON.stringify(input.supersedes)})`);
+    else supersedes = n;
   }
-  const v3 = await ledgerV3Input(ctx.sandboxRoot, input, kind, refs, Boolean(ts.ts), typeof input.ts === "string" ? input.ts : undefined, supersedes !== undefined);
-  if (!v3.ok) return v3;
-  const v4 = await ledgerV4Input(ctx.sandboxRoot, input, kind, refs, failed, v3.fields.basis, confidence);
-  if (!v4.ok) return v4;
+  // An entry already corrected is corrected at the end of its chain: the one move the ledger takes, so it is taken and said (when the entry that stands is of this kind).
+  if (supersedes !== undefined) {
+    const now = await readLedger(ctx.sandboxRoot, { raw: true });
+    const replacedNow = supersededBy(now);
+    const end = replacedNow.has(supersedes) ? now.find((e) => e.seq === standingSeq(supersedes as number, replacedNow)) : undefined;
+    if (end && end.kind === kind) {
+      D.took(`#${supersedes} is already superseded: taken as the correction of #${end.seq}, the entry that stands at the end of its corrections (supersedes=${end.seq})`);
+      supersedes = end.seq;
+    }
+  }
+  const v3 = await ledgerV3Input(ctx.sandboxRoot, input, kind, refs, Boolean(ts.ts), typeof input.ts === "string" ? input.ts : undefined, supersedes !== undefined, D);
+  const v4 = await ledgerV4Input(ctx.sandboxRoot, input, kind, refs, failed, v3.fields.basis, confidence, D);
+  // A negative that rests on the seat's own scanner, or on pictures (negativeBasis): its control run and the images read.
+  const neg = await negativeBasis(ctx.sandboxRoot, ctx.agentId, input, kind, refs, value, D);
+  // What the ledger itself says of the entries it names (rel, supersedes), read here so that it is named with the rest; the lock checks it again.
+  {
+    const now = await readLedger(ctx.sandboxRoot, { raw: true });
+    const bySeq = new Map(now.map((e) => [e.seq, e]));
+    const replaced = supersededBy(now);
+    for (const r of v3.rel) for (const why of relDefects(r, bySeq, replaced)) D.add(why);
+    if (supersedes !== undefined) for (const why of supersedeDefects(supersedes, bySeq, replaced)) D.add(why);
+  }
+  const refused = D.refusal(kind);
+  if (refused) return refused;
   // How each cited object was made, as the run recorded it: written by the
   // hub into the entry and its core, so the line alone says it.
   const method = refs.length ? await ledgerMethods(ctx.sandboxRoot, refs) : [];
@@ -708,9 +1158,10 @@ export async function recordEntry(ctx: SwarmContext, input: LedgerInput): Promis
   // worked. A finding says why in qualifies (ledgerV4Input); another kind is told.
   const notes: string[] = [];
   if (note) notes.push(note);
+  notes.push(...neg.notes);
   const unqualified = failed.filter((f) => !(v4.fields.qualifies ?? []).some((q) => q.ref === f.ref));
   if (unqualified.length) {
-    notes.push(`rests on the kept output of a job that did not succeed: ${unqualified.map((f) => `${f.ref} (job ${f.ref.slice(4).split("/")[0]}: ${f.status})`).join(", ")}; say why those bytes are still usable in qualifies [{ref, why}], or cite the output of a job that worked`);
+    notes.push(`rests on the kept output of a job that did not succeed: ${unqualified.map((f) => `${f.ref} (job ${f.ref.slice(4).split("/")[0]}: ${f.status})`).join(", ")}${kind === "finding" ? "; say why those bytes are still usable in qualifies [{ref, why}], or cite the output of a job that worked" : ""}`);
   }
   if (v3.fields.completion && v3.fields.completion !== "complete") {
     notes.push(`the search was ${v3.fields.completion}: this absence holds only for what was searched; record what was not reached as kind=limitation (reason ${v3.fields.completion === "failed" ? "failed" : "partial"})`);
@@ -719,13 +1170,9 @@ export async function recordEntry(ctx: SwarmContext, input: LedgerInput): Promis
     const entries = await readLedger(ctx.sandboxRoot);
     const replaced = supersededBy(entries);
     const bySeq = new Map(entries.map((e) => [e.seq, e]));
-    for (const r of v3.rel) {
-      const target = bySeq.get(r.to);
-      if (!target) return { ok: false, reason: `rel names #${r.to}: there is no entry #${r.to} in the ledger (list them with ledger)` };
-      const standing = replaced.get(r.to);
-      if (r.kind === "duplicates" && standing !== undefined) return { ok: false, reason: `#${r.to} is superseded by #${standing}: a duplicate names the entry that stands, #${standing}` };
-      if (ANSWER_ONLY_REL_KINDS.has(r.kind) && !(target.kind === "answer" && target.section?.startsWith("question:"))) return { ok: false, reason: `rel ${r.kind} weighs evidence added late against a question's conclusion: its to names that question's answer (E-<seq> of an answer, section question:<n>); #${r.to} is ${target.kind === "answer" ? `the ${target.section}` : `a ${target.kind}`}. Link another entry with supports, contradicts, duplicates or derived_from` };
-    }
+    // Under the lock, what the read before it found may have changed: checked again, all of it.
+    const late = [...v3.rel.flatMap((r) => relDefects(r, bySeq, replaced)), ...(supersedes !== undefined ? supersedeDefects(supersedes, bySeq, replaced) : [])];
+    if (late.length) return { ok: false, reason: late.join("; "), defects: late };
     const candidate: LedgerEntry = {
       v: LEDGER_VERSION,
       seq: (entries.at(-1)?.seq ?? 0) + 1,
@@ -740,28 +1187,25 @@ export async function recordEntry(ctx: SwarmContext, input: LedgerInput): Promis
       ...v3.fields,
       ...(v3.rel.length ? { rel: v3.rel } : {}),
       ...v4.fields,
+      ...neg.fields,
       ...(method.length ? { method } : {}),
       by: ctx.agentId,
       authors: [ctx.agentId],
       at: new Date().toISOString(),
     };
-    const content = ledgerContent(candidate);
+    // The whole of what it says: the hashed content, and beside it the fields protocol-core's content does not hold yet (a carrier table, a control, the images read).
+    const contentOf = (e: LedgerEntry) => `${ledgerContent(e)}\n${JSON.stringify({ ...negativeFieldsOf(e), carriers: (e as { carriers?: unknown }).carriers ?? null })}`;
+    const content = contentOf(candidate);
     if (supersedes !== undefined) {
-      const target = bySeq.get(supersedes);
-      if (!target) return { ok: false, reason: `supersedes #${supersedes}: there is no entry #${supersedes} in the ledger (list them with ledger)` };
-      const already = replaced.get(supersedes);
-      if (already !== undefined) return { ok: false, reason: `#${supersedes} is already superseded by #${already}: correct #${already} instead, so the corrections stay one line` };
-      if (target.kind === "answer") return { ok: false, reason: `#${supersedes} is an answer: an answer is corrected by an answer to the same section (kind=answer, supersedes=${supersedes})` };
+      const target = bySeq.get(supersedes) as LedgerEntry;
       // The whole of what it says, not the sentence alone: the same sentence
       // with another confidence, other refs or another status is a correction.
-      if (ledgerContent(target) === content) {
-        return { ok: false, reason: `the correction repeats #${supersedes} word for word, with the same confidence, refs and fields: a correction says what is right now` };
-      }
+      if (contentOf(target) === content) return sameAsStanding(ctx, held, target, entries.length);
     }
     // A correction is always its own entry. The same content again, from
     // anyone, is the entry that stands: a second author is an attestation,
     // appended, and the entry is never rewritten.
-    const sameContent = supersedes === undefined ? entries.filter((e) => !replaced.has(e.seq) && ledgerContent(e) === content) : [];
+    const sameContent = supersedes === undefined ? entries.filter((e) => !replaced.has(e.seq) && contentOf(e) === content) : [];
     if (sameContent.length) return mergeSameContent(ctx, held, sameContent[0]);
     // The same sentence, from anyone: with refs where the standing one has
     // none, it is recorded anew and corrects it; otherwise it is its own
@@ -775,6 +1219,250 @@ export async function recordEntry(ctx: SwarmContext, input: LedgerInput): Promis
     }
     return appendLedgerEntry(ctx, held, entries, { ...candidate, ...(supersedes !== undefined ? { supersedes } : {}) }, notes);
   });
+}
+
+/** A negative said as a finding: its value opens with what was not found, or counts no hit. Read from the first 240 characters only. */
+const NEGATIVE_WORDS = /^(?:no|none|nothing|neither|never)\b(?![-.])|\b(?:not (?:found|present|seen)|no (?:evidence|trace|sign|hits?|match(?:es)?|occurrences?|text|overlay)|(?:0|zero) (?:hits?|match(?:es)?|occurrences?|results?))\b/i;
+
+/** Whether an entry is a negative: an absence, or a finding whose value says what was not found. */
+export function negativeWorded(kind: string, value: string): boolean {
+  return kind === "absence" || (kind === "finding" && NEGATIVE_WORDS.test(String(value ?? "").slice(0, 240)));
+}
+
+/** A finding that reports a search's empty result: it counts no hit, says not found, or opens with "No … found". Narrower than NEGATIVE_WORDS: "Nothing of note in the output" is a reading, not a scan. */
+const SEARCH_NEGATIVE = /\b(?:0|zero|no) (?:hits?|match(?:es)?|occurrences?|results?|candidates?)\b|\bnot (?:found|present)\b|\bno (?:evidence|trace|sign|instance|occurrence|cop(?:y|ies))s? of\b|\b(?:found|returned|yielded|produced) (?:nothing|none|no \w+)\b|^(?:no|none)\b[^.]{0,120}\b(?:found|present|exists?|remains?|survives?)\b/i;
+
+/** Whether an entry reports a search that found nothing: an absence, or a finding worded as one (SEARCH_NEGATIVE). What a control run is asked of. */
+export function searchNegative(kind: string, value: string): boolean {
+  return kind === "absence" || (kind === "finding" && SEARCH_NEGATIVE.test(String(value ?? "").slice(0, 300)));
+}
+
+const IMAGE_FILE = /\.(?:png|jpe?g|gif|bmp|webp|tiff?)$/i;
+
+type ImageReads = { offset: number; read: Map<string, Set<string>> };
+const imageReadsCache = new Map<string, ImageReads>();
+
+/**
+ * Which image files of the store each seat was handed by `read`, from the
+ * trace (a `read` row whose path is store/jobs/<id>/out/<file> and whose
+ * result is ok), read incrementally as leads.ts stdoutReads reads the
+ * journal for a job's stdout: the key is job:<id>/<file>, the value the
+ * seats. A picture reaches a model only through `read`, so this is the
+ * record of which sheets a seat saw.
+ */
+export async function imageReads(sandboxRoot: string): Promise<Map<string, Set<string>>> {
+  const path = join(sandboxRoot, "traces", "events.jsonl");
+  const key = resolve(sandboxRoot);
+  let c = imageReadsCache.get(key);
+  const size = await stat(path).then((st) => st.size).catch(() => 0);
+  if (!c || size < c.offset) {
+    c = { offset: 0, read: new Map() };
+    imageReadsCache.set(key, c);
+  }
+  if (size > c.offset) {
+    const fh = await open(path, "r").catch(() => null);
+    if (fh) {
+      try {
+        const buf = Buffer.alloc(size - c.offset);
+        await fh.read(buf, 0, buf.length, c.offset);
+        const text = buf.toString("utf8");
+        const end = text.lastIndexOf("\n");
+        if (end >= 0) {
+          for (const line of text.slice(0, end).split("\n")) {
+            if (!line.includes('"tool":"read"') || !line.includes("store/jobs/")) continue;
+            try {
+              const l = JSON.parse(line) as { agent?: string; tool?: string; args?: { path?: unknown }; result?: { ok?: boolean } };
+              const m = /(?:^|\/)store\/jobs\/([a-z0-9-]+)\/out\/(.+)$/.exec(String(l.args?.path ?? ""));
+              if (l.tool !== "read" || !l.agent || l.result?.ok === false || !m || !IMAGE_FILE.test(m[2]!)) continue;
+              const k = `job:${m[1]}/${m[2]}`;
+              c.read.set(k, (c.read.get(k) ?? new Set()).add(l.agent));
+            } catch {
+              // A torn line: the trace's own check names it.
+            }
+          }
+          c.offset += Buffer.byteLength(text.slice(0, end + 1));
+        }
+      } finally {
+        await fh.close();
+      }
+    }
+  }
+  return c.read;
+}
+
+/** The fields a negative carries for what it rests on: its control runs, the images read, and the sheets of the cited jobs nobody on the entry read. */
+export type NegativeFields = { control?: Array<{ ref: string; found: string }>; images_read?: string[]; images_unread?: Array<{ job: string; dir: string; total: number; unread: string[] }> };
+
+/**
+ * What a negative rests on, beyond its refs (docs: the review of the Batman
+ * III runs, I-22 and I-07).
+ *
+ * A negative from the seat's own scanner needs a control: a search that
+ * could not have matched reads the same as one that found nothing. On the
+ * run sf4406b E-87 said "no live ChaCha20 state, 0 hits over 111.7 M key
+ * offsets" where a state was there (the sweep used another file's cribs),
+ * and it gave a wrong answer two seats attested; the same run's planted
+ * self-tests voided nine of its own negatives. So an absence, or a finding
+ * that says what was not found, whose refs name the output of a command job
+ * (the seat's own script or shell line; a pack tool or a recipe that ended
+ * ok reports its own completeness) names in `control` a job in which the
+ * same scanner found a planted or known value: [{ref, found}].
+ *
+ * A negative about pictures lists the images read, and the sheets of a
+ * cited job that the recorder was never handed are named on it
+ * (`images_unread`): on the run s01a4f4 E-252 said no frame showed text at
+ * high confidence after 3 of 11 sheets of job j000342 were read, and the
+ * text was legible on m06.png. The entry is taken; an answer that cites it
+ * is held by the gate until the sheets are read and it is recorded again.
+ */
+async function negativeBasis(sandboxRoot: string, agentId: string, input: LedgerInput, kind: string, refs: string[], value: string, D: Defects): Promise<{ fields: NegativeFields; notes: string[] }> {
+  const raw = input as Record<string, unknown>;
+  const fields: NegativeFields = {};
+  const notes: string[] = [];
+  const negative = negativeWorded(kind, value);
+  // The control runs as given: {ref, found}, or a list of them.
+  const controls: Array<{ ref: string; found: string }> = [];
+  if (given(raw.control)) {
+    for (const c of Array.isArray(raw.control) ? raw.control : [raw.control]) {
+      const o = (c && typeof c === "object" ? c : { ref: c }) as { ref?: unknown; found?: unknown };
+      const ref = String(o.ref ?? "").trim();
+      const found = D.text(boundedText("control.found", o.found, LEDGER_WHY_MAX_CHARS)).value;
+      if (!ref || !found) {
+        D.add('control is {ref, found}: the job in which the same scanner found a planted or known value (job:<id>/stdout.log, job:<id>/<path>), and what it found there ("found the planted key at offset 4096")');
+        continue;
+      }
+      if (!/^job:/.test(ref)) D.add(`control.ref names a job's output (job:<id>/stdout.log, job:<id>/<path>): a control is a run of the scanner, and ${JSON.stringify(ref)} is not one`);
+      else {
+        const checked = await checkRefs(sandboxRoot, [ref]);
+        if (!checked.ok) D.add(`control.ref: ${checked.reason}`);
+        else if (checked.resolved[0]?.status && checked.resolved[0].status !== "ok") D.add(`control.ref names ${ref}, whose job ${checked.resolved[0].status === "failed" ? "failed" : `ended ${checked.resolved[0].status}`}: a control is a run that worked and found the planted value`);
+        else if (!controls.some((x) => x.ref === ref)) controls.push({ ref, found });
+      }
+    }
+    if (controls.length) fields.control = controls;
+  }
+  if (!negative) {
+    if (given(raw.images_read)) D.add(`images_read is a negative's: the images read for a claim that pictures do not show something (an absence, or a finding that says what was not found)`);
+    return { fields, notes };
+  }
+  // How each cited job was run: a command job is the seat's own scanner.
+  const jobs = [...new Set(refs.map((r) => /^job:([a-z0-9-]+)/.exec(r)?.[1]).filter((j): j is string => Boolean(j)))];
+  const kinds = new Map<string, { kind: string; status: string }>();
+  for (const j of jobs) {
+    const job = await readFile(join(sandboxRoot, "store", "jobs", j, "job.json"), "utf8").then((t) => JSON.parse(t) as JobJson).catch(() => null);
+    if (job) kinds.set(j, { kind: String(job.spec?.kind ?? "unknown"), status: String(job.status ?? "unknown") });
+  }
+  const images = refs.filter((r) => /^job:/.test(r) && IMAGE_FILE.test(r));
+  const own = refs.filter((r) => {
+    const j = /^job:([a-z0-9-]+)/.exec(r)?.[1];
+    return Boolean(j) && kinds.get(j as string)?.kind === "command" && !IMAGE_FILE.test(r);
+  });
+  const reported = jobs.some((j) => (kinds.get(j)?.kind === "tool" || kinds.get(j)?.kind === "recipe") && kinds.get(j)?.status === "ok");
+  if (own.length && !reported && !controls.length && searchNegative(kind, value) && String(raw.completion ?? "").trim().toLowerCase() !== "failed") {
+    D.need(
+      "control",
+      `this ${kind === "absence" ? "absence" : "negative finding"} rests on your own scanner (${own.slice(0, 4).join(", ")}${own.length > 4 ? ", …" : ""}: the output of a command job, not of a pack tool that reports what it covered), and a search that could not have matched reads the same as one that found nothing: name its control in control: {ref: "job:<id>/stdout.log", found: "<what it found>"}, a job in which the same scanner, with the same pattern and layout, found a planted or known value (plant one in a copy and run it, or run it over a file known to hold one). Without a control, record what the scan did as a finding that says only what was run, or as a limitation`,
+    );
+  }
+  // The pictures: the sheets beside each cited image, and which of them the recorder was handed.
+  if (images.length || given(raw.images_read)) {
+    const reads = await imageReads(sandboxRoot);
+    const { readManifest, storePaths } = await import("../scripts/evidence-store.ts");
+    const P = storePaths(sandboxRoot);
+    const said = listOf(raw.images_read as string[] | string | undefined).filter((r) => /^job:/.test(r));
+    const sawIt = (r: string) => reads.get(r)?.has(agentId) === true;
+    const unread: NonNullable<NegativeFields["images_unread"]> = [];
+    const seen = new Set<string>([...images, ...said].filter(sawIt));
+    const dirs = new Set(images.map((r) => r.slice(0, r.lastIndexOf("/"))));
+    for (const d of dirs) {
+      const m = /^job:([a-z0-9-]+)(?:\/(.*))?$/.exec(d);
+      if (!m) continue;
+      const found = await readManifest(join(P.jobs, m[1]!, "manifest.json")).catch(() => null);
+      const under = (found?.manifest.files ?? []).map((f) => f.path).filter((f) => IMAGE_FILE.test(f) && f.slice(0, Math.max(0, f.lastIndexOf("/"))) === (m[2] ?? ""));
+      for (const f of under) if (sawIt(`job:${m[1]}/${f}`)) seen.add(`job:${m[1]}/${f}`);
+      const left = under.filter((f) => !sawIt(`job:${m[1]}/${f}`));
+      if (left.length && under.length > 1) unread.push({ job: m[1]!, dir: m[2] ?? "", total: under.length, unread: left.slice(0, 40) });
+    }
+    if (seen.size) fields.images_read = [...seen].sort().slice(0, 200);
+    const claimed = said.filter((r) => !sawIt(r));
+    if (claimed.length) notes.push(`images_read names ${claimed.join(", ")}, which the trace does not show you were handed by read: left out of images_read (it lists what you read, as the trace has it)`);
+    if (unread.length) {
+      fields.images_unread = unread;
+      notes.push(`a negative about pictures holds for the pictures read, and the trace shows you were not handed ${unread.map((u) => `${u.unread.length} of the ${u.total} images of job:${u.job}${u.dir ? `/${u.dir}` : ""} (${u.unread.slice(0, 12).map((f) => f.slice(f.lastIndexOf("/") + 1)).join(", ")}${u.unread.length > 12 ? ", …" : ""})`).join("; ")}: recorded with them named (images_unread), and an answer that cites this entry is held (negative_images_unread) until you read them and record it again with supersedes`);
+    }
+  }
+  return { fields, notes };
+}
+
+/**
+ * What is wrong with the entries a coverage record names, as the ledger
+ * stands: each of its result_refs that is not there, was corrected, or is
+ * not what a search produces, and the record it corrects. A result that is
+ * an answer is told what the answer itself rests on: a seat that names the
+ * answer means the findings under it.
+ */
+function coverageLedgerDefects(results: readonly string[], supersedes: number | undefined, bySeq: ReadonlyMap<number, LedgerEntry>, replaced: Map<number, number>): string[] {
+  const out: string[] = [];
+  const product = (e: LedgerEntry | undefined) => Boolean(e) && e!.kind !== "answer" && e!.kind !== "coverage";
+  for (const r of results.filter((x) => /^E-\d+$/.test(x))) {
+    const n = Number(r.slice(2));
+    const e = bySeq.get(n);
+    if (!e) out.push(`result_refs names ${r}: there is no entry #${n} in the ledger`);
+    else if (replaced.has(n)) {
+      const now = standingSeq(n, replaced);
+      out.push(`result_refs names ${r}, superseded by #${now}: name the entry that stands${product(bySeq.get(now)) ? ` (E-${now})` : `; E-${now} is ${bySeq.get(now)?.kind === "answer" ? "an answer" : "a coverage record"}, which is not a search's result, so leave ${r} out`}`);
+    } else if (!product(e)) {
+      const under = (e.support ?? []).map((x) => x.seq).filter((x) => product(bySeq.get(x)) && !replaced.has(x));
+      out.push(`result_refs names ${r}, a ${e.kind}: a search's results are what it found or failed to (absences, limitations, findings, events); leave ${r} out${under.length ? `, and name what it rests on if this search produced it (${under.map((x) => `E-${x}`).join(", ")})` : ""}`);
+    }
+  }
+  if (supersedes !== undefined) {
+    const target = bySeq.get(supersedes);
+    const already = replaced.get(supersedes);
+    if (!target) out.push(`supersedes #${supersedes}: there is no entry #${supersedes} in the ledger`);
+    else if (target.kind !== "coverage") out.push(`#${supersedes} is a ${target.kind}: a coverage record corrects a coverage record`);
+    else if (already !== undefined) out.push(`#${supersedes} is already superseded by #${already}: correct #${standingSeq(already, replaced)} instead`);
+  }
+  return out;
+}
+
+/** What is wrong with a link to another entry, as the ledger stands: every reason, for the refusal that names them all. */
+function relDefects(r: { to: number; kind: string }, bySeq: ReadonlyMap<number, LedgerEntry>, replaced: ReadonlyMap<number, number>): string[] {
+  const target = bySeq.get(r.to);
+  if (!target) return [`rel names #${r.to}: there is no entry #${r.to} in the ledger (list them with ledger)`];
+  const out: string[] = [];
+  const standing = replaced.get(r.to);
+  if (r.kind === "duplicates" && standing !== undefined) out.push(`#${r.to} is superseded by #${standing}: a duplicate names the entry that stands, #${standing}`);
+  if (ANSWER_ONLY_REL_KINDS.has(r.kind as (typeof LEDGER_REL_KINDS)[number]) && !(target.kind === "answer" && target.section?.startsWith("question:"))) out.push(`rel ${r.kind} weighs evidence added late against a question's conclusion: its to names that question's answer (E-<seq> of an answer, section question:<n>); #${r.to} is ${target.kind === "answer" ? `the ${target.section}` : `a ${target.kind}`}. Link another entry with supports, contradicts, duplicates or derived_from`);
+  return out;
+}
+
+/** What is wrong with the entry a correction of a fact names, as the ledger stands. */
+function supersedeDefects(supersedes: number, bySeq: ReadonlyMap<number, LedgerEntry>, replaced: ReadonlyMap<number, number>): string[] {
+  const target = bySeq.get(supersedes);
+  if (!target) return [`supersedes #${supersedes}: there is no entry #${supersedes} in the ledger (list them with ledger)`];
+  const already = replaced.get(supersedes);
+  if (already !== undefined) return [`#${supersedes} is already superseded by #${already}: correct #${already} instead, so the corrections stay one line (supersedes=${standingSeq(already, replaced as Map<number, number>)})`];
+  if (target.kind === "answer") return [`#${supersedes} is an answer: an answer is corrected by an answer to the same section (kind=answer, supersedes=${supersedes})`];
+  return [];
+}
+
+/** The fields of a negative an entry carries (negativeBasis), as a correction is compared with what it corrects. */
+function negativeFieldsOf(e: LedgerEntry): NegativeFields {
+  const x = e as LedgerEntry & NegativeFields;
+  return { ...(x.control ? { control: x.control } : {}), ...(x.images_read ? { images_read: x.images_read } : {}), ...(x.images_unread ? { images_unread: x.images_unread } : {}) };
+}
+
+/**
+ * A correction that says what the entry it corrects says, word for word,
+ * with the same confidence, refs and fields: nothing is recorded, the entry
+ * stands as it was, and the reply says so. It was a refusal ("a correction
+ * says what is right now"), and the seat that met it had nothing to fix:
+ * eight calls on the run sf4406b went on it.
+ */
+async function sameAsStanding(ctx: SwarmContext, held: object, target: LedgerEntry, total: number): Promise<LedgerResult> {
+  renderOnceLetGo(held);
+  return { ok: true, entry: target, merged: true, total, note: `#${target.seq} already says this word for word, with the same confidence, refs and fields: nothing was recorded, and #${target.seq} stands as it was (a correction says what is different now)` };
 }
 
 /**
@@ -1015,6 +1703,8 @@ export type AnswerReviewLocator = { ref: string; offset: number; length?: number
 /** How a derived value was derived: the job that derived it, and the objects it read. */
 export type AnswerReviewDerivation = { job: string; inputs: string[] };
 export type AnswerReview = {
+  /** What ties the artefact the answer cites to what the question asks, apart from the value re-deriving (required from the run s01a4f4's review on; absent on a review recorded before). */
+  link?: string;
   reproduced: string;
   read: string;
   parts: AnswerReviewPart[];
@@ -1073,90 +1763,94 @@ export function reviewNamesAlternative(r: AnswerReview | undefined | null): bool
 export const NO_ALTERNATIVE_CAP = "the review names no alternative explanation it weighed with the evidence that rules it out (answer_review.alternatives [{explanation, why, evidence: [E-<seq>]}], each a real explanation, not a placeholder)";
 
 /** An answer review as given: every field said, each bounded (refused past it, never cut). */
-export function checkAnswerReview(raw: unknown): { ok: true; review: AnswerReview } | { ok: false; reason: string } {
+export function checkAnswerReview(raw: unknown): { ok: true; review: AnswerReview } | { ok: false; reason: string; defects?: string[] } {
   const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
-  const shape = "answer_review is {reproduced, read, parts: [{part, established, why}], inference, alternatives: [{explanation, why}], other_family: {checked, text}}";
-  const text = (name: string, v: unknown): { ok: true; value: string } | { ok: false; reason: string } => {
+  // Every defect of the review in one refusal (Defects): on the run sf4406b attest refused 80 of 206 calls, 30 of them for the three fields the form's schema named first.
+  const D = new Defects();
+  const shape = "answer_review is {reproduced, read, link, parts: [{part, established, why}], inference, alternatives: [{explanation, why}], other_family: {checked, text}}";
+  const text = (name: string, v: unknown): { ok: true; value: string } => {
     const t = String(v ?? "").trim();
-    if (!t) return { ok: false, reason: `answer_review.${name} is required (${shape}): say it, or "none" and why` };
-    if (t.length > LEDGER_ACT_MAX_CHARS) return { ok: false, reason: `answer_review.${name} is over ${LEDGER_ACT_MAX_CHARS} characters: say it in fewer; nothing is cut, so a longer text is refused` };
+    if (!t) D.need(name, `answer_review.${name} is required (${shape}): say it, or "none" and why`);
+    else if (t.length > LEDGER_ACT_MAX_CHARS) D.add(`answer_review.${name} is over ${LEDGER_ACT_MAX_CHARS} characters: say it in fewer; nothing is cut, so a longer text is refused`);
     return { ok: true, value: t };
   };
   const reproduced = text("reproduced", r.reproduced);
-  if (!reproduced.ok) return reproduced;
   const read = text("read", r.read);
-  if (!read.ok) return read;
+  // What ties the artefact to the question, apart from the value re-deriving: the open-weight runs recorded 110, 56 and 24 attestations and no dispute while they took decoys (a browser autofill value as "the password noted down", recomputed five times and never asked whose it was).
+  const linkText = String(r.link ?? "").trim();
+  if (!linkText) D.need("link", `answer_review.link is required: what ties the artefact the answer cites to what the question asks, apart from the value re-deriving from it (whose it is, where it sits, when it was written, why this one and not another carrier of the same kind); a value that re-derives from the wrong artefact re-derives all the same`);
+  else if (linkText.length > LEDGER_ACT_MAX_CHARS) D.add(`answer_review.link is over ${LEDGER_ACT_MAX_CHARS} characters: say it in fewer; nothing is cut, so a longer text is refused`);
+  else if (placeholderText(linkText) || /^(?:the )?value (?:re-?derives|matches|was recomputed|reproduces)\b[^,;:]*\.?$/i.test(linkText)) D.add(`answer_review.link says what ties the cited artefact to the question, and ${JSON.stringify(linkText.slice(0, 80))} says only that the value re-derives (or nothing): say whose artefact it is and why it is the one the question asks about`);
   const inference = text("inference", r.inference);
-  if (!inference.ok) return inference;
   // Each alternative weighed, and why the evidence rules it out; a text is still read (an older review, a best candidate's "what else it allows").
   let alternatives: AnswerReview["alternatives"];
   if (Array.isArray(r.alternatives)) {
-    if (!r.alternatives.length) return { ok: false, reason: `answer_review.alternatives lists each alternative explanation you considered and why the evidence rules it out, [{explanation, why}], at least one; if you weighed none, say so in a text and attest best_candidate (${shape})` };
-    if (r.alternatives.length > ANSWER_REVIEW_MAX_ALTERNATIVES) return { ok: false, reason: `answer_review.alternatives lists at most ${ANSWER_REVIEW_MAX_ALTERNATIVES}: keep the ones a reader must weigh` };
+    if (!r.alternatives.length) D.add(`answer_review.alternatives lists each alternative explanation you considered and why the evidence rules it out, [{explanation, why}], at least one; if you weighed none, say so in a text and attest best_candidate (${shape})`);
+    if (r.alternatives.length > ANSWER_REVIEW_MAX_ALTERNATIVES) D.add(`answer_review.alternatives lists at most ${ANSWER_REVIEW_MAX_ALTERNATIVES}: keep the ones a reader must weigh`);
     const list: AnswerReviewAlternative[] = [];
     for (const x of r.alternatives) {
       const o = (x && typeof x === "object" ? x : {}) as Record<string, unknown>;
       const explanation = text("alternatives[].explanation", o.explanation);
-      if (!explanation.ok) return explanation;
       const why = text("alternatives[].why", o.why);
-      if (!why.ok) return why;
       // The entries that rule it out, by seq (the attest checks each is in the ledger).
       const ev = (Array.isArray(o.evidence) ? o.evidence : o.evidence === undefined || o.evidence === null ? [] : String(o.evidence).split(/[\s,]+/)).map((v) => String(v).trim()).filter(Boolean).map((v) => (/^#\d+$/.test(v) ? `E-${v.slice(1)}` : /^e-\d+$/i.test(v) ? v.toUpperCase() : v));
       const bad = ev.find((v) => !/^E-[1-9]\d{0,6}$/.test(v));
-      if (bad) return { ok: false, reason: `answer_review.alternatives[].evidence names entries as E-<seq> (got ${JSON.stringify(bad)}): the entries that rule the alternative out` };
-      if (ev.length > LEDGER_MAX_CITATIONS) return { ok: false, reason: `answer_review.alternatives[].evidence names more than ${LEDGER_MAX_CITATIONS} entries` };
-      list.push({ explanation: explanation.value, why: why.value, ...(ev.length ? { evidence: [...new Set(ev)] } : {}) });
+      if (bad) D.add(`answer_review.alternatives[].evidence names entries as E-<seq> (got ${JSON.stringify(bad)}): the entries that rule the alternative out${/^(?:job|input|import|member|sha256):|^j\d{6}/.test(bad) ? `. ${JSON.stringify(bad)} is an object: it goes in the attest's refs (or in discriminator.refs), and here goes the E-<seq> of the entry that says what it shows` : ""}`);
+      if (ev.length > LEDGER_MAX_CITATIONS) D.add(`answer_review.alternatives[].evidence names more than ${LEDGER_MAX_CITATIONS} entries`);
+      const good = ev.filter((v) => /^E-[1-9]\d{0,6}$/.test(v)).slice(0, LEDGER_MAX_CITATIONS);
+      list.push({ explanation: explanation.value, why: why.value, ...(good.length ? { evidence: [...new Set(good)] } : {}) });
     }
     alternatives = list;
   } else {
     const t = text("alternatives", r.alternatives);
-    if (!t.ok) return t;
     alternatives = t.value;
   }
-  if (!Array.isArray(r.parts) || !r.parts.length) return { ok: false, reason: `answer_review.parts names each part the question asks, [{part, established: true|false, why}], at least one (${shape})` };
-  if (r.parts.length > ANSWER_REVIEW_MAX_PARTS) return { ok: false, reason: `answer_review.parts names at most ${ANSWER_REVIEW_MAX_PARTS} parts` };
+  const partRows = Array.isArray(r.parts) ? r.parts : [];
+  if (!partRows.length) D.need("parts", `answer_review.parts names each part the question asks, [{part, established: true|false, why}], at least one (${shape})`);
+  if (partRows.length > ANSWER_REVIEW_MAX_PARTS) D.add(`answer_review.parts names at most ${ANSWER_REVIEW_MAX_PARTS} parts`);
   const parts: AnswerReview["parts"] = [];
-  for (const p of r.parts) {
+  for (const p of partRows.slice(0, ANSWER_REVIEW_MAX_PARTS)) {
     const o = (p && typeof p === "object" ? p : {}) as Record<string, unknown>;
     const part = text("parts[].part", o.part);
-    if (!part.ok) return part;
-    if (typeof o.established !== "boolean") return { ok: false, reason: `answer_review.parts[].established is true or false: whether "${part.value}" is established` };
+    // "true" and "false" as words are the booleans they spell.
+    if (o.established === "true" || o.established === "false") o.established = o.established === "true";
+    if (typeof o.established !== "boolean") D.add(`answer_review.parts[].established is true or false: whether "${part.value}" is established`);
     const why = text("parts[].why", o.why);
-    if (!why.ok) return why;
     // The entry by which a partial answer declares this part open, by seq.
     let declaredOpen: string | undefined;
     if (o.declared_open !== undefined && o.declared_open !== null && String(o.declared_open).trim() !== "") {
       const v = String(o.declared_open).trim();
       const m = /^(?:#|E-)?([1-9]\d{0,6})$/i.exec(v);
-      if (!m) return { ok: false, reason: `answer_review.parts[].declared_open names the entry by which the answer declares "${part.value}" open, as E-<seq> (a limitation or a coverage record the answer cites; got ${JSON.stringify(o.declared_open)})` };
-      declaredOpen = `E-${Number(m[1])}`;
+      if (!m) D.add(`answer_review.parts[].declared_open names the entry by which the answer declares "${part.value}" open, as E-<seq> (a limitation or a coverage record the answer cites; got ${JSON.stringify(o.declared_open)})`);
+      else declaredOpen = `E-${Number(m[1])}`;
     }
     // Against an answer's parts: the id of the part it weighs, or a part the answer leaves out (missing).
     const pid = o.id === undefined || o.id === null || String(o.id).trim() === "" ? undefined : String(o.id).trim();
-    if (pid !== undefined && !PM.PART_ID.test(pid)) return { ok: false, reason: `answer_review.parts[].id names the answer's part by its id (a, b, who; got ${JSON.stringify(o.id)})` };
-    if (o.missing !== undefined && o.missing !== null && typeof o.missing !== "boolean") return { ok: false, reason: "answer_review.parts[].missing is true or false: whether the answer leaves this part of the question out" };
+    if (pid !== undefined && !PM.PART_ID.test(pid)) D.add(`answer_review.parts[].id names the answer's part by its id (a, b, who; got ${JSON.stringify(o.id)})`);
+    if (o.missing !== undefined && o.missing !== null && typeof o.missing !== "boolean") D.add("answer_review.parts[].missing is true or false: whether the answer leaves this part of the question out");
     const missing = o.missing === true;
-    if (missing && o.established) return { ok: false, reason: `answer_review.parts[]: "${part.value}" is missing from the answer, so the answer does not establish it: established false, and say in why what the evidence shows of it` };
-    if (missing && pid !== undefined) return { ok: false, reason: `answer_review.parts[]: "${part.value}" is missing from the answer: it has no id of the answer's (leave id out)` };
-    if (missing && declaredOpen) return { ok: false, reason: `answer_review.parts[]: "${part.value}" is missing from the answer: the answer declares nothing of it open` };
+    if (missing && o.established) D.add(`answer_review.parts[]: "${part.value}" is missing from the answer, so the answer does not establish it: established false, and say in why what the evidence shows of it`);
+    if (missing && pid !== undefined) D.add(`answer_review.parts[]: "${part.value}" is missing from the answer: it has no id of the answer's (leave id out)`);
+    if (missing && declaredOpen) D.add(`answer_review.parts[]: "${part.value}" is missing from the answer: the answer declares nothing of it open`);
     // A part the answer holds that the question does not ask (a limitation, not an open part).
-    if (o.not_asked !== undefined && o.not_asked !== null && typeof o.not_asked !== "boolean") return { ok: false, reason: "answer_review.parts[].not_asked is true or false: whether this part of the answer is outside what the question asks" };
+    if (o.not_asked !== undefined && o.not_asked !== null && typeof o.not_asked !== "boolean") D.add("answer_review.parts[].not_asked is true or false: whether this part of the answer is outside what the question asks");
     const notAsked = o.not_asked === true;
-    if (notAsked && missing) return { ok: false, reason: `answer_review.parts[]: "${part.value}" is either missing (the question asks it and the answer leaves it out) or not_asked (the answer holds it and the question does not ask it), not both` };
-    if (notAsked && o.established) return { ok: false, reason: `answer_review.parts[]: "${part.value}" is not asked by the question, so the review does not weigh it: established false, and say in why why the question does not ask it (detail beyond it, an example category, an exhaustiveness it does not demand)` };
+    if (notAsked && missing) D.add(`answer_review.parts[]: "${part.value}" is either missing (the question asks it and the answer leaves it out) or not_asked (the answer holds it and the question does not ask it), not both`);
+    if (notAsked && o.established) D.add(`answer_review.parts[]: "${part.value}" is not asked by the question, so the review does not weigh it: established false, and say in why why the question does not ask it (detail beyond it, an example category, an exhaustiveness it does not demand)`);
     // A part the answer holds limited, which the review agrees the evidence in scope cannot settle.
-    if (o.at_limit !== undefined && o.at_limit !== null && typeof o.at_limit !== "boolean") return { ok: false, reason: "answer_review.parts[].at_limit is true or false: whether you agree that the evidence in scope cannot settle this part the answer holds limited" };
+    if (o.at_limit !== undefined && o.at_limit !== null && typeof o.at_limit !== "boolean") D.add("answer_review.parts[].at_limit is true or false: whether you agree that the evidence in scope cannot settle this part the answer holds limited");
     const atLimit = o.at_limit === true;
-    if (atLimit && (o.established || missing || notAsked || pid === undefined)) return { ok: false, reason: `answer_review.parts[]: "${part.value}" at_limit agrees with a part the answer holds limited, by its id: established false, with id, and neither missing nor not_asked; say in why what shows the evidence cannot settle it` };
-    parts.push({ ...(pid !== undefined ? { id: pid } : {}), part: part.value, established: o.established, why: why.value, ...(declaredOpen ? { declared_open: declaredOpen } : {}), ...(missing ? { missing: true as const } : {}), ...(notAsked ? { not_asked: true as const } : {}), ...(atLimit ? { at_limit: true as const } : {}) });
+    if (atLimit && (o.established || missing || notAsked || pid === undefined)) D.add(`answer_review.parts[]: "${part.value}" at_limit agrees with a part the answer holds limited, by its id: established false, with id, and neither missing nor not_asked; say in why what shows the evidence cannot settle it`);
+    parts.push({ ...(pid !== undefined ? { id: pid } : {}), part: part.value, established: o.established === true, why: why.value, ...(declaredOpen ? { declared_open: declaredOpen } : {}), ...(missing ? { missing: true as const } : {}), ...(notAsked ? { not_asked: true as const } : {}), ...(atLimit ? { at_limit: true as const } : {}) });
   }
   const f = (r.other_family && typeof r.other_family === "object" ? r.other_family : null) as Record<string, unknown> | null;
-  if (!f || typeof f.checked !== "boolean") return { ok: false, reason: "answer_review.other_family is {checked: true|false, text}: whether a materially different source family was checked, and which, or why not" };
-  const ft = text("other_family.text", f.text);
-  if (!ft.ok) return ft;
+  if (f && (f.checked === "true" || f.checked === "false")) f.checked = f.checked === "true";
+  if (!f || typeof f.checked !== "boolean") D.need("other_family", "answer_review.other_family is {checked: true|false, text}: whether a materially different source family was checked, and which, or why not");
+  const ft = f && typeof f.checked === "boolean" ? text("other_family.text", f.text) : { ok: true as const, value: "" };
   const extra = checkReviewEvidence(r);
-  if (!extra.ok) return extra;
-  return { ok: true, review: { reproduced: reproduced.value, read: read.value, parts, inference: inference.value, alternatives, other_family: { checked: f.checked, text: ft.value }, ...extra.fields } };
+  if (!extra.ok) D.add(extra.reason);
+  if (D.any) return { ok: false, reason: refusalWords("review", { list: D.list, missing: D.missing.map((m) => `answer_review.${m}`) }).replace("A review also needs", "The review also needs"), defects: [...D.list] };
+  return { ok: true, review: { reproduced: reproduced.value, read: read.value, link: linkText, parts, inference: inference.value, alternatives, other_family: { checked: f!.checked as boolean, text: ft.value }, ...(extra.ok ? extra.fields : {}) } };
 }
 
 /** A ref an answer review names as its observation: an entry (E-<seq>, #<seq>), or an object, as given. */
@@ -1591,7 +2285,7 @@ export function answerReviewWords(r: AnswerReview): string {
   const located = r.reproduced_at?.length ? `; read at: ${r.reproduced_at.map((l) => `${l.ref} byte ${l.offset}${l.value !== undefined ? ` ("${l.value}")` : ` (${l.length} bytes)`}`).join("; ")}` : "";
   const derived = r.derivation ? `; derived by job ${r.derivation.job} from ${r.derivation.inputs.join(", ")}` : "";
   const premise = r.premise_tested ? `; ${premiseTestWords(r.premise_tested)}` : "";
-  return `reproduced: ${r.reproduced}; only read: ${r.read}; parts: ${r.parts.map((p) => `${p.id ? `${p.id} ` : ""}${p.part} ${p.missing ? "MISSING from the answer" : p.not_asked ? "NOT ASKED by the question (a limitation, not an open part)" : p.at_limit ? "at the limit of the evidence, as the answer holds it" : p.established ? "established" : p.declared_open ? `open, as the answer declares it (${p.declared_open})` : "NOT established"} (${p.why})`).join("; ")}; inference: ${r.inference}; ${alternatives}; another source family ${r.other_family.checked ? "checked" : "not checked"}: ${r.other_family.text}${discriminator}${located}${derived}${premise}`;
+  return `reproduced: ${r.reproduced}; only read: ${r.read}${r.link ? `; what ties it to the question: ${r.link}` : ""}; parts: ${r.parts.map((p) => `${p.id ? `${p.id} ` : ""}${p.part} ${p.missing ? "MISSING from the answer" : p.not_asked ? "NOT ASKED by the question (a limitation, not an open part)" : p.at_limit ? "at the limit of the evidence, as the answer holds it" : p.established ? "established" : p.declared_open ? `open, as the answer declares it (${p.declared_open})` : "NOT established"} (${p.why})`).join("; ")}; inference: ${r.inference}; ${alternatives}; another source family ${r.other_family.checked ? "checked" : "not checked"}: ${r.other_family.text}${discriminator}${located}${derived}${premise}`;
 }
 
 /** Whether an attestation holds its answer established: a best candidate does not; a line from before strengths reads as it always did. */
@@ -1934,7 +2628,7 @@ async function renderLedgerNow(sandboxRoot: string, entries?: LedgerEntry[]): Pr
       const neg = r && NB.NEGATIVE_RESULTS.has(r) && e.section?.startsWith("question:") ? negativeReview(e, all, allAttestations) : null;
       const negText = neg ? (neg.reviewed ? ` (negative, reviewed by ${neg.by.join(", ")})` : " **(negative, unreviewed)**") : "";
       lines.push(
-        `- **#${e.seq}** ${e.section}${e.question_rev ? ` (revision ${e.question_rev})` : ""}${e.inconclusive ? " (inconclusive)" : ""}${e.result ? ` (${e.result})` : ""}${e.asserts_absence ? " (asserts absence)" : ""}${negText}: ${e.value}${mark(e)}${e.confidence ? ` _(${e.confidence}${e.confidence_why ? `: ${e.confidence_why}` : ""})_` : ""}${cites("rests on", e.support)}${cites("contrary", e.contrary)}${e.contrary_none_why ? ` — nothing says otherwise: ${e.contrary_none_why}` : ""}${cites("limitations", e.limitations)}${e.qualifies?.length ? ` — qualifies: ${e.qualifies.map((q) => `${q.ref} (${q.why})`).join("; ")}` : ""}${e.alternatives_open ? ` — still open: ${e.alternatives_open}` : ""}${e.would_change ? ` — would change it: ${e.would_change}` : ""}${e.unsupported_tokens?.length ? ` — in none of the cited entries: ${e.unsupported_tokens.join(", ")}` : ""}${p?.length ? ` — **no longer stands on its support: ${p.join("; ")}**` : ""}${e.parts?.length ? ` — parts: ${PM.partsWords(e.parts)}` : ""}${e.premises?.length ? ` — premises: ${PM.citationsWords(e.premises)}` : ""}${e.premise_tested ? ` — ${premiseTestWords(e.premise_tested)}` : ""} — reasoning: ${e.reasoning ?? ""} — by ${e.authors.join(", ")}`,
+        `- **#${e.seq}** ${e.section}${e.question_rev ? ` (revision ${e.question_rev})` : ""}${e.inconclusive ? " (inconclusive)" : ""}${e.result ? ` (${e.result})` : ""}${e.asserts_absence ? " (asserts absence)" : ""}${negText}: ${e.value || "(no value yet)"}${(e as AnswerExtras).qualifier ? ` — qualifier: ${(e as AnswerExtras).qualifier}` : ""}${mark(e)}${e.confidence ? ` _(${e.confidence}${e.confidence_why ? `: ${e.confidence_why}` : ""})_` : ""}${cites("rests on", e.support)}${cites("contrary", e.contrary)}${e.contrary_none_why ? ` — nothing says otherwise: ${e.contrary_none_why}` : ""}${cites("limitations", e.limitations)}${e.qualifies?.length ? ` — qualifies: ${e.qualifies.map((q) => `${q.ref} (${q.why})`).join("; ")}` : ""}${e.alternatives_open ? ` — still open: ${e.alternatives_open}` : ""}${e.would_change ? ` — would change it: ${e.would_change}` : ""}${e.unsupported_tokens?.length ? ` — in none of the cited entries: ${e.unsupported_tokens.join(", ")}` : ""}${p?.length ? ` — **no longer stands on its support: ${p.join("; ")}**` : ""}${e.parts?.length ? ` — parts: ${PM.partsWords(e.parts)}` : ""}${e.premises?.length ? ` — premises: ${PM.citationsWords(e.premises)}` : ""}${e.premise_tested ? ` — ${premiseTestWords(e.premise_tested)}` : ""} — reasoning: ${e.reasoning ?? ""} — by ${e.authors.join(", ")}`,
       );
     }
   }
@@ -1996,6 +2690,10 @@ export function interpretationText(e: LedgerEntry): string {
   if (e.alternatives?.length) parts.push(`alternatives: ${e.alternatives.map((a) => `${a.explanation} (${a.status}: ${a.why}${a.test_refs?.length ? `; tested with ${a.test_refs.join(", ")}` : ""})`).join("; ")}`);
   if (e.alternatives_none_why) parts.push(`no alternative considered: ${e.alternatives_none_why}`);
   if (e.significance) parts.push(`significance: ${e.significance}`);
+  const x = e as LedgerEntry & NegativeFields & { carriers?: CarrierRow[] };
+  if (x.carriers?.length) parts.push(`carriers: ${x.carriers.map((r) => `${r.carrier} (${r.state.replace("_", " ")}: ${r.why})`).join("; ")}`);
+  if (x.control?.length) parts.push(`control: ${x.control.map((c) => `${c.ref} (${c.found})`).join("; ")}`);
+  if (x.images_unread?.length) parts.push(`IMAGES NOT READ: ${x.images_unread.map((u) => `${u.unread.length} of ${u.total} of job:${u.job}${u.dir ? `/${u.dir}` : ""}`).join("; ")}`);
   if (e.qualifies?.length) parts.push(`from a job that did not succeed: ${e.qualifies.map((q) => `${q.ref} (${q.why})`).join("; ")}`);
   if (e.method?.length) parts.push(`made by: ${e.method.map(methodText).join("; ")}`);
   return parts.map((p) => ` — ${p}`).join("");
@@ -2475,6 +3173,36 @@ function actTarget(entries: LedgerEntry[], raw: number | string | undefined, age
 }
 
 /**
+ * The entry an attest names (actTarget), or the entry that stands in its
+ * place when the one named was corrected and every correction kept its
+ * conclusion (sameConclusion: refs, evidence or wording refreshed, nothing
+ * it concludes changed). The reviewer re-derived what the entry says, and
+ * the correction says the same: "attest the entry that stands" cost 25
+ * calls on the run sf4406b, where a coverage record was re-recorded to
+ * name what a sweep found. A correction that changes the conclusion is
+ * still refused, with the entry that stands: what it says now is not what
+ * was reviewed.
+ */
+function attestStanding(entries: LedgerEntry[], raw: number | string | undefined, agentId: string, taken: string[]): { ok: true; entry: LedgerEntry } | { ok: false; reason: string } {
+  const t = actTarget(entries, raw, agentId, "attest");
+  if (t.ok) return t;
+  const n = Number(String(raw ?? "").trim().replace(/^(?:#|E-)/i, ""));
+  const named = entries.find((e) => e.seq === n);
+  const replaced = supersededBy(entries);
+  if (!named || !replaced.has(n)) return t;
+  const bySeq = new Map(entries.map((e) => [e.seq, e]));
+  let at = named;
+  for (let i = 0; i < 1000 && replaced.has(at.seq); i += 1) {
+    const next = bySeq.get(replaced.get(at.seq) as number);
+    if (!next || !sameConclusion(at, next)) return { ok: false, reason: `${t.reason}; #${standingSeq(n, replaced)} concludes something else than #${n} did (its value, result, confidence or what it rests on changed), so read it and attest it as it is now` };
+    at = next;
+  }
+  const now = actTarget(entries, at.seq, agentId, "attest");
+  if (now.ok) taken.push(`#${n} was corrected by #${at.seq}, which concludes the same: your attest is recorded on #${at.seq}, the entry that stands`);
+  return now;
+}
+
+/**
  * Why a review can hold an answer to a question only as a best candidate
  * (B2), each in words: its confidence is medium or low; the review says a
  * part the question asks is not established; or its would_change names a
@@ -2549,39 +3277,49 @@ export async function strengthCaps(sandboxRoot: string, answer: LedgerEntry, rev
 export type AttestResult = LedgerActResult<LedgerAttestation> | { ok: true; line: null; appended: false; note: string; deferred: import("./leads.ts").ReviewDeferral };
 
 export async function attestEntry(ctx: SwarmContext, input: LedgerActInput): Promise<AttestResult> {
-  const how = boundedText("how", input.how, LEDGER_ACT_MAX_CHARS);
-  if (!how.ok) return how;
-  if (!how.value) return { ok: false, reason: "how is required: what you re-derived, from which sealed object (job:<id>/<path>, input:<path>, …), and what you only read" };
-  const refs = listOf(input.refs);
-  if (refs.length > LEDGER_MAX_REFS) return { ok: false, reason: `refs names more than ${LEDGER_MAX_REFS} objects` };
-  if (refs.length) {
-    const checked = await checkRefs(ctx.sandboxRoot, refs);
-    if (!checked.ok) return checked;
-    const use = await materialUseRefusal(ctx.sandboxRoot, refs);
-    if (use) return { ok: false, reason: use };
+  // Everything the call's own fields show is named in one refusal (Defects); what the ledger says of the entry is checked under the lock.
+  const D = new Defects();
+  const how = D.text(boundedText("how", input.how, LEDGER_ACT_MAX_CHARS));
+  if (!how.value) D.need("how", "how is required: what you re-derived, from which sealed object (job:<id>/<path>, input:<path>, …), and what you only read");
+  // The refs as they were plainly meant (meantRef: no out/, no store path), then each that does not resolve.
+  const refs: string[] = [];
+  for (const r of listOf(input.refs)) {
+    const m = await meantRef(ctx.sandboxRoot, r);
+    if (m) D.took(`ref ${JSON.stringify(r)} taken as ${m}: a ref has no out/ and no store path`);
+    if (!refs.includes(m ?? r)) refs.push(m ?? r);
   }
-  const secondWhy = boundedText("second_review_why", input.second_review_why, LEDGER_ACT_MAX_CHARS);
-  if (!secondWhy.ok) return secondWhy;
+  if (refs.length > LEDGER_MAX_REFS) D.add(`refs names more than ${LEDGER_MAX_REFS} objects`);
+  else if (refs.length) {
+    const checked = await checkRefsAll(ctx.sandboxRoot, refs);
+    for (const [i, x] of checked.bad.entries()) D.add(i === checked.bad.length - 1 ? `${x.why}. ${REF_FORMS}` : x.why);
+    const use = checked.bad.length ? null : await materialUseRefusal(ctx.sandboxRoot, refs);
+    if (use) D.add(use);
+  }
+  const secondWhy = D.text(boundedText("second_review_why", input.second_review_why, LEDGER_ACT_MAX_CHARS));
   let review: NB.NegativeReview | null = null;
   if (input.review !== undefined && input.review !== null) {
     const r = NB.checkReview(input.review);
-    if (!r.ok) return r;
-    review = r.review;
+    if (!r.ok) D.add(r.reason);
+    else review = r.review;
   }
-  const strengthText = String(input.strength ?? "").trim().toLowerCase().replace(/-/g, "_");
-  if (strengthText && !(ATTEST_STRENGTHS as readonly string[]).includes(strengthText)) return { ok: false, reason: `strength is established or best_candidate (got ${JSON.stringify(input.strength)})` };
-  const strength = (strengthText || undefined) as AttestStrength | undefined;
+  const strengthText = String(input.strength ?? "").trim().toLowerCase().replace(/[-\s]/g, "_");
+  if (strengthText && !(ATTEST_STRENGTHS as readonly string[]).includes(strengthText)) D.add(`strength is established or best_candidate (got ${JSON.stringify(input.strength)})`);
+  const strength = ((ATTEST_STRENGTHS as readonly string[]).includes(strengthText) ? strengthText : undefined) as AttestStrength | undefined;
   let answerReview: AnswerReview | null = null;
   if (input.answer_review !== undefined && input.answer_review !== null) {
     const r = checkAnswerReview(input.answer_review);
-    if (!r.ok) return r;
-    answerReview = r.review;
+    if (!r.ok) for (const d of r.defects ?? [r.reason]) D.add(d);
+    else answerReview = r.review;
   }
+  if (D.any) return D.withTaken({ ok: false as const, reason: refusalWords("attest", { list: D.list, missing: [] }) });
   // What caps a review at best_candidate is read before the lock: the route
   // plan and the jobs under the question (the lead register), never the
   // answer's words beyond the refs and lead ids its would_change names.
   const pre = await readLedger(ctx.sandboxRoot);
-  const preTarget = actTarget(pre, input.seq, ctx.agentId, "attest");
+  // What was taken as meant (a ref's form, attestStanding, part ids on an answer with no parts): said in the reply.
+  const taken: string[] = [...D.taken];
+  const takenRefs = taken.length;
+  const preTarget = attestStanding(pre, input.seq, ctx.agentId, taken);
   const preAnswer = preTarget.ok && preTarget.entry.kind === "answer" && preTarget.entry.section?.startsWith("question:") && !isNegativeEntry(preTarget.entry) ? preTarget.entry : null;
   const caps = preAnswer ? await strengthCaps(ctx.sandboxRoot, preAnswer, answerReview, pre) : [];
   // The objects a discriminator and a premise test rest on resolve (their entries are checked under the lock, with the alternatives').
@@ -2599,7 +3337,8 @@ export async function attestEntry(ctx: SwarmContext, input: LedgerActInput): Pro
   const reviewed: string[] = [];
   const result = await withTableLockRendered(ctx.sandboxRoot, async (held): Promise<AttestResult> => {
     const entries = await readLedger(ctx.sandboxRoot);
-    const t = actTarget(entries, input.seq, ctx.agentId, "attest");
+    taken.length = takenRefs;
+    const t = attestStanding(entries, input.seq, ctx.agentId, taken);
     if (!t.ok) return t;
     const target = t.entry.hash ?? ledgerHash(t.entry, "genesis");
     // An answer to a question is attested with how strongly the review holds
@@ -2662,7 +3401,16 @@ export async function attestEntry(ctx: SwarmContext, input: LedgerActInput): Pro
       // Against an answer that carries parts (docs/adr/0013, "Claim and open-part rows"): a review part names the row it weighs by its id, and may add a part the answer leaves out (missing). A review part without an id is read as it always was.
       const rows = t.entry.parts ?? [];
       const byId = answerReview.parts.filter((p) => p.id);
-      if (byId.length && !rows.length) return { ok: false, reason: `#${t.entry.seq} carries no parts: answer_review.parts[].id names an answer's part (${byId[0]!.id}), and this answer lists none. Weigh each part the question asks without an id, and a part the answer leaves out with missing: true` };
+      // An id names one of the answer's part rows; on an answer that lists none it names nothing, and the part is weighed as written (25 refusals on the run sf4406b said only "leave the id out").
+      if (byId.length && !rows.length) {
+        taken.push(`#${t.entry.seq} carries no parts, so the ids in answer_review.parts (${byId.map((p) => p.id).join(", ")}) name nothing: each part is weighed as you wrote it, without an id`);
+        for (const p of answerReview.parts) {
+          delete p.id;
+          // at_limit agrees with a row by its id: without rows there is none to agree with.
+          delete p.at_limit;
+        }
+        byId.length = 0;
+      }
       const stray = byId.find((p) => !rows.some((r) => r.id === p.id));
       if (stray) return { ok: false, reason: `#${t.entry.seq} carries parts ${rows.map((r) => r.id).join(", ")}: answer_review.parts[].id names one of them (got ${stray.id} for "${stray.part}"); a part the answer leaves out is a row of its own, with missing: true and no id` };
       const twice = rows.map((r) => r.id).find((id) => byId.filter((p) => p.id === id).length > 1);
@@ -2768,7 +3516,7 @@ export async function attestEntry(ctx: SwarmContext, input: LedgerActInput): Pro
             : `recorded as a best candidate${caps.length ? ` (${caps.join("; ")})` : ""}: ${holdsNothing}`
           : undefined;
     if (review) for (const a of t.entry.kind === "answer" ? [t.entry] : negativesResting(t.entry, entries)) reviewed.push(`E-${a.seq}`);
-    const said = note || locatorNote ? `${note ?? ""}${locatorNote}`.trim() : undefined;
+    const said = note || locatorNote || taken.length ? [`${note ?? ""}${locatorNote}`.trim(), ...(taken.length ? [`Taken as meant, nothing to change there: ${taken.join("; ")}`] : [])].filter(Boolean).join(". ") : undefined;
     return { ok: true, line, appended: true, ...(said ? { note: said } : {}) };
   });
   // Outside the ledger's lock (the registers' is taken after it, never inside): the review's offer, when it was this seat's, is taken up.
@@ -2968,7 +3716,7 @@ export async function disputeEntry(ctx: SwarmContext, input: LedgerActInput): Pr
 // --- answers --------------------------------------------------------------------------------
 
 /** The fields an answer never takes: it rests on entries, not objects, and states no event. */
-const NOT_ANSWER_FIELDS = ["ts", "refs", "answers", "rel", "clock", "precision", "basis", "status", "reason", "completion", "attribution", "locators", "indicates", "alternatives", "alternatives_none_why", "significance", ...COVERAGE_ONLY_FIELDS] as const;
+const NOT_ANSWER_FIELDS = ["ts", "refs", "answers", "rel", "clock", "precision", "basis", "status", "reason", "completion", "attribution", "locators", "indicates", "alternatives", "alternatives_none_why", "significance", "carriers", "control", "images_read", ...COVERAGE_ONLY_FIELDS] as const;
 
 /** Each ref of an entry whose job did not succeed and that the entry does not qualify itself. */
 async function unqualifiedFailedRefs(sandboxRoot: string, e: LedgerEntry): Promise<string[]> {
@@ -3255,64 +4003,56 @@ export async function questionBar(sandboxRoot: string, sectionId: string): Promi
  * that nothing examined. A record is about questions: it names them in
  * answers, and an answer cites it.
  */
-async function recordCoverage(ctx: SwarmContext, input: LedgerInput): Promise<LedgerResult> {
+async function recordCoverage(ctx: SwarmContext, input: LedgerInput, D: Defects): Promise<LedgerResult> {
   const raw = input as Record<string, unknown>;
-  const notHere = [...ANSWER_ONLY_FIELDS.filter((f) => f !== "alternatives_open"), "indicates", "alternatives_none_why", "significance", "status", "reason", "completion", "ts", "clock", "precision", "basis", "attribution", "locators"].find((f) => given(raw[f]) && !(f === "alternatives" && typeof raw[f] === "string"));
-  if (notHere) return { ok: false, reason: `${notHere} is not a coverage record's: it says what a search covered, and the entries it rests on say what was found` };
+  const notHere = [...ANSWER_ONLY_FIELDS.filter((f) => f !== "alternatives_open"), "indicates", "alternatives_none_why", "significance", "status", "reason", "completion", "ts", "clock", "precision", "basis", "attribution", "locators", "carriers", "control", "images_read"].filter((f) => given(raw[f]) && !(f === "alternatives" && typeof raw[f] === "string"));
+  if (notHere.length) D.add(`${notHere.join(", ")} ${notHere.length === 1 ? "is" : "are"} not a coverage record's: it says what a search covered, and the entries it rests on say what was found${notHere.length > 1 ? " (leave them out)" : ""}`);
   const proposition = String(input.proposition ?? "").trim();
   const said = String(input.value ?? "").trim();
-  if (proposition && said && proposition !== said) return { ok: false, reason: "value and proposition are the same field on a coverage record (the proposition searched): give one" };
+  if (proposition && said && proposition !== said) D.add("value and proposition are the same field on a coverage record (the proposition searched): give one");
   const value = proposition || said;
-  if (!value) return { ok: false, reason: "proposition (or value) is required: the proposition the search tested, in one sentence (\"the account signed in from outside the office network\")" };
-  if (value.length > LEDGER_VALUE_MAX_CHARS) return { ok: false, reason: `the proposition is over ${LEDGER_VALUE_MAX_CHARS} characters` };
-  const text = (name: string, v: unknown, required = true): { ok: true; value: string } | { ok: false; reason: string } => {
-    const t = boundedText(name, v, NB.COVERAGE_TEXT_MAX);
-    if (!t.ok) return t;
-    if (required && !t.value) return { ok: false, reason: `${name} is required on a coverage record${name === "skipped" || name === "failures" ? ' ("none" when nothing was, with how that is known)' : ""}` };
+  if (!value) D.need("value", "proposition (or value) is required: the proposition the search tested, in one sentence (\"the account signed in from outside the office network\")");
+  if (value.length > LEDGER_VALUE_MAX_CHARS) D.add(`the proposition is over ${LEDGER_VALUE_MAX_CHARS} characters`);
+  const text = (name: string, v: unknown, required = true): { ok: true; value: string } => {
+    const t = D.text(boundedText(name, v, NB.COVERAGE_TEXT_MAX));
+    if (required && !t.value) D.need(name, `${name} is required on a coverage record${name === "skipped" || name === "failures" ? ' ("none" when nothing was, with how that is known)' : ""}`);
     return t;
   };
-  const timeRange = text("time_range", input.time_range);
-  if (!timeRange.ok) return timeRange;
-  const method = text("search_method", input.search_method);
-  if (!method.ok) return method;
-  const settings = text("settings", input.settings);
-  if (!settings.ok) return settings;
-  const actual = text("coverage_actual", input.coverage_actual);
-  if (!actual.ok) return actual;
-  const skipped = text("skipped", input.skipped);
-  if (!skipped.ok) return skipped;
-  const failures = text("failures", input.failures);
-  if (!failures.ok) return failures;
-  const alternatives = text("alternatives", typeof raw.alternatives === "string" ? raw.alternatives : input.alternatives_open);
-  if (!alternatives.ok) return { ok: false, reason: alternatives.reason.replace("alternatives is required", "alternatives is required: the explanations or routes still open, or none and why") };
+  const timeRange = D.text(text("time_range", input.time_range));
+  const method = D.text(text("search_method", input.search_method));
+  const settings = D.text(text("settings", input.settings));
+  const actual = D.text(text("coverage_actual", input.coverage_actual));
+  const skipped = D.text(text("skipped", input.skipped));
+  const failures = D.text(text("failures", input.failures));
+  const alternatives = D.text(boundedText("alternatives", typeof raw.alternatives === "string" ? raw.alternatives : input.alternatives_open, NB.COVERAGE_TEXT_MAX));
+  if (!alternatives.value) D.need("alternatives", "alternatives is required: the explanations or routes still open, or none and why on a coverage record");
   const d = (input.detection_opportunity ?? {}) as { trace_expected?: unknown; why?: unknown };
   const expected = String(d.trace_expected ?? "").trim().toLowerCase();
-  if (!(NB.TRACE_EXPECTED as readonly string[]).includes(expected)) return { ok: false, reason: "detection_opportunity is {trace_expected: yes | no | unknown, why}: would the event have left a trace in these sources, given what was collected and what they keep, and why" };
-  const dWhy = text("detection_opportunity.why", d.why);
-  if (!dWhy.ok) return dWhy;
+  const expectedOk = (NB.TRACE_EXPECTED as readonly string[]).includes(expected);
+  if (!expectedOk) D.need("detection_opportunity", "detection_opportunity is {trace_expected: yes | no | unknown, why}: would the event have left a trace in these sources, given what was collected and what they keep, and why");
+  const dWhy = expectedOk ? text("detection_opportunity.why", d.why) : { ok: true as const, value: "" };
   // The areas the search reached, when it names them: a completeness claim
   // ("every file", "all connections") rests on a record that does.
   let areas: NB.CoverageAreas | undefined;
   if (given(raw.areas)) {
     const a = NB.checkAreas(raw.areas);
-    if (!a.ok) return a;
-    areas = a.areas;
-    if (Object.values(areas).includes("skipped") && /^none\b/i.test(skipped.value)) return { ok: false, reason: `areas says ${NB.COVERAGE_AREAS.filter((k) => areas![k] === "skipped").join(", ")} skipped, and skipped says none: say in skipped what was not searched and why` };
+    if (!a.ok) D.add(a.reason);
+    else areas = a.areas;
+    if (areas && Object.values(areas).includes("skipped") && /^none\b/i.test(skipped.value)) D.add(`areas says ${NB.COVERAGE_AREAS.filter((k) => areas![k] === "skipped").join(", ")} skipped, and skipped says none: say in skipped what was not searched and why`);
   }
   // The ask for a source the evidence does not hold, or why none was opened.
   const askRaw = String(input.acquisition_ask ?? "").trim();
-  const noAsk = text("acquisition_none_why", input.acquisition_none_why, false);
-  if (!noAsk.ok) return noAsk;
-  if (askRaw && noAsk.value) return { ok: false, reason: "acquisition_ask names the ask opened, acquisition_none_why says why none was: give one" };
+  const noAsk = D.text(text("acquisition_none_why", input.acquisition_none_why, false));
+  if (askRaw && noAsk.value) D.add("acquisition_ask names the ask opened, acquisition_none_why says why none was: give one");
   let acquisitionAsk: string | undefined;
   if (askRaw) {
     const m = /^R-?([1-9]\d{0,6})$/i.exec(askRaw);
-    if (!m) return { ok: false, reason: `acquisition_ask names an acquisition request, R-<n> (got ${JSON.stringify(askRaw)}): open one with lead_close needs_operator and ask {kind: acquisition, …}` };
-    acquisitionAsk = `R-${Number(m[1])}`;
+    if (!m) D.add(`acquisition_ask names an acquisition request, R-<n> (got ${JSON.stringify(askRaw)}): open one with lead_close needs_operator and ask {kind: acquisition, …}`);
+    else acquisitionAsk = `R-${Number(m[1])}`;
     const R = await import("./requests.ts");
-    const req = (await R.requestsSnapshot(ctx.sandboxRoot).catch(() => null))?.requests.get(acquisitionAsk) ?? null;
-    if (!req) return { ok: false, reason: `acquisition_ask ${acquisitionAsk} is not a request of this run: open it with lead_close needs_operator and ask {kind: acquisition, source, where, expected_value, urgency}` };
-    if (req.kind !== "acquisition") return { ok: false, reason: `acquisition_ask ${acquisitionAsk} is a ${req.kind} request, not an acquisition` };
+    const req = acquisitionAsk ? ((await R.requestsSnapshot(ctx.sandboxRoot).catch(() => null))?.requests.get(acquisitionAsk) ?? null) : null;
+    if (acquisitionAsk && !req) D.add(`acquisition_ask ${acquisitionAsk} is not a request of this run: open it with lead_close needs_operator and ask {kind: acquisition, source, where, expected_value, urgency}`);
+    else if (req && req.kind !== "acquisition") D.add(`acquisition_ask ${acquisitionAsk} is a ${req.kind} request, not an acquisition`);
   }
   // What a hit would contain, were the answer in the evidence: the hub
   // sweeps every output the run holds for it (store-sweep.ts). Or why no
@@ -3320,62 +4060,92 @@ async function recordCoverage(ctx: SwarmContext, input: LedgerInput): Promise<Le
   const SW = await import("./store-sweep.ts");
   const lookedRaw = raw.looked_for;
   const lookedList = (Array.isArray(lookedRaw) ? lookedRaw : given(lookedRaw) ? [lookedRaw] : []).map((t) => String(t ?? "").trim());
-  const lookedNone = text("looked_for_none_why", input.looked_for_none_why, false);
-  if (!lookedNone.ok) return lookedNone;
-  if (lookedList.length && lookedNone.value) return { ok: false, reason: "looked_for names the strings a hit would contain, looked_for_none_why says why there are none: give one" };
+  const lookedNone = D.text(text("looked_for_none_why", input.looked_for_none_why, false));
+  if (lookedList.length && lookedNone.value) D.add("looked_for names the strings a hit would contain, looked_for_none_why says why there are none: give one");
   if (!lookedList.length && !lookedNone.value) {
-    return { ok: false, reason: `looked_for is required on a coverage record: the literal strings a hit would contain if the answer were in the evidence (names, identifiers, addresses, keywords), at least one, each ${SW.SWEEP_TERM_MIN} to ${SW.SWEEP_TERM_MAX} characters; the hub searches every output the run already holds for them (job outputs, imports, tool-output/), not only the objects named here. When no literal form exists, say why in looked_for_none_why` };
+    D.need("looked_for", `looked_for is required on a coverage record: the literal strings a hit would contain if the answer were in the evidence (names, identifiers, addresses, keywords), at least one, each ${SW.SWEEP_TERM_MIN} to ${SW.SWEEP_TERM_MAX} characters; the hub searches every output the run already holds for them (job outputs, imports, tool-output/), not only the objects named here. When no literal form exists, say why in looked_for_none_why`);
   }
   const lookedFor: string[] = [];
   for (const t of lookedList) {
-    if (t.length < SW.SWEEP_TERM_MIN) return { ok: false, reason: `looked_for ${JSON.stringify(t)} is shorter than ${SW.SWEEP_TERM_MIN} characters: a string that short matches everything; name what a hit would contain` };
-    if (t.length > SW.SWEEP_TERM_MAX) return { ok: false, reason: `a looked_for string is over ${SW.SWEEP_TERM_MAX} characters: name the distinctive part a hit would contain; nothing is cut, so a longer one is refused` };
-    if (!lookedFor.some((x) => x.toLowerCase() === t.toLowerCase())) lookedFor.push(t);
+    if (t.length < SW.SWEEP_TERM_MIN) D.add(`looked_for ${JSON.stringify(t)} is shorter than ${SW.SWEEP_TERM_MIN} characters: a string that short matches everything; name what a hit would contain`);
+    else if (t.length > SW.SWEEP_TERM_MAX) D.add(`a looked_for string is over ${SW.SWEEP_TERM_MAX} characters: name the distinctive part a hit would contain; nothing is cut, so a longer one is refused`);
+    else if (!lookedFor.some((x) => x.toLowerCase() === t.toLowerCase())) lookedFor.push(t);
   }
-  if (lookedFor.length > SW.SWEEP_MAX_TERMS) return { ok: false, reason: `looked_for names more than ${SW.SWEEP_MAX_TERMS} strings: keep the ones a hit would contain` };
-  const source = boundedText("source", input.source, LEDGER_SOURCE_MAX_CHARS);
-  if (!source.ok) return source;
-  const evidence = boundedText("evidence", input.evidence, LEDGER_EVIDENCE_MAX_CHARS);
-  if (!evidence.ok) return evidence;
+  if (lookedFor.length > SW.SWEEP_MAX_TERMS) D.add(`looked_for names more than ${SW.SWEEP_MAX_TERMS} strings: keep the ones a hit would contain`);
+  const source = D.text(boundedText("source", input.source, LEDGER_SOURCE_MAX_CHARS));
+  const evidence = D.text(boundedText("evidence", input.evidence, LEDGER_EVIDENCE_MAX_CHARS));
   const answers = listOf(input.answers);
-  if (!answers.length) return { ok: false, reason: 'answers is required on a coverage record: the questions its search was for ("3", "Q-19")' };
-  if (answers.length > LEDGER_MAX_ANSWERS) return { ok: false, reason: `answers names more than ${LEDGER_MAX_ANSWERS} sections` };
+  if (!answers.length) D.need("answers", 'answers is required on a coverage record: the questions its search was for ("3", "Q-19")');
+  if (answers.length > LEDGER_MAX_ANSWERS) D.add(`answers names more than ${LEDGER_MAX_ANSWERS} sections`);
   const badAnswer = answers.find((a) => !LEDGER_ANSWER_ID.test(a));
-  if (badAnswer) return { ok: false, reason: `answers takes the questions' section ids (got ${JSON.stringify(badAnswer)})` };
+  if (badAnswer) D.add(`answers takes the questions' section ids (got ${JSON.stringify(badAnswer)})`);
   const objects = [...new Set((Array.isArray(input.refs) ? input.refs.map(String) : String(input.refs ?? "").split(/[\s,]+/)).map((r) => r.trim()).filter(Boolean))];
-  if (!objects.length) return { ok: false, reason: "refs is required on a coverage record: the objects the search was over (input:<path>, member:<gen>#<n>, job:<id>/<path>, …); the hub holds the jobs behind it to them" };
-  if (objects.length > LEDGER_MAX_REFS) return { ok: false, reason: `refs names more than ${LEDGER_MAX_REFS} objects: name the directory or the container that holds them` };
+  if (!objects.length) D.need("refs", "refs is required on a coverage record: the objects the search was over (input:<path>, member:<gen>#<n>, job:<id>/<path>, …); the hub holds the jobs behind it to them");
+  if (objects.length > LEDGER_MAX_REFS) D.add(`refs names more than ${LEDGER_MAX_REFS} objects: name the directory or the container that holds them`);
   // Each object resolves, or is a directory of the run's objects (the evidence
   // directory, a job's whole output, a generation) as the job scopes take it.
-  for (const obj of objects) {
-    const checked = await checkRefs(ctx.sandboxRoot, [obj]);
-    if (checked.ok) continue;
+  const badObjects: string[] = [];
+  for (const obj of objects.slice(0, LEDGER_MAX_REFS)) {
+    const checked = await checkRefsAll(ctx.sandboxRoot, [obj]);
+    if (!checked.bad.length) continue;
     const dir = await NB.coverageDirectory(ctx.sandboxRoot, obj);
-    if (!dir.ok) return checked;
+    if (!dir.ok) badObjects.push(checked.bad[0]!.why);
   }
-  const results = [...new Set((Array.isArray(input.result_refs) ? input.result_refs.map(String) : String(input.result_refs ?? "").split(/[\s,]+/)).map((r) => r.trim()).filter(Boolean))].map((r) => (/^#\d+$/.test(r) ? `E-${r.slice(1)}` : /^e-\d+$/i.test(r) ? r.toUpperCase() : r));
-  if (!results.length) return { ok: false, reason: "result_refs is required: what the search produced, the entries (E-<seq>: an absence, a limitation, a finding) and the job outputs (job:<id>[/<path>])" };
-  if (results.length > LEDGER_MAX_CITATIONS) return { ok: false, reason: `result_refs names more than ${LEDGER_MAX_CITATIONS}` };
+  for (const [i, why] of badObjects.entries()) D.add(i === badObjects.length - 1 ? `${why}. ${REF_FORMS}` : why);
+  let results = [...new Set((Array.isArray(input.result_refs) ? input.result_refs.map(String) : String(input.result_refs ?? "").split(/[\s,]+/)).map((r) => r.trim()).filter(Boolean))].map((r) => (/^#\d+$/.test(r) ? `E-${r.slice(1)}` : /^e-\d+$/i.test(r) ? r.toUpperCase() : r));
+  // The results as they were plainly meant: an entry that was corrected is the entry that stands (the only one a record can bind), and an answer or a coverage record among them, which no search produces, is left out when what the search did produce is named beside it. Each is said.
+  {
+    const now = await readLedger(ctx.sandboxRoot, { raw: true });
+    const bySeq = new Map(now.map((e) => [e.seq, e]));
+    const replaced = supersededBy(now);
+    const product = (e: LedgerEntry | undefined) => Boolean(e) && e!.kind !== "answer" && e!.kind !== "coverage";
+    const meant: string[] = [];
+    const notes: string[] = [];
+    for (const r of results) {
+      const n = /^E-(\d+)$/.exec(r) ? Number(r.slice(2)) : null;
+      if (n === null || !bySeq.has(n)) {
+        meant.push(r);
+        continue;
+      }
+      const at = replaced.has(n) ? standingSeq(n, replaced) : n;
+      if (!product(bySeq.get(at))) {
+        notes.push(`result_refs ${r}${at !== n ? `, now E-${at},` : ""} is ${bySeq.get(at)?.kind === "answer" ? "an answer" : "a coverage record"}, which no search produces: left out`);
+        continue;
+      }
+      if (at !== n) notes.push(`result_refs ${r} was corrected by #${at}: taken as E-${at}, the entry that stands (a record binds the results that stand; read E-${at} if you have not)`);
+      if (!meant.includes(`E-${at}`)) meant.push(`E-${at}`);
+    }
+    // Only when something the search produced is left: a record whose every result was an answer is told what a result is.
+    if (meant.length && notes.length) {
+      results = meant;
+      for (const x of notes) D.took(x);
+    }
+  }
+  if (!results.length) D.need("result_refs", "result_refs is required: what the search produced, the entries (E-<seq>: an absence, a limitation, a finding) and the job outputs (job:<id>[/<path>])");
+  if (results.length > LEDGER_MAX_CITATIONS) D.add(`result_refs names more than ${LEDGER_MAX_CITATIONS}`);
   const jobRefs = results.filter((r) => !/^E-\d+$/.test(r));
-  const badResult = jobRefs.find((r) => !/^(job|import|member|sha256|input):/.test(r));
-  if (badResult) return { ok: false, reason: `result_refs names entries as E-<seq> and objects as job:<id>[/<path>] (got ${JSON.stringify(badResult)})` };
-  if (jobRefs.length) {
-    const c = await checkRefs(ctx.sandboxRoot, jobRefs);
-    if (!c.ok) return { ok: false, reason: `result_refs: ${c.reason}` };
-  }
+  const badResults = jobRefs.filter((r) => !/^(job|import|member|sha256|input):/.test(r));
+  if (badResults.length) D.add(`result_refs names entries as E-<seq> and objects as job:<id>[/<path>] (got ${badResults.map((r) => JSON.stringify(r)).join(", ")})`);
+  for (const x of (await checkRefsAll(ctx.sandboxRoot, jobRefs.filter((r) => !badResults.includes(r)))).bad) D.add(`result_refs: ${x.why}`);
   const inventory = await NB.inventoryRevision(ctx.sandboxRoot);
   const givenRev = String(input.inventory_rev ?? "").trim();
-  if (givenRev && givenRev !== inventory) return { ok: false, reason: `inventory_rev ${givenRev} is not the run's inventory now (${inventory}): the evidence changed since the search; leave it out, and the hub writes the one the record is made against` };
+  if (givenRev && givenRev !== inventory) D.add(`inventory_rev ${givenRev} is not the run's inventory now (${inventory}): the evidence changed since the search; leave it out, and the hub writes the one the record is made against`);
   let supersedes: number | undefined;
   if (input.supersedes !== undefined && input.supersedes !== null && String(input.supersedes).trim() !== "") {
     const n = Number(String(input.supersedes).trim().replace(/^#/, ""));
-    if (!Number.isInteger(n) || n < 1) return { ok: false, reason: `supersedes names an entry by its seq, a whole number (got ${JSON.stringify(input.supersedes)})` };
-    supersedes = n;
+    if (!Number.isInteger(n) || n < 1) D.add(`supersedes names an entry by its seq, a whole number (got ${JSON.stringify(input.supersedes)})`);
+    else supersedes = n;
   }
-  const because = boundedText("because", input.because, LEDGER_BECAUSE_MAX_CHARS);
-  if (!because.ok) return because;
-  if (because.value && supersedes === undefined) return { ok: false, reason: "because says why a correction corrects: give supersedes too" };
-  if (input.sensitive !== undefined && input.sensitive !== null && typeof input.sensitive !== "boolean") return { ok: false, reason: "sensitive is true or false" };
+  const because = D.text(boundedText("because", input.because, LEDGER_BECAUSE_MAX_CHARS));
+  if (because.value && supersedes === undefined && !given(input.supersedes)) D.add("because says why a correction corrects: give supersedes too");
+  if (input.sensitive !== undefined && input.sensitive !== null && typeof input.sensitive !== "boolean") D.add("sensitive is true or false");
+  // What the ledger says of the entries it names, read here so that it is named with the rest (the lock checks it again): on the run sf4406b one coverage record met "result_refs names E-255, a answer", "E-254, superseded by #255" and "E-255, a answer" in three calls.
+  {
+    const now = await readLedger(ctx.sandboxRoot, { raw: true });
+    for (const why of coverageLedgerDefects(results, supersedes, new Map(now.map((e) => [e.seq, e])), supersededBy(now))) D.add(why);
+  }
+  const refused = D.refusal("coverage");
+  if (refused) return refused;
   // The planned routes of the questions it is for, and the jobs under them.
   const bars = await Promise.all(answers.map((a) => questionBar(ctx.sandboxRoot, a)));
   const L = await import("./leads.ts");
@@ -3385,20 +4155,8 @@ async function recordCoverage(ctx: SwarmContext, input: LedgerInput): Promise<Le
     const entries = await readLedger(ctx.sandboxRoot);
     const bySeq = new Map(entries.map((e) => [e.seq, e]));
     const replaced = supersededBy(entries);
-    for (const r of results.filter((x) => /^E-\d+$/.test(x))) {
-      const n = Number(r.slice(2));
-      const e = bySeq.get(n);
-      if (!e) return { ok: false, reason: `result_refs names ${r}: there is no entry #${n} in the ledger` };
-      if (replaced.has(n)) return { ok: false, reason: `result_refs names ${r}, superseded by #${standingSeq(n, replaced)}: name the entry that stands` };
-      if (e.kind === "answer" || e.kind === "coverage") return { ok: false, reason: `result_refs names ${r}, a ${e.kind}: a search's results are what it found or failed to (absences, limitations, findings, events)` };
-    }
-    if (supersedes !== undefined) {
-      const target = bySeq.get(supersedes);
-      if (!target) return { ok: false, reason: `supersedes #${supersedes}: there is no entry #${supersedes} in the ledger` };
-      if (target.kind !== "coverage") return { ok: false, reason: `#${supersedes} is a ${target.kind}: a coverage record corrects a coverage record` };
-      const already = replaced.get(supersedes);
-      if (already !== undefined) return { ok: false, reason: `#${supersedes} is already superseded by #${already}: correct #${already} instead` };
-    }
+    const late = coverageLedgerDefects(results, supersedes, bySeq, replaced);
+    if (late.length) return { ok: false, reason: late.join("; "), defects: late };
     const cov = await NB.computeObjectCoverage(ctx.sandboxRoot, { objects, resultRefs: results, entries, interpretations: leads.state.interpretations });
     // The planned routes nothing examined: said on the record, whatever the search found.
     const notExamined: Array<{ source: string; method: string; why: string }> = [];
@@ -3559,93 +4317,261 @@ export function downgradeCheck(earlier: LedgerEntry, evidence: readonly string[]
   return { bearing, not_bearing: notBearing, standing };
 }
 
+/** How many standing entries must cite a finding before it is a premise the run stands on (premisesUnreviewed). */
+export const PREMISE_CITERS_MIN = 5;
+
+/**
+ * The findings a run stands on that nobody checked: a standing finding at
+ * high confidence, recorded by one seat, attested by no other and under no
+ * dispute, that at least PREMISE_CITERS_MIN later standing entries cite (five:
+ * on the five Batman III ledgers read for it most findings are high and
+ * unreviewed, two citers named 26 to 51 of them a run, five names 1 to 13): by
+ * a link (rel supports or derived_from), as support of an answer, among a
+ * coverage record's results, or as E-<seq> in what they say. On the run
+ * s01a4f4 E-81 ("key and nonce are runtime-only values", high, unreviewed)
+ * was cited by eleven entries and fixed the team's search for 115 minutes;
+ * it was wrong in what it ruled out. Refs and links only: nothing here
+ * judges the finding. Read by the gate as a warning (premise_unreviewed),
+ * and exported for the header's review offers.
+ */
+export function premisesUnreviewed(entries: LedgerEntry[], attestations: readonly LedgerAttestation[], disputes: LedgerDispute[] = []): Array<{ entry: LedgerEntry; citers: number[] }> {
+  const replaced = supersededBy(entries);
+  const disputed = new Set(disputesInForce(entries, disputes).map((d) => d.target));
+  const out: Array<{ entry: LedgerEntry; citers: number[] }> = [];
+  const standing = entries.filter((e) => !replaced.has(e.seq));
+  // What each standing entry cites, read once.
+  const cites = new Map<number, Set<number>>();
+  for (const e of standing) {
+    const set = new Set<number>([...(e.rel ?? []).filter((r) => r.kind === "supports" || r.kind === "derived_from").map((r) => r.to), ...(e.support ?? []).map((x) => x.seq), ...(e.result_refs ?? []).filter((r) => /^E-\d+$/.test(r)).map((r) => Number(r.slice(2))), ...answerCitations(`${e.value}\n${e.evidence ?? ""}\n${e.indicates ?? ""}\n${e.source ?? ""}`)]);
+    set.delete(e.seq);
+    cites.set(e.seq, set);
+  }
+  for (const f of standing) {
+    if (f.kind !== "finding" || f.confidence !== "high") continue;
+    const hash = f.hash ?? ledgerHash(f, "genesis");
+    if (disputed.has(hash) || f.authors.some((a) => a !== f.by)) continue;
+    if (attestations.some((a) => a.target === hash && a.by !== f.by)) continue;
+    const citers = standing.filter((e) => e.seq > f.seq && cites.get(e.seq)?.has(f.seq)).map((e) => e.seq);
+    if (citers.length >= PREMISE_CITERS_MIN) out.push({ entry: f, citers });
+  }
+  return out;
+}
+
+/** Whether every correction from `seq` to the entry that stands kept its conclusion (sameConclusion at each step). */
+function sameConclusionChain(seq: number, bySeq: ReadonlyMap<number, LedgerEntry>, replaced: ReadonlyMap<number, number>): boolean {
+  let at = bySeq.get(seq);
+  for (let i = 0; at && i < 1000 && replaced.has(at.seq); i += 1) {
+    const next = bySeq.get(replaced.get(at.seq) as number);
+    if (!next || !sameConclusion(at, next)) return false;
+    at = next;
+  }
+  return Boolean(at);
+}
+
+/** What an answer carries beside the fields protocol-core names: the words that qualify its value, and why a revision changed the value. */
+export type AnswerExtras = { qualifier?: string; value_changed_because?: string };
+
+const CONFIDENCE_RANK: Record<string, number> = { low: 1, medium: 2, high: 3 };
+
+/** The digests a text holds (32 hex digits or more), lower-cased: the candidates a transcription question carries. */
+function digestsOf(text: string): string[] {
+  return [...new Set([...String(text ?? "").matchAll(/(?<![0-9a-f])[0-9a-f]{32,128}(?![0-9a-f])/gi)].map((m) => m[0].toLowerCase()))];
+}
+
+/**
+ * A review changes how sure an answer is, never what it says. On three runs
+ * a right answer in the asked form was replaced by a sentence after its
+ * critic doubted it: on the run s68ce47 E-253, a bare digest, became E-262
+ * "A 22-character overlay is visible. The best-supported no-newline MD5
+ * candidate is …" (established to partial, high to medium), and on the run
+ * s530aa4 E-260, a name and a digest in the asked form, became E-267
+ * "Strongest current candidate: …"; the graded string was gone from the
+ * ledger's value. So, on a question that asks a
+ * format: a revision that lowers the confidence or moves the result off
+ * established, and whose earlier value's first line was in the format, keeps
+ * that first line; the doubt goes in confidence, result, parts and
+ * qualifier. It may change the value only by saying why in
+ * value_changed_because, naming the entry (E-<seq>) that shows the earlier
+ * value wrong. And a candidate is not removed by argument: a digest the
+ * earlier answer held (in value or qualifier) stays in the revision's value
+ * or qualifier unless value_changed_because names the entry that rules it
+ * out (a transcription dispute adds a candidate; a machine check removes
+ * one). Each defect in words; empty when the revision keeps to it.
+ */
+export function reviewValueRule(earlier: LedgerEntry & AnswerExtras, now: { value: string; qualifier: string; confidence: string; result: string; changed: string }, questionWords: string | null, bySeq: ReadonlyMap<number, LedgerEntry>, supersedes: number): string[] {
+  const f = questionWords ? questionFormat(questionWords) : null;
+  if (!f) return [];
+  const was = firstLine(earlier.value);
+  const lowered = (CONFIDENCE_RANK[now.confidence] ?? 0) < (CONFIDENCE_RANK[earlier.confidence ?? ""] ?? 0) || (NB.answerResult(earlier) === "established" && now.result !== "established");
+  const cited = answerCitations(now.changed).filter((n) => n !== supersedes && bySeq.has(n));
+  const out: string[] = [];
+  if (now.changed && !cited.length) out.push(`value_changed_because names the entry that shows the earlier value wrong, as E-<seq> (${answerCitations(now.changed).length ? "the one it names is not in the ledger, or is the answer being revised" : "it names none"}): a doubt alone changes confidence or result, not the value`);
+  if (cited.length) return out;
+  if (lowered && was && f.pattern.test(was) && firstLine(now.value) !== was) {
+    out.push(`this revision lowers ${NB.answerResult(earlier) === "established" && now.result !== "established" ? `the result of #${supersedes} (established to ${now.result || "none"})` : `the confidence of #${supersedes} (${earlier.confidence} to ${now.confidence || "none"})`} and also changes its value, which was in the asked format (${JSON.stringify(was)}): a drop in confidence or a dispute changes confidence, result and parts, never the value. Record it again with value ${JSON.stringify(was)} unchanged and the doubt in qualifier ("best candidate: …; open: …"); if the value itself is wrong, say why in value_changed_because, naming the entry that shows it (E-<seq>)`);
+  }
+  const dropped = digestsOf(`${earlier.value}\n${earlier.qualifier ?? ""}`).filter((d) => !digestsOf(`${now.value}\n${now.qualifier}`).includes(d));
+  if (dropped.length && !out.length) {
+    out.push(`this revision drops ${dropped.length === 1 ? "a candidate" : "candidates"} #${supersedes} held (${dropped.join(", ")}): a dispute about a reading adds a candidate and only a check that rules one out removes it. Keep ${dropped.length === 1 ? "it" : "them"} in qualifier ("candidates: …"), or say in value_changed_because which entry rules ${dropped.length === 1 ? "it" : "them"} out (E-<seq>)`);
+  }
+  return out;
+}
+
+/** "Nothing remains open", as an answer's alternatives_open says it. */
+const NONE_OPEN = /^\s*(?:none\b|nothing\b|no (?:material |other |further |plausible |credible )*(?:candidates?|alternatives?|carriers?|explanations?|rivals?)\b[^.;]*\b(?:remains?|is|are|left)\b|all (?:other )?(?:candidates|alternatives|carriers)\b[^.;]*\b(?:eliminated|excluded|ruled out|decoded|rejected))/i;
+
+/** One row of a finding's carrier table: a place the answer could be carried in, and whether it was decoded. */
+export type CarrierRow = { carrier: string; state: "decoded" | "undecodable" | "not_examined"; why: string };
+export const CARRIER_STATES = ["decoded", "undecodable", "not_examined"] as const;
+export const LEDGER_MAX_CARRIERS = 60;
+
+/**
+ * "No candidate remains open" is held to the carriers the record names.
+ * On the run s530aa4 E-187 chose its answer at high confidence with "No
+ * material candidate remains open" while one carrier of 21 had no decode,
+ * and the open-weight runs took decoys through 110, 56 and 24 attestations
+ * with no dispute. What the registers can tell, and no more: an established
+ * answer that says nothing remains open is refused when a finding it cites
+ * carries a table of carriers with a row not examined, and when it cites
+ * such a table beside a coverage record that names more objects than the
+ * table has rows (a carrier with no row). An answer that cites no table is
+ * not held: nothing on the record says that it chose among carriers (a
+ * first version held every such answer that cited a partial coverage
+ * record, and refused 21 answers the three replayed runs had recorded, none
+ * of them a choice among carriers).
+ */
+export function carriersOpen(alternativesOpen: string, cited: ReadonlyArray<LedgerEntry & { carriers?: CarrierRow[] }>): string[] {
+  if (!NONE_OPEN.test(alternativesOpen)) return [];
+  const out: string[] = [];
+  const tables = cited.filter((e) => e.kind === "finding" && e.carriers?.length);
+  for (const t of tables) {
+    const open = (t.carriers ?? []).filter((r) => r.state === "not_examined");
+    if (open.length) out.push(`alternatives_open says nothing remains open, and E-${t.seq}'s carrier table has ${open.length} not examined (${open.slice(0, 6).map((r) => r.carrier).join(", ")}${open.length > 6 ? ", …" : ""}): examine ${open.length === 1 ? "it" : "them"} and record the table again, or say in alternatives_open which ${open.length === 1 ? "carrier is" : "carriers are"} open`);
+  }
+  if (!tables.length) return out;
+  const rows = Math.max(0, ...tables.map((t) => (t.carriers ?? []).length));
+  for (const c of cited.filter((e) => e.kind === "coverage" && (e.refs?.length ?? 0) > rows)) {
+    out.push(`alternatives_open says nothing remains open, and the coverage record E-${c.seq} names ${c.refs!.length} objects where the carrier table cited has ${rows} ${rows === 1 ? "row" : "rows"}: record the table again with a row for each carrier (carriers [{carrier, state: decoded | undecodable | not_examined, why}]), or say in alternatives_open what is still open`);
+  }
+  return out;
+}
+
 /** Record an answer (recordEntry with kind=answer): its checks need the ledger, so they run under the lock. */
-async function recordAnswer(ctx: SwarmContext, input: LedgerInput): Promise<LedgerResult> {
+async function recordAnswer(ctx: SwarmContext, input: LedgerInput, D: Defects): Promise<LedgerResult> {
   const raw = input as Record<string, unknown>;
-  const wrong = NOT_ANSWER_FIELDS.find((f) => given(raw[f]));
-  if (wrong) return { ok: false, reason: `${wrong} is not an answer's: an answer rests on ledger entries it cites as E-<seq>; record the fact itself as a finding, an event or an indicator first` };
-  const sec = answerSection(String(input.section ?? ""));
-  if (!sec.ok) return sec;
+  const secIn = answerSection(String(input.section ?? ""));
+  if (!secIn.ok) D.need("section", secIn.reason);
+  // Checked on as a question's answer when the section is not readable: the rest of the entry is still named in the one refusal.
+  const sec = secIn.ok ? secIn : { ok: true as const, section: "question:?", id: "?" };
   const question = sec.section.startsWith("question:");
-  const value = String(input.value ?? "").trim();
-  if (!value) return { ok: false, reason: question ? "value is required: the answer itself, as the reader is to be told it" : sec.section === "summary" ? "value is required: the summary a decision maker reads first" : "value is required: what happened, in a paragraph; the whole narrative goes in reasoning" };
-  if (value.length > LEDGER_VALUE_MAX_CHARS) return { ok: false, reason: `value is over ${LEDGER_VALUE_MAX_CHARS} characters: put the rest in reasoning` };
-  const reasoning = boundedText("reasoning", input.reasoning, LEDGER_REASONING_MAX_CHARS);
-  if (!reasoning.ok) return reasoning;
-  if (!reasoning.value) return { ok: false, reason: "reasoning is required: how the cited entries lead to the answer, citing E-<seq> for every claim" };
-  const confidence = String(input.confidence ?? "").trim().toLowerCase();
-  if (confidence && !(LEDGER_CONFIDENCE as readonly string[]).includes(confidence)) return { ok: false, reason: `confidence must be one of ${LEDGER_CONFIDENCE.join(", ")}` };
-  const why = boundedText("confidence_why", input.confidence_why, LEDGER_WHY_MAX_CHARS);
-  if (!why.ok) return why;
-  const openAlt = boundedText("alternatives_open", input.alternatives_open, LEDGER_WHY_MAX_CHARS);
-  if (!openAlt.ok) return openAlt;
-  const change = boundedText("would_change", input.would_change, LEDGER_WHY_MAX_CHARS);
-  if (!change.ok) return change;
+  // answers on an answer that names its own question says nothing the section does not: left out, and said (20 refusals on the run sf4406b were this field).
+  if (given(raw.answers) && secIn.ok && question && listOf(raw.answers as string[] | string).every((a) => sectionKey(a) === sec.id)) {
+    delete raw.answers;
+    D.took(`answers is left out: on an answer the section names the question (${sec.section})`);
+  }
+  // The fields of a fact on an answer: all of them, and the two calls that record what was meant.
+  const wrong = NOT_ANSWER_FIELDS.filter((f) => given(raw[f]));
+  if (wrong.length) {
+    const fact = wrong.some((f) => (COVERAGE_ONLY_FIELDS as readonly string[]).includes(f)) ? "coverage" : wrong.includes("ts") ? "event" : "finding";
+    D.add(
+      `${wrong.join(", ")} ${wrong.length === 1 ? "is" : "are"} not an answer's: an answer rests on ledger entries it cites as E-<seq>; record the fact itself as a finding, an event or an indicator first. Two calls, in this order: (1) record_${fact} (record with kind=${fact}) with the fact and ${wrong.length === 1 ? "that field" : "those fields"}${fact === "finding" ? `, and answers: ["${question && secIn.ok ? sec.id : "<question id>"}"]` : ""}; its reply gives the entry's seq, E-<n>. (2) this answer again without ${wrong.join(", ")}, citing E-<n> in reasoning. If the fact is on the ledger already, send only the second call, citing its E-<seq>`,
+    );
+  }
+  let value = String(input.value ?? "").trim();
+  // The answer in two fields (the run s082123: five right answers out of eleven were sentences in the ledger while the report held the exact strings): value is the asked string, alone, or empty while it is not known; qualifier holds whatever qualifies it (a candidate, what is open, the words around it). The format check reads value only.
+  const qualifier = D.text(boundedText("qualifier", raw.qualifier, LEDGER_VALUE_MAX_CHARS));
+  let resultPeek = String(input.result ?? "").trim().toLowerCase().replace(/-/g, "_");
+  if (input.inconclusive === true && !resultPeek) resultPeek = "not_determinable";
+  if (!value && !(question && qualifier.value && resultPeek && resultPeek !== "established")) {
+    D.need("value", question ? `value is required: the answer itself, as the reader is to be told it${qualifier.value ? " (it may be empty only on an answer that is not established, whose qualifier says what is known and what is open)" : ""}` : sec.section === "summary" ? "value is required: the summary a decision maker reads first" : "value is required: what happened, in a paragraph; the whole narrative goes in reasoning");
+  }
+  if (qualifier.value && !question) D.add("qualifier is a question's answer's: what qualifies the asked string in value (a candidate, the part still open)");
+  if (value.length > LEDGER_VALUE_MAX_CHARS) {
+    D.add(`value is over ${LEDGER_VALUE_MAX_CHARS} characters: put the rest in reasoning`);
+    value = value.slice(0, LEDGER_VALUE_MAX_CHARS);
+  }
+  const reasoning = D.text(boundedText("reasoning", input.reasoning, LEDGER_REASONING_MAX_CHARS));
+  if (!reasoning.value) D.need("reasoning", "reasoning is required: how the cited entries lead to the answer, citing E-<seq> for every claim");
+  let confidence = String(input.confidence ?? "").trim().toLowerCase();
+  if (confidence && !(LEDGER_CONFIDENCE as readonly string[]).includes(confidence)) {
+    D.add(`confidence must be one of ${LEDGER_CONFIDENCE.join(", ")}`);
+    confidence = "";
+  }
+  const why = D.text(boundedText("confidence_why", input.confidence_why, LEDGER_WHY_MAX_CHARS));
+  const openAlt = D.text(boundedText("alternatives_open", input.alternatives_open, LEDGER_WHY_MAX_CHARS));
+  const change = D.text(boundedText("would_change", input.would_change, LEDGER_WHY_MAX_CHARS));
   if (question) {
-    if (!confidence) return { ok: false, reason: "an answer to a question says how sure: confidence high, medium or low, with confidence_why" };
-    if (!why.value) return { ok: false, reason: "confidence_why is required: the quality of the evidence the answer rests on, not a count of it" };
-    if (!openAlt.value) return { ok: false, reason: "alternatives_open is required: what else could still explain it, or that nothing remains open and why" };
-    if (!change.value) return { ok: false, reason: "would_change is required: what evidence would change this answer" };
-  } else if (why.value && !confidence) return { ok: false, reason: "confidence_why says why that confidence: give confidence too" };
-  if (input.inconclusive !== undefined && input.inconclusive !== null && typeof input.inconclusive !== "boolean") return { ok: false, reason: "inconclusive is true or false" };
-  if (input.sensitive !== undefined && input.sensitive !== null && typeof input.sensitive !== "boolean") return { ok: false, reason: "sensitive is true or false" };
-  const contrary = seqList("contrary", input.contrary);
-  if (!contrary.ok) return contrary;
-  const limits = seqList("limitations", input.limitations);
-  if (!limits.ok) return limits;
+    if (!confidence && !given(input.confidence)) D.need("confidence", "an answer to a question says how sure: confidence high, medium or low, with confidence_why");
+    if (!why.value) D.need("confidence_why", "confidence_why is required: the quality of the evidence the answer rests on, not a count of it");
+    if (!openAlt.value) D.need("alternatives_open", "alternatives_open is required: what else could still explain it, or that nothing remains open and why");
+    if (!change.value) D.need("would_change", "would_change is required: what evidence would change this answer");
+  } else if (why.value && !confidence) D.add("confidence_why says why that confidence: give confidence too");
+  if (input.inconclusive !== undefined && input.inconclusive !== null && typeof input.inconclusive !== "boolean") D.add("inconclusive is true or false");
+  if (input.sensitive !== undefined && input.sensitive !== null && typeof input.sensitive !== "boolean") D.add("sensitive is true or false");
+  const contrary = D.seqs(seqList("contrary", input.contrary));
+  const limits = D.seqs(seqList("limitations", input.limitations));
   let resultText = String(input.result ?? "").trim().toLowerCase().replace(/-/g, "_");
-  if (resultText && !(LEDGER_ANSWER_RESULTS as readonly string[]).includes(resultText)) return { ok: false, reason: `result is one of ${LEDGER_ANSWER_RESULTS.join(", ")} (got ${JSON.stringify(input.result)})` };
+  const resultGiven = Boolean(resultText);
+  if (resultText && !(LEDGER_ANSWER_RESULTS as readonly string[]).includes(resultText)) {
+    D.add(`result is one of ${LEDGER_ANSWER_RESULTS.join(", ")} (got ${JSON.stringify(input.result)})`);
+    resultText = "";
+  }
   // The old way of saying it: inconclusive is not_determinable, and is recorded as both.
   if (input.inconclusive === true) {
-    if (resultText && resultText !== "not_determinable") return { ok: false, reason: `inconclusive is the old word for result not_determinable: it cannot come with result ${resultText}` };
+    if (resultText && resultText !== "not_determinable") D.add(`inconclusive is the old word for result not_determinable: it cannot come with result ${resultText}`);
     if (question) resultText = "not_determinable";
   }
-  if (question && !resultText) {
-    return {
-      ok: false,
-      reason:
-        "an answer to a question states its result: established (answered on findings), partial (part of it), bounded_negative (no evidence of it found in a named scope: rests on a coverage record), not_determinable (the evidence cannot settle it: rests on a coverage record too), out_of_scope (the case's evidence cannot bear on it) or premise_not_supported (what it takes for granted does not hold)",
-    };
+  if (question && !resultText && !resultGiven) {
+    D.need(
+      "result",
+      "an answer to a question states its result: established (answered on findings), partial (part of it), bounded_negative (no evidence of it found in a named scope: rests on a coverage record), not_determinable (the evidence cannot settle it: rests on a coverage record too), out_of_scope (the case's evidence cannot bear on it) or premise_not_supported (what it takes for granted does not hold)",
+    );
   }
-  if (input.asserts_absence !== undefined && input.asserts_absence !== null && typeof input.asserts_absence !== "boolean") return { ok: false, reason: "asserts_absence is true or false" };
-  if (input.asserts_absence === true && resultText !== "bounded_negative") return { ok: false, reason: "asserts_absence says the event did not happen: it comes with result bounded_negative, on an existence question whose coverage record is complete and says the event would have left a trace" };
-  const noneWhy = boundedText("contrary_none_why", input.contrary_none_why, LEDGER_WHY_MAX_CHARS);
-  if (!noneWhy.ok) return noneWhy;
-  if (!question && (resultText || noneWhy.value || input.asserts_absence === true)) return { ok: false, reason: "result, asserts_absence and contrary_none_why are a question's answer's" };
+  if (input.asserts_absence !== undefined && input.asserts_absence !== null && typeof input.asserts_absence !== "boolean") D.add("asserts_absence is true or false");
+  if (input.asserts_absence === true && resultText !== "bounded_negative") D.add("asserts_absence says the event did not happen: it comes with result bounded_negative, on an existence question whose coverage record is complete and says the event would have left a trace");
+  const noneWhy = D.text(boundedText("contrary_none_why", input.contrary_none_why, LEDGER_WHY_MAX_CHARS));
+  // result on a summary or a narrative says nothing (only a question's answer has one): left out, and said.
+  if (!question && resultText && !noneWhy.value && input.asserts_absence !== true) {
+    D.took(`result is left out: it is a question's answer's, and this is the ${sec.section}`);
+    resultText = "";
+  }
+  if (!question && (resultText || noneWhy.value || input.asserts_absence === true)) D.add("result, asserts_absence and contrary_none_why are a question's answer's");
   let questionRev: number | undefined;
   if (input.question_rev !== undefined && input.question_rev !== null && String(input.question_rev).trim() !== "") {
     const n = Number(input.question_rev);
-    if (!Number.isInteger(n) || n < 1) return { ok: false, reason: `question_rev is the revision of the question this answers, a whole number (got ${JSON.stringify(input.question_rev)})` };
-    if (!question) return { ok: false, reason: "question_rev is a question's answer's" };
-    questionRev = n;
+    if (!Number.isInteger(n) || n < 1) D.add(`question_rev is the revision of the question this answers, a whole number (got ${JSON.stringify(input.question_rev)})`);
+    else if (!question) D.add("question_rev is a question's answer's");
+    else questionRev = n;
   }
-  if (noneWhy.value && contrary.seqs.length) return { ok: false, reason: "contrary_none_why says no entry says otherwise: give contrary or contrary_none_why, not both" };
+  if (noneWhy.value && contrary.seqs.length) D.add("contrary_none_why says no entry says otherwise: give contrary or contrary_none_why, not both");
   // The claim and open-part rows and the premises it cites (premises.ts):
   // their shape here, what they name in the registers under the locks.
   const partsIn = PM.parseParts(input.parts);
-  if (!partsIn.ok) return partsIn;
+  if (!partsIn.ok) D.add(partsIn.reason);
   const citesIn = PM.parseCitations(input.premises);
-  if (!citesIn.ok) return citesIn;
-  const parts = partsIn.parts;
-  const citations = citesIn.citations;
-  if (!question && (parts.length || citations.length)) return { ok: false, reason: "parts and premises are a question's answer's; a summary or a narrative cites the questions it sums up (Q-<n>)" };
+  if (!citesIn.ok) D.add(citesIn.reason);
+  const parts = partsIn.ok ? partsIn.parts : [];
+  const citations = citesIn.ok ? citesIn.citations : [];
+  if (!question && (parts.length || citations.length)) D.add("parts and premises are a question's answer's; a summary or a narrative cites the questions it sums up (Q-<n>)");
   // The test of what the question presumes (docs/adr/0011, "What a question presumes"): its shape here, its objects now, its entries under the lock.
   let premiseTest: PM.PremiseTest | undefined;
   if (input.premise_tested !== undefined && input.premise_tested !== null && input.premise_tested !== "") {
-    if (!question) return { ok: false, reason: "premise_tested is a question's answer's: the test of what the question presumes" };
+    if (!question) D.add("premise_tested is a question's answer's: the test of what the question presumes");
     const t = checkPremiseTest(input.premise_tested, "premise_tested");
-    if (!t.ok) return t;
-    const objects = t.test.refs.filter((r) => !/^E-\d+$/.test(r));
-    if (objects.length) {
-      const c = await checkRefs(ctx.sandboxRoot, objects);
-      if (!c.ok) return { ok: false, reason: `premise_tested.refs: ${c.reason}` };
+    if (!t.ok) D.add(t.reason);
+    else {
+      const objects = t.test.refs.filter((r) => !/^E-\d+$/.test(r));
+      if (objects.length) {
+        const c = await checkRefs(ctx.sandboxRoot, objects);
+        if (!c.ok) D.add(`premise_tested.refs: ${c.reason}`);
+      }
+      premiseTest = t.test;
     }
-    premiseTest = t.test;
   }
-  if (question && resultText === "partial" && !parts.some((p) => p.status === "open" || p.status === "limited")) return { ok: false, reason: PARTIAL_NEEDS_OPEN_PART };
+  if (question && resultText === "partial" && partsIn.ok && !parts.some((p) => p.status === "open" || p.status === "limited")) D.add(PARTIAL_NEEDS_OPEN_PART);
   const openParts = parts.filter((p) => p.status === "open");
   if (question && resultText === "established" && openParts.length) {
-    return { ok: false, reason: `result established claims every part the question asks, and ${openParts.map((p) => `"${p.id}"`).join(", ")} ${openParts.length === 1 ? "is" : "are"} open: record it partial (its open parts named, each with what bounds it), or establish ${openParts.length === 1 ? "it" : "them"} on the entries that show ${openParts.length === 1 ? "it" : "them"} (status established, refs)` };
+    D.add(`result established claims every part the question asks, and ${openParts.map((p) => `"${p.id}"`).join(", ")} ${openParts.length === 1 ? "is" : "are"} open: record it partial (its open parts named, each with what bounds it), or establish ${openParts.length === 1 ? "it" : "them"} on the entries that show ${openParts.length === 1 ? "it" : "them"} (status established, refs)`);
   }
   // A part at the limit of the evidence is still a part the answer does not
   // establish: it keeps the answer partial, and the report says it is beyond
@@ -3653,64 +4579,65 @@ async function recordAnswer(ctx: SwarmContext, input: LedgerInput): Promise<Ledg
   // limit of the evidence"). It never lifts the label.
   const limitedParts = parts.filter((p) => p.status === "limited");
   if (question && resultText === "established" && limitedParts.length) {
-    return { ok: false, reason: `result established claims every part the question asks, and ${limitedParts.map((p) => `"${p.id}"`).join(", ")} ${limitedParts.length === 1 ? "is" : "are"} at the limit of the evidence: a part the answer does not establish keeps it partial. Record it partial, with ${limitedParts.length === 1 ? "that part" : "those parts"} limited (the report says ${limitedParts.length === 1 ? "it is" : "they are"} beyond the evidence, not open to more work), or establish ${limitedParts.length === 1 ? "it" : "them"} on the entries that show ${limitedParts.length === 1 ? "it" : "them"}` };
+    D.add(`result established claims every part the question asks, and ${limitedParts.map((p) => `"${p.id}"`).join(", ")} ${limitedParts.length === 1 ? "is" : "are"} at the limit of the evidence: a part the answer does not establish keeps it partial. Record it partial, with ${limitedParts.length === 1 ? "that part" : "those parts"} limited (the report says ${limitedParts.length === 1 ? "it is" : "they are"} beyond the evidence, not open to more work), or establish ${limitedParts.length === 1 ? "it" : "them"} on the entries that show ${limitedParts.length === 1 ? "it" : "them"}`);
   }
   // What bounds an open part outside the ledger: an acquisition ask the requests hold, or a route the lead register holds.
   for (const p of openParts) {
     if (p.open_by?.startsWith("R-")) {
       const R = await import("./requests.ts");
       const req = (await R.requestsSnapshot(ctx.sandboxRoot).catch(() => null))?.requests.get(p.open_by);
-      if (!req) return { ok: false, reason: `parts: "${p.id}" is open by ${p.open_by}, which is not a request of this run (swarm.sh requests <run> list; an agent's ask is lead_close needs_operator with ask {kind: acquisition, …})` };
-      if (req.kind !== "acquisition") return { ok: false, reason: `parts: "${p.id}" is open by ${p.open_by}, a ${req.kind} request: an open part is bounded by an acquisition ask (the source that would settle it), a route (L-<n>), or a limitation or a coverage record (E-<seq>)` };
+      if (!req) D.add(`parts: "${p.id}" is open by ${p.open_by}, which is not a request of this run (swarm.sh requests <run> list; an agent's ask is lead_close needs_operator with ask {kind: acquisition, …})`);
+      else if (req.kind !== "acquisition") D.add(`parts: "${p.id}" is open by ${p.open_by}, a ${req.kind} request: an open part is bounded by an acquisition ask (the source that would settle it), a route (L-<n>), or a limitation or a coverage record (E-<seq>)`);
     }
     if (p.open_by?.startsWith("L-")) {
       const L = await import("./leads.ts");
       const l = (await L.leadsSnapshot(ctx.sandboxRoot).catch(() => null))?.state.leads.get(p.open_by);
-      if (!l) return { ok: false, reason: `parts: "${p.id}" is open by ${p.open_by}, which is not in the lead register (leads lists them): name the lead whose route would examine it` };
+      if (!l) D.add(`parts: "${p.id}" is open by ${p.open_by}, which is not in the lead register (leads lists them): name the lead whose route would examine it`);
     }
   }
   // A person's question is a hypothesis to test: its answer names what says
   // otherwise, or says why nothing does (extensions/questions.ts).
-  if (question && !contrary.seqs.length && !noneWhy.value) {
+  if (question && secIn.ok && !contrary.seqs.length && !noneWhy.value) {
     const asker = await personsQuestion(ctx.sandboxRoot, sec.id).catch(() => null);
-    if (asker) return { ok: false, reason: `${sec.section} is ${asker}: a person's question is a proposition to test, never a conclusion to confirm. Name the entries that say otherwise (contrary), or say why none does (contrary_none_why); result premise_not_supported is an answer` };
+    if (asker) D.add(`${sec.section} is ${asker}: a person's question is a proposition to test, never a conclusion to confirm. Name the entries that say otherwise (contrary), or say why none does (contrary_none_why); result premise_not_supported is an answer`);
   }
   const quals: Array<{ seq: number; why: string }> = [];
   for (const q of Array.isArray(input.qualifies) ? input.qualifies : []) {
     const n = Number(String(q?.ref ?? "").trim().replace(/^(?:#|E-)/i, ""));
-    const text = boundedText("a qualifies why", q?.why, LEDGER_WHY_MAX_CHARS);
-    if (!text.ok) return text;
-    if (!Number.isInteger(n) || n < 1 || !text.value) return { ok: false, reason: "an answer's qualifies is [{ref: \"E-<seq>\", why}]: a cited entry that is disputed or rests on a failed job, and why it still supports the answer" };
-    if (!quals.some((x) => x.seq === n)) quals.push({ seq: n, why: text.value });
+    const text = D.text(boundedText("a qualifies why", q?.why, LEDGER_WHY_MAX_CHARS));
+    if (!Number.isInteger(n) || n < 1 || !text.value) D.add(`an answer's qualifies is [{ref: "E-<seq>", why}]: a cited entry that is disputed or rests on a failed job, and why it still supports the answer${/^job:|^j\d{6}/.test(String(q?.ref ?? "").trim()) ? ` (got ${JSON.stringify(q?.ref)}, an object: name the entry that cites it)` : ""}`);
+    else if (!quals.some((x) => x.seq === n)) quals.push({ seq: n, why: text.value });
   }
   let supersedes: number | undefined;
   if (input.supersedes !== undefined && input.supersedes !== null && String(input.supersedes).trim() !== "") {
-    const n = Number(String(input.supersedes).trim().replace(/^#/, ""));
-    if (!Number.isInteger(n) || n < 1) return { ok: false, reason: `supersedes names an entry by its seq, a whole number (got ${JSON.stringify(input.supersedes)})` };
-    supersedes = n;
+    const n = Number(String(input.supersedes).trim().replace(/^(?:#|E-)/i, ""));
+    if (!Number.isInteger(n) || n < 1) D.add(`supersedes names an entry by its seq, a whole number (got ${JSON.stringify(input.supersedes)})`);
+    else supersedes = n;
   }
-  const because = boundedText("because", input.because, LEDGER_BECAUSE_MAX_CHARS);
-  if (!because.ok) return because;
-  if (because.value && supersedes === undefined) return { ok: false, reason: "because says why a correction corrects: give supersedes too" };
+  const because = D.text(boundedText("because", input.because, LEDGER_BECAUSE_MAX_CHARS));
+  // Set when the section is answered already and this names no supersedes: the hub then takes it as the revision of the standing answer (below), so because is in place.
+  if (because.value && supersedes === undefined && !given(input.supersedes) && !question) D.add("because says why a correction corrects: give supersedes too");
+  // Why a revision changes the asked string itself (reviewValueRule): the entry that shows the earlier value wrong.
+  const valueChanged = D.text(boundedText("value_changed_because", raw.value_changed_because, LEDGER_WHY_MAX_CHARS));
   // A downgrade names its counter-evidence (docs/adr/0013, round 13: a
   // correct established answer was walked down to not determinable by a
   // dispute that cited nothing against it).
   let downgrade: { evidence: string[]; why: string } | undefined;
   if (input.downgrade !== undefined && input.downgrade !== null) {
     const shape = "downgrade is {evidence: [E-<seq> or objects], why}: what undermines the earlier answer's chain, and why";
-    if (typeof input.downgrade !== "object" || Array.isArray(input.downgrade)) return { ok: false, reason: shape };
-    const d = input.downgrade as Record<string, unknown>;
-    const dWhy = boundedText("downgrade.why", d.why, LEDGER_WHY_MAX_CHARS);
-    if (!dWhy.ok) return dWhy;
+    const d = (typeof input.downgrade === "object" && !Array.isArray(input.downgrade) ? input.downgrade : {}) as Record<string, unknown>;
+    const dWhy = D.text(boundedText("downgrade.why", d.why, LEDGER_WHY_MAX_CHARS));
     const ev = listOf(d.evidence as string[] | string | undefined).map((r) => (/^#\d+$/.test(r) ? `E-${r.slice(1)}` : /^e-\d+$/i.test(r) ? r.toUpperCase() : r));
-    if (!ev.length || !dWhy.value) return { ok: false, reason: shape };
-    if (ev.length > LEDGER_MAX_CITATIONS) return { ok: false, reason: `downgrade.evidence names more than ${LEDGER_MAX_CITATIONS}` };
-    const objects = ev.filter((r) => !/^E-\d+$/.test(r));
-    if (objects.length) {
-      const c = await checkRefs(ctx.sandboxRoot, objects);
-      if (!c.ok) return { ok: false, reason: `downgrade.evidence: ${c.reason}` };
+    if (!ev.length || !dWhy.value) D.add(shape);
+    else if (ev.length > LEDGER_MAX_CITATIONS) D.add(`downgrade.evidence names more than ${LEDGER_MAX_CITATIONS}`);
+    else {
+      const objects = ev.filter((r) => !/^E-\d+$/.test(r));
+      if (objects.length) {
+        const c = await checkRefs(ctx.sandboxRoot, objects);
+        if (!c.ok) D.add(`downgrade.evidence: ${c.reason}`);
+      }
+      downgrade = { evidence: ev, why: dWhy.value };
     }
-    downgrade = { evidence: ev, why: dWhy.value };
   }
   // The finish phase (extensions/finish.ts): while the coordinator
   // assembles the finish (it holds the lease and the registers are met but
@@ -3720,8 +4647,7 @@ async function recordAnswer(ctx: SwarmContext, input: LedgerInput): Promise<Ledg
   // quietly: on the c10 pilot's tail, answers revised again and again kept
   // re-offering confirmations and making late results, and the finish never
   // closed. The coordinator's own folding is free.
-  const materialWhy = boundedText("material", input.material, LEDGER_WHY_MAX_CHARS);
-  if (!materialWhy.ok) return materialWhy;
+  const materialWhy = D.text(boundedText("material", input.material, LEDGER_WHY_MAX_CHARS));
   if (supersedes !== undefined && !materialWhy.value) {
     const F = await import("./finish.ts");
     const lease = (await F.readFinish(ctx.sandboxRoot).catch(() => null))?.lease ?? null;
@@ -3729,13 +4655,11 @@ async function recordAnswer(ctx: SwarmContext, input: LedgerInput): Promise<Ledg
       return { ok: false, quiet: true, deferred: { coordinator: lease.holder, generation: lease.generation }, reason: `the finish is being assembled by ${lease.holder}; revise only with material: why (what conclusion this revision changes: its result, its value, what it rests on). A rewording or a restatement is not recorded now, and nothing is lost: ${lease.holder} folds what stands into the report` };
     }
   }
-  const source = boundedText("source", input.source, LEDGER_SOURCE_MAX_CHARS);
-  if (!source.ok) return source;
-  const evidence = boundedText("evidence", input.evidence, LEDGER_EVIDENCE_MAX_CHARS);
-  if (!evidence.ok) return evidence;
+  const source = D.text(boundedText("source", input.source, LEDGER_SOURCE_MAX_CHARS));
+  const evidence = D.text(boundedText("evidence", input.evidence, LEDGER_EVIDENCE_MAX_CHARS));
   // The entries its rows name are citations as the text's are: a part's refs and the entry that bounds an open part, a premise citation's refs.
   const rowRefs = [...parts.flatMap((p) => [...(p.refs ?? []), ...(p.open_by?.startsWith("E-") ? [p.open_by] : []), ...(p.limited_by ? [p.limited_by] : [])]), ...citations.flatMap((c) => c.refs ?? []), ...(premiseTest?.refs ?? []).filter((r) => /^E-\d+$/.test(r))].map((r) => Number(r.slice(2)));
-  const cited = [...new Set([...answerCitations(`${value}\n${reasoning.value}`), ...rowRefs])];
+  const cited = [...new Set([...answerCitations(`${value}\n${qualifier.value}\n${reasoning.value}`), ...rowRefs])].filter((n) => Number.isInteger(n) && n > 0);
   const support = cited.filter((n) => !contrary.seqs.includes(n) && !limits.seqs.includes(n));
   // A summary or a narrative cites the questions it sums up symbolically
   // (Q-<n>): bound to each answer's conclusion, not to its seq (A4).
@@ -3743,23 +4667,25 @@ async function recordAnswer(ctx: SwarmContext, input: LedgerInput): Promise<Ledg
   if (!question) {
     for (const name of symbolicQuestions(`${value}\n${reasoning.value}`)) {
       const id = name.startsWith("question:") ? sectionKey(name.slice("question:".length)) : sectionKey(await registerSection(ctx.sandboxRoot, name));
-      if (!LEDGER_ANSWER_ID.test(id)) return { ok: false, reason: `${name} is not a question this run has (questions list names them)` };
-      if (!symbolic.some((x) => x.section === `question:${id}`)) symbolic.push({ q: name, section: `question:${id}` });
+      if (!LEDGER_ANSWER_ID.test(id)) D.add(`${name} is not a question this run has (questions list names them)`);
+      else if (!symbolic.some((x) => x.section === `question:${id}`)) symbolic.push({ q: name, section: `question:${id}` });
     }
   }
-  if (support.length + contrary.seqs.length + limits.seqs.length > LEDGER_MAX_CITATIONS) return { ok: false, reason: `the answer cites more than ${LEDGER_MAX_CITATIONS} entries: cite the ones it rests on` };
+  if (support.length + contrary.seqs.length + limits.seqs.length > LEDGER_MAX_CITATIONS) D.add(`the answer cites more than ${LEDGER_MAX_CITATIONS} entries: cite the ones it rests on`);
   // The negative bar (extensions/negative-bar.ts): what the question is, as the registers say.
-  const bar = question ? await questionBar(ctx.sandboxRoot, sec.id) : null;
+  const bar = question && secIn.ok ? await questionBar(ctx.sandboxRoot, sec.id) : null;
   // What the case policy says of more evidence: under no, an acquisition ask is declined at once, and acquisition_none_why names the policy instead.
   const moreEvidence = question && resultText === "not_determinable" ? await import("./requests.ts").then((R) => R.casePolicyMoreEvidence(ctx.sandboxRoot)).catch(() => "ask" as const) : "ask";
   const negative = NB.NEGATIVE_RESULTS.has(resultText);
-  const absolute = question ? NB.absoluteAbsenceForms(`${value}\n${reasoning.value}`) : [];
+  const absolute = question ? NB.absoluteAbsenceForms(`${value}\n${qualifier.value}\n${reasoning.value}`) : [];
   if (absolute.length && !input.asserts_absence) {
-    return { ok: false, reason: `it is worded as the event's absence (${absolute.map((f) => `"${f}"`).join(", ")}): a negative says "No evidence of <what> was found in <scope>". "It did not happen" is for an existence question whose coverage record is complete and says the event would have left a trace there, recorded with asserts_absence: true` };
+    D.add(`it is worded as the event's absence (${absolute.map((f) => `"${f}"`).join(", ")}): a negative says "No evidence of <what> was found in <scope>". "It did not happen" is for an existence question whose coverage record is complete and says the event would have left a trace there, recorded with asserts_absence: true`);
   }
   if (negative && bar?.material && !bar.routes.length) {
-    return { ok: false, reason: `${sec.section} is a material question with no route plan: a ${NB.resultWords(resultText)} closes against the sources and methods planned before the search. Give the lead under it its routes (lead_link with routes [{source, method}]), then record this again` };
+    D.add(`${sec.section} is a material question with no route plan: a ${NB.resultWords(resultText)} closes against the sources and methods planned before the search. Give the lead under it its routes (lead_link with routes [{source, method}]), then record this again`);
   }
+  // What the registers and the ledger say of it is checked under their locks and collected with the rest. Without a section there is no question to hold it to: what its own fields show is named now.
+  if (!secIn.ok) return D.refusal("answer") as LedgerResult;
   // Which revision of the question it answers, held still while the answer
   // is written: the register's lock (the questions' amendments take it too),
   // then the ledger's. A question amended since the agent read it refuses
@@ -3772,15 +4698,15 @@ async function recordAnswer(ctx: SwarmContext, input: LedgerInput): Promise<Ledg
       const reg = await registerRevision(ctx.sandboxRoot, sec.id).catch(() => null);
       questionWords = reg?.text ?? null;
       if (reg) {
-        if (questionRev !== undefined && questionRev !== reg.rev) return { ok: false as const, reason: `${reg.id} (${sec.section}) is at revision ${reg.rev}, amended since the revision ${questionRev} this answers: read it again (questions show ${reg.id}) and answer revision ${reg.rev}, with question_rev: ${reg.rev}` };
-        if (questionRev === undefined && reg.rev > 1) return { ok: false as const, reason: `${reg.id} (${sec.section}) was amended to revision ${reg.rev}: say which revision this answers (question_rev: ${reg.rev}, after reading it with questions show ${reg.id}); an answer to an earlier revision is stale` };
+        if (questionRev !== undefined && questionRev !== reg.rev) D.add(`${reg.id} (${sec.section}) is at revision ${reg.rev}, amended since the revision ${questionRev} this answers: read it again (questions show ${reg.id}) and answer revision ${reg.rev}, with question_rev: ${reg.rev}`);
+        if (questionRev === undefined && reg.rev > 1) D.add(`${reg.id} (${sec.section}) was amended to revision ${reg.rev}: say which revision this answers (question_rev: ${reg.rev}, after reading it with questions show ${reg.id}); an answer to an earlier revision is stale`);
       }
       // The premises it cites, held still under the same lock (a revision, an admission or a withdrawal takes it too).
       if (citations.length) {
         const Q = await import("./questions.ts");
         premiseReg = (await Q.questionsSnapshot(ctx.sandboxRoot)).state.premises;
         const bad = citationRefusal(citations, premiseReg, reg?.id ?? `question:${sec.id}`);
-        if (bad) return { ok: false as const, reason: bad };
+        if (bad) D.add(bad);
       }
     }
     return withTableLockRendered(ctx.sandboxRoot, async (held) => {
@@ -3790,31 +4716,40 @@ async function recordAnswer(ctx: SwarmContext, input: LedgerInput): Promise<Ledg
       const replaced = supersededBy(entries);
       const hashOf = (e: LedgerEntry) => e.hash ?? ledgerHash(e, "genesis");
       const standing = entries.find((e) => e.kind === "answer" && e.section === sec.section && !replaced.has(e.seq));
+      // The section is answered and this names no entry to correct: when the standing answer is this seat's own, it is the revision of it (57 refusals in eight runs said only "record this with supersedes=<n>").
+      if (supersedes === undefined && standing && !given(input.supersedes) && (standing.by === ctx.agentId || standing.authors.includes(ctx.agentId))) {
+        supersedes = standing.seq;
+        D.took(`${sec.section} is answered by your #${standing.seq} already: taken as its revision (supersedes=${standing.seq})`);
+      }
+      // An answer of this section that was corrected already: the revision is of the one that stands, the only one a revision can name.
+      if (supersedes !== undefined && standing && replaced.has(supersedes) && bySeq.get(supersedes)?.kind === "answer" && bySeq.get(supersedes)?.section === sec.section) {
+        D.took(`#${supersedes} is already superseded: taken as the revision of #${standing.seq}, the answer that stands for ${sec.section} (supersedes=${standing.seq})`);
+        supersedes = standing.seq;
+      }
       if (supersedes !== undefined) {
         const target = bySeq.get(supersedes);
-        if (!target) return { ok: false, reason: `supersedes #${supersedes}: there is no entry #${supersedes} in the ledger (list them with ledger)` };
-        if (target.kind !== "answer") return { ok: false, reason: `#${supersedes} is a ${target.kind}: an answer corrects an answer; correct the ${target.kind} with a ${target.kind}` };
-        if (target.section !== sec.section) return { ok: false, reason: `#${supersedes} answers ${target.section}: an answer corrects the answer to its own section` };
         const already = replaced.get(supersedes);
-        if (already !== undefined) return { ok: false, reason: `#${supersedes} is already superseded by #${already}: correct #${already} instead, so the corrections stay one line` };
+        const now = standing ? ` (the answer that stands for ${sec.section} is #${standing.seq}: supersedes=${standing.seq})` : "";
+        if (!target) D.add(`supersedes #${supersedes}: there is no entry #${supersedes} in the ledger (list them with ledger)${now}`);
+        else if (target.kind !== "answer") D.add(`#${supersedes} is a ${target.kind}: an answer corrects an answer; correct the ${target.kind} with a ${target.kind}${now}`);
+        else if (target.section !== sec.section) D.add(`#${supersedes} answers ${target.section}: an answer corrects the answer to its own section${now}`);
+        else if (already !== undefined) D.add(`#${supersedes} is already superseded by #${already}: correct #${already} instead, so the corrections stay one line${now}`);
+        if (!target || target.kind !== "answer" || target.section !== sec.section || already !== undefined) supersedes = undefined;
       }
       // From a positive result to a negative one: a downgrade, which names what undermines the earlier chain.
       const earlier = supersedes !== undefined ? (bySeq.get(supersedes) as LedgerEntry) : undefined;
       const earlierResult = earlier ? NB.answerResult(earlier) : null;
       const downgrading = Boolean(earlier) && (earlierResult === "established" || earlierResult === "partial") && (resultText === "not_determinable" || resultText === "bounded_negative");
-      if (downgrading && !downgrade) {
-        return {
-          ok: false,
-          reason: `#${supersedes} answered ${sec.section} ${NB.resultWords(earlierResult)}; recording it ${NB.resultWords(resultText)} is a downgrade, and a downgrade names what undermines the earlier chain: downgrade {evidence: [E-<seq> of an entry that bears against it: a finding that contradicts it, a correction of what it rests on, …], why}. A doubt with no counter-evidence is not one: dispute #${supersedes} (why, refs), and if the doubt stands attest it best_candidate or record it again with confidence medium; the answer stays. A part the evidence cannot settle makes an answer partial, never not determinable while the findings it rests on stand`,
-        };
+      if (downgrading && !downgrade && !given(input.downgrade)) {
+        D.add(`#${supersedes} answered ${sec.section} ${NB.resultWords(earlierResult)}; recording it ${NB.resultWords(resultText)} is a downgrade, and a downgrade names what undermines the earlier chain: downgrade {evidence: [E-<seq> of an entry that bears against it: a finding that contradicts it, a correction of what it rests on, …], why}. A doubt with no counter-evidence is not one: dispute #${supersedes} (why, refs), and if the doubt stands attest it best_candidate or record it again with confidence medium; the answer stays. A part the evidence cannot settle makes an answer partial, never not determinable while the findings it rests on stand`);
       }
-      if (downgrade && !downgrading) return { ok: false, reason: `downgrade is for a revision that moves an answer from established or partial to not_determinable or bounded_negative${earlier ? `; #${supersedes} is ${NB.resultWords(earlierResult)} and this is ${NB.resultWords(resultText)}` : "; give supersedes"}` };
+      if (downgrade && !downgrading) D.add(`downgrade is for a revision that moves an answer from established or partial to not_determinable or bounded_negative${earlier ? `; #${supersedes} is ${NB.resultWords(earlierResult)} and this is ${NB.resultWords(resultText)}` : "; give supersedes"}`);
       for (const r of downgrade?.evidence ?? []) {
         if (!/^E-\d+$/.test(r)) continue;
         const n = Number(r.slice(2));
-        if (!bySeq.has(n)) return { ok: false, reason: `downgrade.evidence names ${r}: there is no entry #${n} in the ledger` };
-        if (n === supersedes) return { ok: false, reason: `downgrade.evidence names ${r}, the answer being downgraded: name what undermines it` };
-        if (replaced.has(n)) return { ok: false, reason: `downgrade.evidence names ${r}, superseded by #${standingSeq(n, replaced)}: name the entry that stands` };
+        if (!bySeq.has(n)) D.add(`downgrade.evidence names ${r}: there is no entry #${n} in the ledger`);
+        else if (n === supersedes) D.add(`downgrade.evidence names ${r}, the answer being downgraded: name what undermines it`);
+        else if (replaced.has(n)) D.add(`downgrade.evidence names ${r}, superseded by #${standingSeq(n, replaced)}: name the entry that stands`);
       }
       // The evidence bears against the earlier chain, and no positive finding
       // it rested on still stands (downgradeCheck): a limitation, or the
@@ -3836,7 +4771,7 @@ async function recordAnswer(ctx: SwarmContext, input: LedgerInput): Promise<Ledg
             `#${supersedes} rests on ${s}, recorded for ${sec.section}, which ${one ? "still stands" : "still stand"}: not corrected, under no dispute, contradicted by nothing. Recording ${sec.section} ${NB.resultWords(resultText)} would discard ${one ? "it" : "them"}. Answer partial instead (record it with supersedes=${supersedes}, result partial): state what ${s} establish${one ? "es" : ""}, and name the parts still open, each with what bounds it (parts [{id, part, status: "open", open_by: E-<seq> of its limitation or coverage record, R-<n> or L-<n>}], beside the parts ${s} establish${one ? "es" : ""}, status "established"). If ${one ? "it does" : "one of them does"} not hold, say so first: dispute it (why, refs), correct it (supersedes), or record the finding that contradicts it (rel contradicts), and name that in downgrade.evidence`,
           );
         }
-        if (why.length) return { ok: false, reason: why.join(". ") };
+        if (why.length) D.add(why.join(". "));
       }
       // A summary or a narrative that cites a question's answer by its seq
       // (E-n) is bound to that question instead (question:N): the pilot's
@@ -3866,22 +4801,28 @@ async function recordAnswer(ctx: SwarmContext, input: LedgerInput): Promise<Ledg
         const fallen = answerProblems(entries, disputes);
         for (const x of symbolic) {
           const a = entries.find((e) => e.kind === "answer" && e.section === x.section && !replaced.has(e.seq));
-          if (!a) return { ok: false, reason: `${x.q} (${x.section}) has no standing answer yet: a ${sec.section} cites an answer that stands` };
-          if (fallen.has(a.seq)) return { ok: false, reason: `${x.q}'s answer E-${a.seq} no longer stands on its own support (${(fallen.get(a.seq) as string[]).join("; ")}): it is to be recorded again first` };
+          if (!a) {
+            D.add(`${x.q} (${x.section}) has no standing answer yet: a ${sec.section} cites an answer that stands`);
+            continue;
+          }
+          if (fallen.has(a.seq)) D.add(`${x.q}'s answer E-${a.seq} no longer stands on its own support (${(fallen.get(a.seq) as string[]).join("; ")}): it is to be recorded again first`);
           questionRefs.push({ q: x.q, section: x.section, answer: a.seq, fp: answerFingerprint(a) });
         }
       }
-      for (const n of [...support, ...contrary.seqs, ...limits.seqs]) {
-        if (!bySeq.has(n)) return { ok: false, reason: `E-${n}: there is no entry #${n} in the ledger (list them with ledger)` };
-        if (n === supersedes) return { ok: false, reason: `E-${n} is the answer this one replaces: an answer does not rest on the answer it corrects` };
+      for (const n of new Set([...support, ...contrary.seqs, ...limits.seqs])) {
+        if (!bySeq.has(n)) D.add(`E-${n}: there is no entry #${n} in the ledger (list them with ledger)`);
+        else if (n === supersedes) D.add(`E-${n} is the answer this one replaces: an answer does not rest on the answer it corrects`);
       }
+      // What is not in the ledger is named above and weighed no further: the checks below read the entries that are.
+      for (const list of [support, contrary.seqs, limits.seqs]) for (let i = list.length - 1; i >= 0; i--) if (!bySeq.has(list[i]!)) list.splice(i, 1);
       // An open part is bounded by a limitation (it joins the answer's limitations) or a coverage record, each standing.
       for (const p of parts) {
         if (!p.open_by?.startsWith("E-")) continue;
         const n = Number(p.open_by.slice(2));
-        const b = bySeq.get(n) as LedgerEntry;
-        if (b.kind !== "limitation" && b.kind !== "coverage") return { ok: false, reason: `parts: "${p.id}" is open by ${p.open_by}, a ${b.kind}: an open part is bounded by a limitation (why it could not be established) or a coverage record (what was searched for it) E-<seq>, an acquisition ask R-<n>, or a route L-<n>; a ${b.kind} that bears on it goes in its refs` };
-        if (replaced.has(n)) return { ok: false, reason: `parts: "${p.id}" is open by ${p.open_by}, superseded by #${standingSeq(n, replaced)}: name the one that stands` };
+        const b = bySeq.get(n);
+        if (!b) continue;
+        if (b.kind !== "limitation" && b.kind !== "coverage") D.add(`parts: "${p.id}" is open by ${p.open_by}, a ${b.kind}: an open part is bounded by a limitation (why it could not be established) or a coverage record (what was searched for it) E-<seq>, an acquisition ask R-<n>, or a route L-<n>; a ${b.kind} that bears on it goes in its refs`);
+        if (replaced.has(n)) D.add(`parts: "${p.id}" is open by ${p.open_by}, superseded by #${standingSeq(n, replaced)}: name the one that stands`);
         if (b.kind === "limitation" && !limits.seqs.includes(n)) {
           limits.seqs.push(n);
           const i = support.indexOf(n);
@@ -3894,13 +4835,14 @@ async function recordAnswer(ctx: SwarmContext, input: LedgerInput): Promise<Ledg
       for (const p of parts) {
         if (!p.limited_by) continue;
         const n = Number(p.limited_by.slice(2));
-        const b = bySeq.get(n) as LedgerEntry;
+        const b = bySeq.get(n);
+        if (!b) continue;
         const qid = question ? sec.id : null;
         const forQuestion = (b.answers ?? []).some((x) => qid !== null && sectionKey(x) === qid);
-        if (replaced.has(n)) return { ok: false, reason: `parts: "${p.id}" is limited by ${p.limited_by}, superseded by #${standingSeq(n, replaced)}: name the one that stands` };
-        if (b.kind === "coverage" && !forQuestion) return { ok: false, reason: `parts: "${p.id}" is limited by ${p.limited_by}, a coverage record not recorded for ${sec.section}: a limited part rests on the coverage record for its question (answers=["${qid}"]: what was searched for it, over which objects, what was covered and skipped)` };
-        if (b.kind === "limitation" && b.reason !== "unavailable" && b.reason !== "excluded") return { ok: false, reason: `parts: "${p.id}" is limited by ${p.limited_by}, a limitation whose reason is ${b.reason ?? "not given"}: a part the evidence in scope cannot settle rests on a limitation whose reason is unavailable (the evidence that would settle it was not collected, or no longer exists) or excluded (the case leaves it out). One that was not examined, failed or is partial could still be settled: hold the part open (open_by ${p.limited_by})` };
-        if (b.kind !== "coverage" && b.kind !== "limitation") return { ok: false, reason: `parts: "${p.id}" is limited by ${p.limited_by}, a ${b.kind}: a limited part rests on the coverage record for the question (what was searched for it) or a limitation whose reason is unavailable or excluded; a ${b.kind} that bears on it goes in its refs` };
+        if (replaced.has(n)) D.add(`parts: "${p.id}" is limited by ${p.limited_by}, superseded by #${standingSeq(n, replaced)}: name the one that stands`);
+        if (b.kind === "coverage" && !forQuestion) D.add(`parts: "${p.id}" is limited by ${p.limited_by}, a coverage record not recorded for ${sec.section}: a limited part rests on the coverage record for its question (answers=["${qid}"]: what was searched for it, over which objects, what was covered and skipped)`);
+        if (b.kind === "limitation" && b.reason !== "unavailable" && b.reason !== "excluded") D.add(`parts: "${p.id}" is limited by ${p.limited_by}, a limitation whose reason is ${b.reason ?? "not given"}: a part the evidence in scope cannot settle rests on a limitation whose reason is unavailable (the evidence that would settle it was not collected, or no longer exists) or excluded (the case leaves it out). One that was not examined, failed or is partial could still be settled: hold the part open (open_by ${p.limited_by})`);
+        if (b.kind !== "coverage" && b.kind !== "limitation") D.add(`parts: "${p.id}" is limited by ${p.limited_by}, a ${b.kind}: a limited part rests on the coverage record for the question (what was searched for it) or a limitation whose reason is unavailable or excluded; a ${b.kind} that bears on it goes in its refs`);
         if (b.kind === "limitation" && !limits.seqs.includes(n)) {
           limits.seqs.push(n);
           const i = support.indexOf(n);
@@ -3911,78 +4853,114 @@ async function recordAnswer(ctx: SwarmContext, input: LedgerInput): Promise<Ledg
       const inForce = new Set(disputesInForce(entries, disputes).map((d) => d.target));
       for (const c of citations) {
         if (c.stance !== "supported" || rebuttingRefs(c.refs ?? [], bySeq, replaced, inForce).length) continue;
-        return { ok: false, reason: `premises: ${c.id} is supported: name in its refs the standing finding or event that shows it (E-<seq>, not disputed, not superseded)${c.refs?.length ? `; ${c.refs.join(", ")} ${c.refs.length === 1 ? "is not one" : "are not"}` : ""}. Without one, cite it assumed (a given is not proved again), or unresolved` };
+        D.add(`premises: ${c.id} is supported: name in its refs the standing finding or event that shows it (E-<seq>, not disputed, not superseded)${c.refs?.length ? `; ${c.refs.join(", ")} ${c.refs.length === 1 ? "is not one" : "are not"}` : ""}. Without one, cite it assumed (a given is not proved again), or unresolved`);
       }
       for (const n of limits.seqs) {
         const l = bySeq.get(n) as LedgerEntry;
-        if (l.kind !== "limitation") return { ok: false, reason: `limitations names #${n}, a ${l.kind}: it takes limitation entries` };
-        if (replaced.has(n)) return { ok: false, reason: `limitations names #${n}, superseded by #${standingSeq(n, replaced)}: name the limitation that stands` };
+        if (l.kind !== "limitation") D.add(`limitations names #${n}, a ${l.kind}: it takes limitation entries (leave #${n} out of limitations: an entry cited as E-${n} in reasoning supports the answer as the ${l.kind} it is)`);
+        else if (replaced.has(n)) D.add(`limitations names #${n}, superseded by #${standingSeq(n, replaced)}: name the limitation that stands`);
       }
       // Every claimed support is checked, not one matching citation.
       const disputedBy = new Map<string, DisputeInForce[]>();
       for (const d of disputesInForce(entries, disputes)) disputedBy.set(d.target, [...(disputedBy.get(d.target) ?? []), d]);
       const problems = answerProblems(entries, disputes);
       const needs = new Set<number>();
+      // Superseded cites carried to the entry that stands (below), applied once the loop is over.
+      const carried: Array<[number, number]> = [];
+      // Each cited entry that needs a why and has none: named together, with the qualifies to send.
+      const unqualified: Array<{ n: number; why: string; limitation: boolean }> = [];
       for (const n of support) {
         const e = bySeq.get(n) as LedgerEntry;
         if (replaced.has(n)) {
           const now = standingSeq(n, replaced);
-          if (!cited.includes(now)) return { ok: false, reason: `E-${n} is superseded by #${now}: cite E-${now}, the correction, with it or instead (a superseded entry explains history; it supports nothing)` };
+          if (cited.includes(now)) continue;
+          // Corrected without a change of conclusion (its refs or evidence refreshed, sameConclusion all the way): the answer rests on the entry that stands, and is told. A correction that concludes otherwise is for the author to read.
+          if (sameConclusionChain(n, bySeq, replaced)) {
+            carried.push([n, now]);
+            D.took(`E-${n} was corrected by #${now}, which concludes the same: the answer rests on E-${now}, the entry that stands`);
+          } else D.add(`E-${n} is superseded by #${now}: cite E-${now}, the correction, with it or instead (a superseded entry explains history; it supports nothing); E-${now} concludes something else than E-${n} did, so read it first`);
           continue;
         }
-        if (e.kind === "answer" && problems.has(n)) return { ok: false, reason: `E-${n} is an answer that no longer stands on its own support (${(problems.get(n) as string[]).join("; ")}): it is to be recorded again first` };
+        if (e.kind === "answer" && problems.has(n)) D.add(`E-${n} is an answer that no longer stands on its own support (${(problems.get(n) as string[]).join("; ")}): it is to be recorded again first`);
         const against = disputedBy.get(hashOf(e));
         const failed = failedJobIsDefect("support") ? await unqualifiedFailedRefs(ctx.sandboxRoot, e) : [];
         if (against?.length || failed.length) {
           if (!quals.some((q) => q.seq === n)) {
-            return {
-              ok: false,
-              reason: against?.length
+            unqualified.push({
+              n,
+              limitation: e.kind === "limitation",
+              why: against?.length
                 ? `E-${n} is disputed by ${against.map((d) => `${d.by}: ${d.why}${d.inherited_from !== undefined ? ` (raised on E-${d.inherited_from}, which it corrects: the dispute is open until ${d.by} withdraws it)` : ""}`).join("; ")}; cite its correction, drop it, or say in qualifies [{ref: "E-${n}", why}] why it still supports this answer`
                 : `E-${n} rests on the kept output of a job that did not succeed (${failed.join(", ")}) and does not say why it still holds: say so in qualifies [{ref: "E-${n}", why}], or cite an entry resting on a job that worked`,
-            };
+            });
           }
           needs.add(n);
         }
       }
-      const extra = quals.find((q) => !needs.has(q.seq));
-      if (extra) return { ok: false, reason: `qualifies names E-${extra.seq}, which ${support.includes(extra.seq) ? "is neither disputed nor resting on a failed job" : "the answer does not cite as support"}: it qualifies only a cited entry that needs it` };
+      for (const [from, to] of carried) {
+        const i = support.indexOf(from);
+        if (i >= 0) support.splice(i, 1, ...(support.includes(to) ? [] : [to]));
+      }
+      if (unqualified.length === 1) D.add(`${unqualified[0]!.why}${unqualified[0]!.limitation ? `; or, since E-${unqualified[0]!.n} is a limitation, name it in limitations: [${unqualified[0]!.n}] (what bounds the answer, not what it stands on)` : ""}`);
+      else if (unqualified.length) {
+        const lims = unqualified.filter((u) => u.limitation).map((u) => u.n);
+        D.add(`${unqualified.map((u) => u.why.replace(/; cite its correction, drop it, or say in qualifies .*$|: say so in qualifies .*$/, "")).join("; ")}. Each needs its why: add qualifies: [${unqualified.map((u) => `{ref: "E-${u.n}", why: "<why it still supports this answer>"}`).join(", ")}], or cite its correction or an entry resting on a job that worked${lims.length ? `; a limitation among them (${lims.map((n) => `E-${n}`).join(", ")}) may be named in limitations instead` : ""}`);
+      }
+      // A qualifies on a cited entry that needs none says nothing false: left out and said. One on an entry the answer does not cite is named, with the entries that do need one.
+      for (let i = quals.length - 1; i >= 0; i--) {
+        const q = quals[i]!;
+        if (needs.has(q.seq)) continue;
+        if (support.includes(q.seq)) D.took(`qualifies on E-${q.seq} is left out: it is neither disputed nor resting on a failed job`);
+        else D.add(`qualifies names E-${q.seq}, which the answer does not cite as support: it qualifies only a cited entry that needs it${needs.size ? ` (${[...needs].map((n) => `E-${n}`).join(", ")})` : " (none of the entries it cites does: leave qualifies out)"}`);
+        quals.splice(i, 1);
+      }
       // What the answer stands on: an entry that names its question, or for a
       // summary or a narrative any entry that stands.
       const standingCites = [...support, ...limits.seqs].filter((n) => !replaced.has(n)).map((n) => bySeq.get(n) as LedgerEntry);
       if (question) {
         const id = sectionAnswersId(sec.section);
         const naming = (kinds: string[]) => standingCites.filter((e) => kinds.includes(e.kind) && (e.answers ?? []).some((a) => sectionKey(a) === id));
+        // The entries on the ledger that do name the question, standing and uncited: what the refusal can point at.
+        const forIt = (kinds: string[]) => entries.filter((e) => kinds.includes(e.kind) && !replaced.has(e.seq) && (e.answers ?? []).some((a) => sectionKey(a) === id) && !standingCites.includes(e)).map((e) => `E-${e.seq}`);
+        const hint = (kinds: string[]) => {
+          const there = forIt(kinds);
+          return there.length ? `; the ledger holds ${there.slice(0, 8).join(", ")}${there.length > 8 ? ", …" : ""} recorded for it: cite ${there.length === 1 ? "it" : "the ones this answer rests on"} in reasoning` : `; none is on the ledger yet: record it first (record_finding with answers: ["${id}"]), then this answer citing it`;
+        };
         if (!naming(["finding", "absence", "limitation", "coverage"]).length) {
-          return { ok: false, reason: `an answer to ${sec.section} rests on at least one standing finding, search, limitation or coverage record recorded with answers=["${id}"] and cited as E-<seq>${standingCites.length ? ` (none of ${standingCites.map((e) => `E-${e.seq}`).join(", ")} names it)` : " (the answer cites no standing entry)"}` };
-        }
-        // The result says what the answer rests on: findings for what is established, a coverage record for a material negative.
-        if ((resultText === "established" || resultText === "partial") && !naming(["finding"]).length) {
-          return { ok: false, reason: `a result ${resultText} rests on a standing finding recorded with answers=["${id}"] and cited as E-<seq>; if nothing was found, the result is bounded_negative or not_determinable, resting on a coverage record` };
-        }
-        // A premise is shown not to hold by what was found, never by a search that found nothing.
-        if (resultText === "premise_not_supported" && !naming(["finding"]).length) {
-          return { ok: false, reason: `premise_not_supported rests on a standing finding recorded with answers=["${id}"] that shows the premise does not hold, cited as E-<seq>; a search that found nothing is a bounded_negative (or not_determinable), resting on a coverage record and reviewed by another seat` };
+          D.add(`an answer to ${sec.section} rests on at least one standing finding, search, limitation or coverage record recorded with answers=["${id}"] and cited as E-<seq>${standingCites.length ? ` (none of ${standingCites.map((e) => `E-${e.seq}`).join(", ")} names it)` : " (the answer cites no standing entry)"}${hint(["finding", "absence", "limitation", "coverage"])}`);
+        } else if ((resultText === "established" || resultText === "partial") && !naming(["finding"]).length) {
+          // The result says what the answer rests on: findings for what is established, a coverage record for a material negative.
+          D.add(`a result ${resultText} rests on a standing finding recorded with answers=["${id}"] and cited as E-<seq>; if nothing was found, the result is bounded_negative or not_determinable, resting on a coverage record${hint(["finding"])}`);
+        } else if (resultText === "premise_not_supported" && !naming(["finding"]).length) {
+          // A premise is shown not to hold by what was found, never by a search that found nothing.
+          D.add(`premise_not_supported rests on a standing finding recorded with answers=["${id}"] that shows the premise does not hold, cited as E-<seq>; a search that found nothing is a bounded_negative (or not_determinable), resting on a coverage record and reviewed by another seat`);
         }
         const coverage = naming(["coverage"]);
         if (negative && bar?.material && !coverage.length) {
-          return {
-            ok: false,
-            reason: `a ${NB.resultWords(resultText)} on a material question rests on a coverage record: record kind=coverage with answers=["${id}"] (the proposition searched, the objects in refs, time_range, search_method, settings, coverage_actual, skipped, failures, result_refs, alternatives and detection_opportunity), and cite it as E-<seq>`,
-          };
+          D.add(`a ${NB.resultWords(resultText)} on a material question rests on a coverage record: record kind=coverage with answers=["${id}"] (the proposition searched, the objects in refs, time_range, search_method, settings, coverage_actual, skipped, failures, result_refs, alternatives and detection_opportunity), and cite it as E-<seq>${forIt(["coverage"]).length ? `; the ledger holds ${forIt(["coverage"]).join(", ")} for it` : ""}`);
         }
         if (input.asserts_absence === true) {
           const complete = coverage.filter((c) => c.coverage === "complete" && c.detection_opportunity?.trace_expected === "yes" && !coverageProblems(c, entries, disputes).length);
-          if (!bar?.existence) return { ok: false, reason: `asserts_absence says the event did not happen: only an answer to a question that asks whether something exists may say that (the goal's --existence, or the register's expects existence); ${sec.section} does not. Say "No evidence of … was found in …"` };
-          if (!complete.length) return { ok: false, reason: `asserts_absence says the event did not happen: it rests on a coverage record the hub found complete and that says the event would have left a trace (detection_opportunity.trace_expected yes); ${coverage.length ? coverage.map((c) => `E-${c.seq} is coverage ${c.coverage ?? "unknown"}, trace expected ${c.detection_opportunity?.trace_expected ?? "?"}`).join("; ") : "it cites no coverage record"}. Say "No evidence of … was found in …" instead` };
+          if (!bar?.existence) D.add(`asserts_absence says the event did not happen: only an answer to a question that asks whether something exists may say that (the goal's --existence, or the register's expects existence); ${sec.section} does not. Say "No evidence of … was found in …"`);
+          else if (!complete.length) D.add(`asserts_absence says the event did not happen: it rests on a coverage record the hub found complete and that says the event would have left a trace (detection_opportunity.trace_expected yes); ${coverage.length ? coverage.map((c) => `E-${c.seq} is coverage ${c.coverage ?? "unknown"}, trace expected ${c.detection_opportunity?.trace_expected ?? "?"}`).join("; ") : "it cites no coverage record"}. Say "No evidence of … was found in …" instead`);
         }
       } else if (!standingCites.length && !questionRefs.length) {
-        return { ok: false, reason: `a ${sec.section} cites at least one standing entry as E-<seq>, or the questions it sums up as Q-<n>` };
+        D.add(`a ${sec.section} cites at least one standing entry as E-<seq>, or the questions it sums up as Q-<n>`);
+      }
+      // A review changes how sure an answer is, never what it says (reviewValueRule), and "nothing remains open" is held to the carriers the record names (carriersOpen).
+      const questionFormatWords = question ? questionWords : null;
+      if (question && earlier) for (const why of reviewValueRule(earlier, { value, qualifier: qualifier.value, confidence, result: resultText, changed: valueChanged.value }, questionFormatWords, bySeq, supersedes as number)) D.add(why);
+      if (question && valueChanged.value && !earlier) D.add("value_changed_because says why a revision changes the asked string: it comes with supersedes");
+      if (question && resultText === "established") for (const why of carriersOpen(openAlt.value, standingCites)) D.add(why);
+      // Every defect of the entry, the ones its fields show and the ones the registers and the ledger show, in the one refusal.
+      {
+        const refused = D.refusal("answer");
+        if (refused) return refused;
       }
       const edge = (n: number): LedgerEdge => ({ seq: n, hash: hashOf(bySeq.get(n) as LedgerEntry) });
       const citedEntries = [...support, ...contrary.seqs, ...limits.seqs, ...questionRefs.map((r) => r.answer)].map((n) => bySeq.get(n) as LedgerEntry);
-      const tokens = unsupportedTokens(`${value}\n${reasoning.value}`, citedEntries, bySeq);
-      const candidate: LedgerEntry = {
+      const tokens = unsupportedTokens(`${value}\n${qualifier.value}\n${reasoning.value}`, citedEntries, bySeq);
+      const candidate: LedgerEntry & AnswerExtras = {
         v: LEDGER_VERSION,
         seq: (entries.at(-1)?.seq ?? 0) + 1,
         kind: "answer",
@@ -3994,6 +4972,8 @@ async function recordAnswer(ctx: SwarmContext, input: LedgerInput): Promise<Ledg
         ...(because.value ? { because: because.value } : {}),
         ...(why.value ? { confidence_why: why.value } : {}),
         ...(quals.length ? { qualifies: quals.map((q) => ({ ref: `E-${q.seq}`, why: q.why })) } : {}),
+        ...(qualifier.value ? { qualifier: qualifier.value } : {}),
+        ...(valueChanged.value && supersedes !== undefined ? { value_changed_because: valueChanged.value } : {}),
         section: sec.section,
         reasoning: reasoning.value,
         ...(support.length ? { support: support.map(edge) } : {}),
@@ -4019,20 +4999,33 @@ async function recordAnswer(ctx: SwarmContext, input: LedgerInput): Promise<Ledg
         authors: [ctx.agentId],
         at: new Date().toISOString(),
       };
-      const content = ledgerContent(candidate);
-      if (supersedes !== undefined && ledgerContent(bySeq.get(supersedes) as LedgerEntry) === content) {
-        return { ok: false, reason: `the correction repeats #${supersedes} word for word: a correction says what is right now` };
+      // The whole of what it says: the hashed content, and the qualifier beside the value (protocol-core's content does not hold it yet).
+      const contentOf = (e: LedgerEntry & AnswerExtras) => `${ledgerContent(e)}\n${e.qualifier ?? ""}`;
+      const content = contentOf(candidate);
+      if (supersedes !== undefined && contentOf(bySeq.get(supersedes) as LedgerEntry) === content) {
+        // The same words again from the seat whose answer stands, with no entry named: the answer that stands, as it always was.
+        if (!given(input.supersedes) && standing?.seq === supersedes) {
+          D.taken.splice(0, D.taken.length, ...D.taken.filter((t) => !t.includes("taken as its revision")));
+          return mergeSameContent(ctx, held, standing);
+        }
+        return sameAsStanding(ctx, held, bySeq.get(supersedes) as LedgerEntry, entries.length);
       }
-      if (supersedes === undefined && standing && ledgerContent(standing) === content) return mergeSameContent(ctx, held, standing);
+      if (supersedes === undefined && standing && contentOf(standing) === content) return mergeSameContent(ctx, held, standing);
       if (standing && supersedes !== standing.seq) {
         return { ok: false, reason: `${sec.section} is answered by #${standing.seq} already: one answer stands for a section; to revise it, record this with supersedes=${standing.seq}` };
       }
       const notes: string[] = [];
       if (bound.length) notes.push(`${bound.map((b) => `E-${b.seq} (the answer to ${b.section}${b.standing !== null && b.standing !== b.seq ? `, now E-${b.standing}` : ""})`).join(", ")} ${bound.length === 1 ? "is" : "are"} cited as ${[...new Set(bound.map((b) => b.section))].join(", ")}: a ${sec.section} is bound to the questions it sums up, to each answer's conclusion (its result, the revision it answers, its support and contrary evidence), not to its seq, so a reworded correction of an answer keeps it standing. Cite Q-<n> or question:<n> for an answer in a ${sec.section}`);
-      // The format the question asks for (a "Format:" line), when no line of the value is in it: said, never refused.
-      if (question && questionWords) {
-        const miss = formatMiss(questionWords, value);
-        if (miss) notes.push(formatNote(sec.section, miss));
+      // The format the question asks for (a "Format:" line), read against value's first line: said, never refused.
+      // No asked string exists on an answer that found nothing or cannot say (a negative, not determinable, out of
+      // scope, a premise that does not hold), so none is asked for; an answer with a part open is asked only for the
+      // pieces it has; and a first line an earlier answer to the question already had is not told again (12 notes in
+      // three runs, 8 of them on an answer that could not satisfy them: the open half of question 7, a negative question 11).
+      if (question && questionWords && (resultText === "established" || resultText === "partial")) {
+        const open = resultText === "partial" && parts.some((p) => p.status === "open" || p.status === "limited");
+        const miss = formatMiss(questionWords, value, { open });
+        const first = firstLine(value);
+        if (miss && !entries.some((e) => e.kind === "answer" && e.section === sec.section && firstLine(e.value) === first)) notes.push(formatNote(sec.section, miss));
       }
       if (tokens.length) notes.push(`in none of the cited entries: ${tokens.join(", ")}; cite the entry that holds each, or record how it was derived as its own entry and cite that (marked on the answer; the release counts them)`);
       if (question && resultText !== "not_determinable" && standingCites.every((e) => e.kind === "limitation")) notes.push("it rests on limitations only: if the ledger cannot answer it, say so with result not_determinable, resting on a coverage record");
@@ -4146,7 +5139,7 @@ export function citationRefusal(citations: readonly PM.PremiseCitation[], reg: R
  * the bar, never on a limitation that names it; the release counts it.
  */
 export type LedgerDefect = {
-  code: "no_answer" | "answer_support" | "answer_disputed" | "no_critic_act" | "open_contradiction" | "coverage_missing" | "negative_unreviewed" | "wording" | "coverage_stale" | "material_use" | "partial_output" | "evidence_stale" | "completeness_uncovered" | "sweep_pending" | "sweep_hits" | "sweep_partial" | "preparation_pending" | "premise_inconsistent";
+  code: "no_answer" | "answer_support" | "answer_disputed" | "no_critic_act" | "open_contradiction" | "coverage_missing" | "negative_unreviewed" | "wording" | "coverage_stale" | "material_use" | "partial_output" | "evidence_stale" | "completeness_uncovered" | "sweep_pending" | "sweep_hits" | "sweep_partial" | "preparation_pending" | "premise_inconsistent" | "negative_images_unread";
   section?: string;
   seqs: number[];
   what: string;
@@ -4495,7 +5488,7 @@ export function noMoreEvidenceAskFix(coverage: number[], answer: number): string
  * (docs/adr/0011, "What a question presumes").
  * `seqs` opens with the answer's.
  */
-export type LedgerWarning = { code: "no_acquisition_ask" | "partial_all_parts_established" | "lead_findings_uncited" | "preparation_missing" | "late_evidence_hits" | "premise_disputed" | "premise_revised" | "premise_withdrawn" | "premise_inconsistent" | "part_omitted" | "no_locator_or_derivation" | "premise_untested"; section: string; seqs: number[]; what: string; fix: string };
+export type LedgerWarning = { code: "no_acquisition_ask" | "partial_all_parts_established" | "lead_findings_uncited" | "preparation_missing" | "late_evidence_hits" | "premise_disputed" | "premise_revised" | "premise_withdrawn" | "premise_inconsistent" | "part_omitted" | "no_locator_or_derivation" | "premise_untested" | "premise_unreviewed"; section: string; seqs: number[]; what: string; fix: string };
 
 /** A warning in the words every point says it with: what, then the fix. */
 export function warningWords(w: Pick<LedgerWarning, "what" | "fix">): string {
@@ -5096,6 +6089,36 @@ export function ledgerGate(o: { entries: LedgerEntry[]; attestations: LedgerAtte
       what: `#${seq} cites the kept output of ${refs.map((r) => `job ${r.job} (${r.status})`).filter((x, i, a) => a.indexOf(x) === i).join(", ")} (${refs.map((r) => r.ref).join(", ")}) and does not say how it treats a partial output`,
       fix: `record it again with supersedes=${seq} and qualifies [{ref, why}] for each such ref (what the job wrote before it was stopped, and why that part still holds), or cite the output of a job that ran to its end`,
       named_by: [],
+    });
+  }
+  // A negative about pictures with sheets of its job unread (negativeBasis): an answer that reaches it is held until they are read and it is recorded again.
+  for (const [section, a] of Object.entries(answers)) {
+    if (!a) continue;
+    for (const n of answerReach(a, bySeq, replaced)) {
+      const e = bySeq.get(n) as (LedgerEntry & NegativeFields) | undefined;
+      if (!e?.images_unread?.length || replaced.has(n)) continue;
+      const names = e.images_unread.map((u) => `${u.unread.length} of the ${u.total} images of job:${u.job}${u.dir ? `/${u.dir}` : ""} (${u.unread.slice(0, 8).map((f) => f.slice(f.lastIndexOf("/") + 1)).join(", ")}${u.unread.length > 8 ? ", …" : ""})`).join("; ");
+      defects.push({
+        code: "negative_images_unread",
+        section,
+        seqs: [a.seq, n],
+        what: `answer #${a.seq} (${section}) rests on E-${n}, a negative about pictures recorded with ${names} never handed to its recorder: it holds for the pictures read, not for the job's`,
+        fix: `${e.by} (or another seat) reads the unread images and records E-${n} again with supersedes=${n} (the hub then finds none unread), and the answer is recorded again citing it; or the answer is revised to what the pictures read show`,
+        named_by: namedFor(n),
+      });
+    }
+  }
+  // A finding at high confidence that later entries stand on and nobody reviewed (premisesUnreviewed): said, never held.
+  // Only for the sections this gate was asked about: the premise names one of them, or its answer reaches it (a reply to one question's record does not carry every other question's).
+  for (const p of premisesUnreviewed(entries, o.attestations, o.disputes)) {
+    const section = Object.entries(answers).find(([, a]) => a && answerReach(a, bySeq, replaced).has(p.entry.seq))?.[0] ?? (p.entry.answers ?? []).map((x) => `question:${sectionKey(x)}`).find((x) => x in answers);
+    if (!section) continue;
+    warnings.push({
+      code: "premise_unreviewed",
+      section,
+      seqs: [p.entry.seq, ...p.citers],
+      what: `E-${p.entry.seq} (a finding at high confidence, recorded by ${p.entry.by}, reviewed by nobody) is what ${p.citers.map((n) => `E-${n}`).join(", ")} rest on`,
+      fix: `a seat other than ${p.entry.by} re-derives E-${p.entry.seq} from its refs and attests it, or disputes it with what it found: a premise several entries stand on is checked before more is built on it`,
     });
   }
   return { answers, defects, open: defects.filter((d) => !d.named_by.length), unsupported, warnings };

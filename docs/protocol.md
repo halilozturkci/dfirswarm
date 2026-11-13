@@ -297,6 +297,11 @@ The answers check (`ledgerGate`, run by `scripts/check-answers.ts`, readiness an
 - `coverage_missing`: a material negative (a bounded negative, not determinable, or a premise rejected on a search alone) rests on no standing coverage record.
 - `negative_unreviewed`: a material negative, or its coverage record, has no review by a seat that recorded neither.
 
+Two that the review of the Batman III runs added, named here because no ADR states them yet:
+
+- `negative_images_unread` (a defect): a standing answer reaches a negative about pictures (an absence, or a finding that says what was not found, whose refs are image files of a job) recorded while images of the same job and directory had never been handed to its recorder by `read`. The entry carries them (`images_unread`, beside `images_read`, both from the trace); the hold ends when the images are read and the entry is recorded again.
+- `premise_unreviewed` (a warning): a standing finding at high confidence, recorded by one seat, attested and disputed by no other, that five or more later standing entries cite (a `rel` supports or derived_from, an answer's support, a coverage record's results, `E-<seq>` in their words). Another seat's attest or dispute ends it.
+
 ### Catalog, toolbox, quarantine (`catalog/`, `toolbox.json`, `work/extracted/`)
 
 Three kickoff options for evidence work, all recorded in the registry:

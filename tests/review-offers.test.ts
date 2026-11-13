@@ -117,7 +117,7 @@ test("a material negative's review is offered to one seat, never an author; anot
   const c = await run();
   for (const a of ["a0", "a1", "a2", "a3"]) await traceRow(c.S, a, "bash");
   const opened = okq(await L.openLead(c.a0, { title: "Search for the remote tool", why: "q2", answers: ["2"], take: true, routes: [{ source: "input:disk.E01", method: "search the disk" }] }));
-  const absence = ok(await rec(c.a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
+  const absence = ok(await rec(c.a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["2"] })).entry;
   okq(await L.closeLead(c.a0, opened.lead.id, { disposition: "negative", ref: `E-${absence.seq}` }));
   const cov = ok(await rec(c.a0, coverage("2", ["input:disk.E01"], [`E-${absence.seq}`]))).entry;
   const ans = ok(await rec(c.a1, { kind: "answer", section: "question:2", value: "No evidence of a remote tool was found on the disk", reasoning: `E-${cov.seq}`, ...A, contrary_none_why: "nothing points to one", result: "bounded_negative" })).entry;
@@ -285,7 +285,7 @@ test("a correction of an entry other than an answer holds a closure only when no
 async function negativeDue(c: Awaited<ReturnType<typeof run>>) {
   for (const a of ["a0", "a1", "a2", "a3"]) await traceRow(c.S, a, "bash");
   const opened = okq(await L.openLead(c.a0, { title: "Search for the remote tool", why: "q2", answers: ["2"], take: true, routes: [{ source: "input:disk.E01", method: "search the disk" }] }));
-  const absence = ok(await rec(c.a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
+  const absence = ok(await rec(c.a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["2"] })).entry;
   okq(await L.closeLead(c.a0, opened.lead.id, { disposition: "negative", ref: `E-${absence.seq}` }));
   const cov = ok(await rec(c.a0, coverage("2", ["input:disk.E01"], [`E-${absence.seq}`]))).entry;
   const ans = ok(await rec(c.a1, { kind: "answer", section: "question:2", value: "No evidence of a remote tool was found on the disk", reasoning: `E-${cov.seq}`, ...A, contrary_none_why: "nothing points to one", result: "bounded_negative" })).entry;

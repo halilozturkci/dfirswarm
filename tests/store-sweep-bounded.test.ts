@@ -70,7 +70,7 @@ test("a sweep that left 200,000 objects writes a line under 64 KB and names the 
   const { S, a0, a1, a2 } = await run();
   await hugeJob(S, "j900000", ROWS);
   await planned(a0, "2");
-  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
+  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["2"] })).entry;
   // A byte budget no object fits in: every object of the store is named unsearched.
   process.env.SWARM_SWEEP_MAX_BYTES = "5";
   let cov: P.LedgerEntry;
@@ -164,7 +164,7 @@ test("records made in a burst share a render of ledger.md, each returning after 
 test("the sweeps are read once and kept: a second read parses nothing, an append is added in memory, and a file changed under the process is read again", async () => {
   const { S, a0 } = await run();
   await planned(a0, "2");
-  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
+  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["2"] })).entry;
   const c1 = ok(await rec(a0, coverage("2", ["input:disk.E01"], [`E-${abs.seq}`], { looked_for: ["mallory"] }))).entry;
   await SW.awaitSweeps(S);
   const one = await SW.readSweeps(S);
@@ -200,7 +200,7 @@ test("the sweeps are read once and kept: a second read parses nothing, an append
 test("a line from before the change, its whole list in it, is read bounded and streamed from where it lies; read again under the new rules it names its file, and what its budget left is searched by the next pass", async () => {
   const { S, a0 } = await run();
   await planned(a0, "2");
-  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
+  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["2"] })).entry;
   const c1 = ok(await rec(a0, coverage("2", ["input:disk.E01"], [`E-${abs.seq}`], { looked_for: ["mallory"] }))).entry;
   const c2 = ok(await rec(a0, coverage("2", ["input:disk.E01", "input:logs/a.log"], [`E-${abs.seq}`], { looked_for: ["trent"] }))).entry;
   await SW.awaitSweeps(S);

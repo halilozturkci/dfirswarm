@@ -23,7 +23,7 @@ after(async () => {
 test("an answer resting on a coverage record revised for the same question and coverage stands on the revision; one revised to other questions or another coverage does not", async () => {
   const { S, a0, a1 } = await run();
   await planned(a0, "2");
-  const abs = ok(await rec(a0, { kind: "absence", value: "no remote tool on the disk", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
+  const abs = ok(await rec(a0, { kind: "absence", value: "no remote tool on the disk", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["2"] })).entry;
   const cov = ok(await rec(a0, coverage("2", ["input:disk.E01"], [`E-${abs.seq}`, "job:j000001/hits.txt"]))).entry;
   const ans = ok(await rec(a1, { kind: "answer", section: "question:2", value: "No evidence of a remote tool was found on the disk", reasoning: `E-${cov.seq}`, ...A, result: "bounded_negative" })).entry;
   const problems = async () => P.answerProblems(await P.readLedger(S), await P.readDisputes(S));
@@ -49,7 +49,7 @@ test("an answer resting on a coverage record revised for the same question and c
 test("a revision to other questions is not carried", async () => {
   const { S, a0, a1 } = await run();
   await planned(a0, "2");
-  const abs = ok(await rec(a0, { kind: "absence", value: "no remote tool on the disk", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
+  const abs = ok(await rec(a0, { kind: "absence", value: "no remote tool on the disk", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["2"] })).entry;
   const cov = ok(await rec(a0, coverage("2", ["input:disk.E01"], [`E-${abs.seq}`, "job:j000001/hits.txt"]))).entry;
   const ans = ok(await rec(a1, { kind: "answer", section: "question:2", value: "No evidence of a remote tool was found on the disk", reasoning: `E-${cov.seq}`, ...A, result: "bounded_negative" })).entry;
   const moved = ok(await rec(a0, { ...coverage("3", ["input:disk.E01"], [`E-${abs.seq}`, "job:j000001/hits.txt"]), supersedes: cov.seq })).entry;

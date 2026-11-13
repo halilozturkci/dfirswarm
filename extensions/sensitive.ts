@@ -43,7 +43,7 @@ import type { LedgerEntry } from "./protocol-core.ts";
 import { readLedger } from "./ledger-rules.ts";
 
 /** The fields of an entry, of any version, that can hold what it says. */
-const ENTRY_TEXT_FIELDS = ["value", "evidence", "source", "indicates", "confidence_why", "reasoning", "would_change", "alternatives_open", "alternatives_none_why", "because", "time_range", "search_method", "settings", "coverage_actual", "skipped", "failures"] as const;
+const ENTRY_TEXT_FIELDS = ["value", "evidence", "source", "indicates", "confidence_why", "reasoning", "would_change", "alternatives_open", "alternatives_none_why", "because", "time_range", "search_method", "settings", "coverage_actual", "skipped", "failures", "qualifier", "value_changed_because"] as const;
 
 /** One of a sensitive entry's words, with the entry it came from; `exact` when it is a value B9 matches as a whole phrase, never inside another word. */
 export type SensitiveToken = { token: string; seq: number; exact?: boolean };
@@ -72,6 +72,8 @@ export function sensitiveTokens(entries: LedgerEntry[]): SensitiveToken[] {
     for (const l of e.locators ?? []) texts.push(l.at);
     for (const a of (raw.alternatives as Array<{ explanation?: string; why?: string }> | undefined) ?? []) texts.push(a.explanation ?? "", a.why ?? "");
     for (const q of (raw.qualifies as Array<{ why?: string }> | undefined) ?? []) texts.push(q.why ?? "");
+    for (const c of (raw.control as Array<{ found?: string }> | undefined) ?? []) texts.push(c.found ?? "");
+    for (const c of (raw.carriers as Array<{ carrier?: string; why?: string }> | undefined) ?? []) texts.push(c.carrier ?? "", c.why ?? "");
     // A sensitive coverage record's looked_for strings are what its sweep searched for: sensitive words too.
     for (const t of e.looked_for ?? []) texts.push(t);
     for (const w of texts) {

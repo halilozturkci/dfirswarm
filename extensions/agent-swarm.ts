@@ -97,6 +97,9 @@ import {
   agentPressure,
   modelPressure,
   LEDGER_AGENT_KINDS,
+  CARRIER_STATES,
+  argsAsSent,
+  argsForValidator,
   LEDGER_CONFIDENCE,
   LEDGER_REL_KINDS,
   LEDGER_ANSWER_RESULTS,
@@ -257,6 +260,11 @@ export const SWARM_TOOLS = new Set([
   "inputs_check",
   "record_violation",
   "record",
+  "record_finding",
+  "record_answer",
+  "record_coverage",
+  "record_limitation",
+  "record_absence",
   "ledger",
   "attest",
   "dispute",
@@ -3170,8 +3178,8 @@ export default function (pi: ExtensionAPI) {
     pi.registerTool({
       name: manifest.name,
       label: manifest.name,
-      description: `${manifest.description} (forged by ${manifest.by}, v${manifest.version}, ${manifest.runtime}; runs in the sandbox with a ${toolTimeoutSeconds(manifest)}s timeout${manifest.pack && process.env.SWARM_PACK_PROGRAMS_IN_JOBS ? `; when your VM lacks a program or module it needs, it runs again as a job in the ${manifest.pack} pack's image, an output path under work/<your id>/ becoming that job's $OUT` : ""})${manifest.example ? ` Example: ${manifest.example}` : ""}`,
-      promptSnippet: `${manifest.description} — forged by ${manifest.by}`,
+      description: `${manifest.description} (${manifest.pack ? `a tool of the pack ${manifest.pack}` : `forged by ${manifest.by}`}, v${manifest.version}, ${manifest.runtime}; runs in the sandbox with a ${toolTimeoutSeconds(manifest)}s timeout${manifest.pack && process.env.SWARM_PACK_PROGRAMS_IN_JOBS ? `; when your VM lacks a program or module it needs, it runs again as a job in the ${manifest.pack} pack's image, an output path under work/<your id>/ becoming that job's $OUT` : ""})${manifest.example ? ` Example: ${manifest.example}` : ""}`,
+      promptSnippet: `${manifest.description} — ${manifest.pack ? `a tool of the pack ${manifest.pack}` : `forged by ${manifest.by}`}`,
       parameters: forgedSchema(manifest),
       async execute(_id, params, signal, _onUpdate, toolCtx: ToolCtx) {
         // A forged tool is a subprocess with the same reach as bash, so it
@@ -3534,32 +3542,20 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  pi.registerTool({
-    name: "record",
-    label: "Record",
-    description:
-      "Put a fact in the swarm's ledger with its provenance: kind event (a dated event for the timeline; ts required, ISO 8601 with its zone: Z when the source's time is UTC, or the offset the source records), ioc (an indicator: address, hash, file, account), finding (an observation and what you make of it), absence (a search that found nothing, when that matters: value is what was looked for, source what was searched, evidence the query, the tool and its version, and the scope), hypothesis (a proposition under test, with status open, supported or refuted), limitation (what the examination could not establish, with reason not_examined, unavailable, failed, partial or excluded), coverage (what a negative, or a not_determinable answer, was searched over: the proposition, the objects in refs, time_range, search_method, settings, coverage_actual, skipped, failures, result_refs, alternatives and detection_opportunity; areas {allocated, deleted, unallocated, slack, secondary} when it backs an answer to a question that asks for a complete set; acquisition_ask (R-<n>) or acquisition_none_why when it backs a not_determinable; looked_for (the literal strings a hit would contain, which the hub then searches for in every output the run holds) or looked_for_none_why; the harness adds whether the jobs behind it were given every object it names) or answer (the swarm's answer to one question of the goal, or its summary or narrative). Every kind but answer needs source and evidence: where it was seen (a path, a log, a registry key) and how to check it (the command, the inode, the record id, the hash). An entry nobody can check is not a record. refs names the run's objects it rests on, each checked when it is written: input:<path> (under inputs/), job:<id>/<path> (a job's sealed output), import:<id>/<path>, member:<generation>#<n> (an archive member in the catalogue), sha256:<hex> (a sealed blob), or unresolved:<why> when none can be named; a file only in your own work/ is not an object of the run: run the work as a job and cite job:. The harness writes how each cited job or import was made into the entry. " +
-      "A finding needs basis (observed or inferred), confidence with confidence_why (where the data came from, whether the method is reliable for it, how specific the observation is, whether your sources depend on each other: the quality of the evidence, not a count), and indicates (what the observation means and the step from one to the other, one to three sentences); an inferred finding lists alternatives (what else could explain it, each rejected with why or left open) or says in alternatives_none_why why none was considered; a finding resting on a job that did not succeed says in qualifies why those bytes are still usable, and can never support a claim that something is absent. " +
-      "An answer names its section (question:<id>, summary or narrative), gives the answer in value and the reasoning citing E-<seq> for every claim, and for a question its result (established, partial, bounded_negative, not_determinable, out_of_scope, premise_not_supported; a premise the case brief or goal states as given, such as who the subject is or whose device it is, is cited in premises [{id: P-<n>, rev, stance: assumed}] when the register holds it (questions view premises), or named in reasoning, \"rests on the case premise that …\", and is no reason to answer partial: partial is only for a part the evidence could not establish, and evidence against a premise is premise_not_supported, or a stance contradicted on the finding, never a silent hedge), parts [{id, part, status: established | open, refs, open_by?}] (required on a partial answer, with at least one open part bounded by R-<n>, L-<n> or E-<seq>), premise_tested {outcome, refs} (a question that presumes an event, its presumes in the register or a person's question framed as a proposition: before answering it, test whether the event happened at all, against the rival \"the question's premise is not supported\"; if the evidence does not support it the answer is premise_not_supported, and a clue that fits the question's frame is a candidate to test against that rival, not an answer), confidence with confidence_why, contrary (entries that say otherwise), limitations (limitation entries that bound it), alternatives_open and would_change; a bounded_negative or not_determinable on a material question cites a coverage record naming it, is worded \"No evidence of <what> was found in <scope>\" (asserts_absence: true, \"it did not happen\", only on an existence question whose coverage is complete and would have shown it), and another seat reviews it (attest with review) before the run may end; it rests on at least one standing entry that names its question in answers, cites a superseded entry only with its correction, and a disputed entry or one resting on a failed job only with qualifies [{ref: E-<seq>, why}]. One answer stands per section: revise it with supersedes. An answer to a register question says which revision it answers in question_rev once the question has more than one; an amendment makes the standing answer stale until it is recorded again for the new revision. Tokens in an answer (hashes, paths, times, inodes, addresses, accounts) that no cited entry holds are marked on it. " +
-      "To correct an entry, yours or a peer's, record the corrected one with supersedes=<its seq> (and because=<why>): nothing is deleted, and the newer entry is the correction. The optional fields are for the reader: answers (the goal sections it answers), rel (supports, contradicts, duplicates or derived_from another entry; for evidence added late, a delta to the question's answer: supports, contradicts, adds_part, irrelevant or inconclusive), sensitive, clock and precision, completion, attribution, locators, significance. The harness renders ledger/ledger.md after every record; cite that file in the report.",
-    promptSnippet: "Record an event, an indicator, a finding with what it indicates, or an answer",
-    promptGuidelines: [
-      "Record every dated event you establish as kind=event with ts in UTC; the timeline is built from them.",
-      "Record a finding while the artefact is open: value is what you saw, indicates what it means, confidence_why why that confidence, basis observed or inferred; an inferred one lists alternatives or says in alternatives_none_why why none was considered.",
-      "source and evidence are required on every record but an answer: where you saw it, and the command or id that lets somebody else see it too.",
-      "A finding names the objects it rests on in refs (job:<id>/<path>, input:<path>, member:<gen>#<n>, sha256:<hex>, or unresolved:<why>); one resting on a job that did not succeed says why in qualifies.",
-      "A wrong entry is corrected, never deleted: record the right one with supersedes=<seq of the wrong one>.",
-      "kind=absence is optional: record a search that found nothing only when the absence matters to the case, with the scope it holds for.",
-      "Name the goal section an entry answers in answers; link an entry that supports or contradicts another with rel.",
-      "Record what you could not examine, or could only partly, as kind=limitation with its reason; a proposition you are still testing as kind=hypothesis.",
-      "Before a negative answer (bounded_negative) or a not_determinable one on a material question, record kind=coverage: what was searched, over which objects, how, what was covered, skipped and failed, the results, what is still open, and whether the event would have left a trace here at all.",
-      "An answer (kind=answer) is written from the ledger, not from memory: one per question, one summary, one narrative, each citing E-<seq> for every claim.",
-      "The reply to an answer carries the finish line's warnings on its question (warnings): a not_determinable with no acquisition ask and no reason for none, a partial every review holds whole, what the record ties to the question and the answer leaves out, a partial answer to a question that presumes an event with no test of that premise. They hold nothing: weigh each now, and record the answer again if it is right.",
-      "Before answering a question that presumes an event (questions shows its presumes; a person's question is a proposition to test), test whether the event happened at all. If the evidence does not support it, the answer is premise_not_supported. A clue that fits the question's frame is a candidate to test against that rival, not an answer: say what the test showed in premise_tested {outcome, refs}.",
-    ],
-    parameters: Type.Object({
+  // --- record -------------------------------------------------------------------
+  // One tool that takes every kind, and one tool a kind for the kinds the runs
+  // used most (record_finding, record_answer, record_coverage,
+  // record_limitation, record_absence): the same check (recordEntry), the same
+  // row on the trace (tool "record", so custody and the metrics read one
+  // name). `record` carries 57 properties and a 5,900-character description
+  // with every kind's rules, and only kind and value are required by its
+  // schema: on the run sf4406b the open-weight seats had 353 of 776 calls
+  // refused. A kind's tool carries that kind's fields, its real required
+  // list, and its rules only.
+  /** Every field `record` takes, each optional but kind and value: fresh schemas each call, since a kind's tool makes its own of them. */
+  const recordProps = () => ({
       kind: Type.Union(LEDGER_AGENT_KINDS.map((k) => Type.Literal(k)), { description: "event | ioc | finding | absence | hypothesis | limitation | answer | coverage" }),
-      value: Type.String({ description: "The event, indicator or observation, in one sentence; for absence, what was looked for; for coverage, the proposition the search tested; for an answer, the answer itself" }),
+      value: Type.String({ description: "The event, indicator or observation, in one sentence; for absence, what was looked for; for coverage, the proposition the search tested; for an answer to a question, the asked string alone, in the format the question asks: its first line is what is graded (what qualifies it goes in qualifier)" }),
       ts: Type.Optional(Type.String({ description: "The event's time, ISO 8601 with its zone: 2024-01-15T12:44:22Z, or 2024-01-15T15:44:22+03:00 as the source records it. A time without a zone is refused." })),
       source: Type.Optional(Type.String({ description: "Where it was seen: a path, log, plugin, registry key. Required on every kind but answer." })),
       evidence: Type.Optional(Type.String({ description: "How to check it: command, inode, record id, hash. Required on every kind but answer." })),
@@ -3701,8 +3697,28 @@ export default function (pi: ExtensionAPI) {
           description: "The jobs whose output this entry interprets (j000123): the entry is what the output shows, its kind the disposition. A job's output is interpreted only this way; a bare citation in refs is not an interpretation. When you were handed only part of a job's stdout, give {job, rest}: how the rest was read, or why not.",
         }),
       ),
-    }),
-    async execute(_id, params, _signal, _onUpdate, toolCtx: ToolCtx) {
+      qualifier: Type.Optional(Type.String({ description: "An answer's: whatever qualifies the asked string in value (a candidate, the part still open, a second reading, the words around it). The format check reads value only." })),
+      value_changed_because: Type.Optional(Type.String({ description: "An answer's revision (supersedes) that changes value after its confidence or result was lowered: why, naming the entry that shows the earlier value wrong (E-<seq>). A doubt or a dispute alone changes confidence, result and parts, never value." })),
+      control: Type.Optional(
+        Type.Union([Type.Object({ ref: Type.String(), found: Type.String() }), Type.Array(Type.Object({ ref: Type.String(), found: Type.String() }))], {
+          description: "A negative's (an absence, or a finding that says what was not found) when it rests on your own script or shell line: the control run, {ref: job:<id>/stdout.log or job:<id>/<path>, found: what it found}, a job in which the same scanner, with the same pattern and layout, found a planted or known value. Required then: a search that could not have matched reads the same as one that found nothing.",
+        }),
+      ),
+      images_read: Type.Optional(Type.Array(Type.String(), { description: "A negative about pictures: the images you read (job:<id>/<file>). The hub fills it from the trace when you leave it out, and names the images of the same job you were never handed: an answer resting on the entry is held until they are read." })),
+      carriers: Type.Optional(
+        Type.Array(Type.Object({ carrier: Type.String(), state: Type.Union(CARRIER_STATES.map((k: string) => Type.Literal(k))), why: Type.String() }), {
+          description: "A finding's carrier table, before choosing among several places a value could be carried in (files, streams, fields): one row each, {carrier, state: decoded | undecodable | not_examined, why}. An answer may not say nothing remains open while a row is not examined.",
+        }),
+      ),
+  });
+  /** A field of recordProps as a kind's tool requires it (the optional mark is not copied), with that kind's own words when it has them. */
+  const need = (s: TSchema, description?: string): TSchema => ({ ...s, ...(description ? { description } : {}) }) as TSchema;
+  /** The same, optional. */
+  const may = (s: TSchema, description?: string): TSchema => Object.defineProperty({ ...s, ...(description ? { description } : {}) }, "~optional", { value: true, enumerable: false }) as TSchema;
+  /** What every record tool's reply says of a refusal: the tool's name, then every defect. */
+  async function runRecord(tool: string, given: Record<string, unknown>, toolCtx: ToolCtx) {
+      // The arguments as the model sent them (argsForValidator made them pass Pi's check, so that a missing or misspelt field is answered here, with the entry's other defects, and not by an echo of the whole call).
+      const params = argsAsSent(given) as Record<string, unknown> & { kind?: string; opens?: Array<Record<string, unknown> & { title: string }>; interprets?: Array<string | { job: string; rest?: string }> };
       const started = Date.now();
       // Every field as given: the protocol checks which a kind takes and says which it does not.
       const { kind, opens, interprets, ...rest } = params;
@@ -3715,13 +3731,13 @@ export default function (pi: ExtensionAPI) {
       }
       if (!result.ok) {
         // What the agent tried to say goes on the trace whole: the args are the record, refused or not.
-        await logEvent(toolCtx.cwd, agentId, "record", params as Record<string, unknown>, { ok: false, reason: result.reason }, Date.now() - started);
-        return { content: [{ type: "text" as const, text: `record refused: ${result.reason}` }], details: { ok: false, reason: result.reason }, isError: true };
+        await logEvent(toolCtx.cwd, agentId, "record", params as Record<string, unknown>, { ok: false, reason: result.reason, ...(result.defects && result.defects.length > 1 ? { defects: result.defects.length } : {}), ...(tool !== "record" ? { via: tool } : {}) }, Date.now() - started);
+        return { content: [{ type: "text" as const, text: `${tool} refused: ${result.reason}` }], details: { ok: false, reason: result.reason }, isError: true };
       }
       // The entry's hash goes on the trace, which is anchored outside the
       // run: custody holds the ledger to it, so an entry deleted from the
       // tail, or one written into the file without this tool, is named.
-      await logEvent(toolCtx.cwd, agentId, "record", { ...(params as Record<string, unknown>), ...(result.entry.supersedes !== undefined ? { supersedes: result.entry.supersedes } : {}) }, { ok: true, seq: result.entry.seq, merged: result.merged, total: result.total, ...(result.entry.hash ? { hash: result.entry.hash } : {}), ...(result.note ? { note: result.note } : {}), ...(result.warned?.length ? { warned: result.warned } : {}) }, Date.now() - started);
+      await logEvent(toolCtx.cwd, agentId, "record", { ...(params as Record<string, unknown>), kind: result.entry.kind, ...(result.entry.supersedes !== undefined ? { supersedes: result.entry.supersedes } : {}) }, { ok: true, ...(tool !== "record" ? { via: tool } : {}), seq: result.entry.seq, merged: result.merged, total: result.total, ...(result.entry.hash ? { hash: result.entry.hash } : {}), ...(result.note ? { note: result.note } : {}), ...(result.warned?.length ? { warned: result.warned } : {}) }, Date.now() - started);
       // A correction is said on the trace as itself, so a reader of the
       // record sees which entry stopped standing, when, and by whom.
       if (result.entry.supersedes !== undefined && !result.merged) {
@@ -3742,8 +3758,224 @@ export default function (pi: ExtensionAPI) {
         await logEvent(toolCtx.cwd, agentId, "record_leads", { seq }, { ok: true, ...(leadsOpened.length ? { opened: leadsOpened } : {}), ...(interpreted ? { interprets: interpreted.ok ? interpreted.interprets : [], ...(interpreted.ok ? {} : { refused: interpreted.reason }) } : {}) }).catch(() => undefined);
       }
       return okResult({ ok: true, seq, merged: result.merged, total: result.total, ...(result.entry.supersedes !== undefined ? { supersedes: result.entry.supersedes } : {}), ...(result.entry.refs?.length ? { refs: result.entry.refs } : {}), ...(result.entry.unsupported_tokens?.length ? { unsupported_tokens: result.entry.unsupported_tokens } : {}), ...(result.note ? { note: result.note } : {}), ...(result.warnings?.length ? { warnings: result.warnings } : {}), ...(leadsOpened.length ? { leads_opened: leadsOpened } : {}), ...(interpreted ? (interpreted.ok ? { interprets: interpreted.interprets } : { interprets_refused: `the entry stands, but its interpretation was not recorded: ${interpreted.reason}` }) : {}), rendered: LEDGER_MD });
+  }
+  const recordSchema = Type.Object(recordProps());
+  pi.registerTool({
+    name: "record",
+    label: "Record",
+    description:
+      "Put a fact in the swarm's ledger with its provenance: kind event (a dated event for the timeline; ts required, ISO 8601 with its zone: Z when the source's time is UTC, or the offset the source records), ioc (an indicator: address, hash, file, account), finding (an observation and what you make of it), absence (a search that found nothing, when that matters: value is what was looked for, source what was searched, evidence the query, the tool and its version, and the scope), hypothesis (a proposition under test, with status open, supported or refuted), limitation (what the examination could not establish, with reason not_examined, unavailable, failed, partial or excluded), coverage (what a negative, or a not_determinable answer, was searched over: the proposition, the objects in refs, time_range, search_method, settings, coverage_actual, skipped, failures, result_refs, alternatives and detection_opportunity; areas {allocated, deleted, unallocated, slack, secondary} when it backs an answer to a question that asks for a complete set; acquisition_ask (R-<n>) or acquisition_none_why when it backs a not_determinable; looked_for (the literal strings a hit would contain, which the hub then searches for in every output the run holds) or looked_for_none_why; the harness adds whether the jobs behind it were given every object it names) or answer (the swarm's answer to one question of the goal, or its summary or narrative). Every kind but answer needs source and evidence: where it was seen (a path, a log, a registry key) and how to check it (the command, the inode, the record id, the hash). An entry nobody can check is not a record. refs names the run's objects it rests on, each checked when it is written: input:<path> (under inputs/), job:<id>/<path> (a job's sealed output), import:<id>/<path>, member:<generation>#<n> (an archive member in the catalogue), sha256:<hex> (a sealed blob), or unresolved:<why> when none can be named; a file only in your own work/ is not an object of the run: run the work as a job and cite job:. The harness writes how each cited job or import was made into the entry. " +
+      "A finding needs basis (observed or inferred), confidence with confidence_why (where the data came from, whether the method is reliable for it, how specific the observation is, whether your sources depend on each other: the quality of the evidence, not a count), and indicates (what the observation means and the step from one to the other, one to three sentences); an inferred finding lists alternatives (what else could explain it, each rejected with why or left open) or says in alternatives_none_why why none was considered; a finding resting on a job that did not succeed says in qualifies why those bytes are still usable, and can never support a claim that something is absent. " +
+      "An answer names its section (question:<id>, summary or narrative), gives the answer in value and the reasoning citing E-<seq> for every claim, and for a question its result (established, partial, bounded_negative, not_determinable, out_of_scope, premise_not_supported; a premise the case brief or goal states as given, such as who the subject is or whose device it is, is cited in premises [{id: P-<n>, rev, stance: assumed}] when the register holds it (questions view premises), or named in reasoning, \"rests on the case premise that …\", and is no reason to answer partial: partial is only for a part the evidence could not establish, and evidence against a premise is premise_not_supported, or a stance contradicted on the finding, never a silent hedge), parts [{id, part, status: established | open, refs, open_by?}] (required on a partial answer, with at least one open part bounded by R-<n>, L-<n> or E-<seq>), premise_tested {outcome, refs} (a question that presumes an event, its presumes in the register or a person's question framed as a proposition: before answering it, test whether the event happened at all, against the rival \"the question's premise is not supported\"; if the evidence does not support it the answer is premise_not_supported, and a clue that fits the question's frame is a candidate to test against that rival, not an answer), confidence with confidence_why, contrary (entries that say otherwise), limitations (limitation entries that bound it), alternatives_open and would_change; a bounded_negative or not_determinable on a material question cites a coverage record naming it, is worded \"No evidence of <what> was found in <scope>\" (asserts_absence: true, \"it did not happen\", only on an existence question whose coverage is complete and would have shown it), and another seat reviews it (attest with review) before the run may end; it rests on at least one standing entry that names its question in answers, cites a superseded entry only with its correction, and a disputed entry or one resting on a failed job only with qualifies [{ref: E-<seq>, why}]. One answer stands per section: revise it with supersedes. An answer to a register question says which revision it answers in question_rev once the question has more than one; an amendment makes the standing answer stale until it is recorded again for the new revision. Tokens in an answer (hashes, paths, times, inodes, addresses, accounts) that no cited entry holds are marked on it. " +
+      "To correct an entry, yours or a peer's, record the corrected one with supersedes=<its seq> (and because=<why>): nothing is deleted, and the newer entry is the correction. The optional fields are for the reader: answers (the goal sections it answers), rel (supports, contradicts, duplicates or derived_from another entry; for evidence added late, a delta to the question's answer: supports, contradicts, adds_part, irrelevant or inconclusive), sensitive, clock and precision, completion, attribution, locators, significance. The harness renders ledger/ledger.md after every record; cite that file in the report. A refusal names every defect of the entry at once, each with what to send: fix them all and call once more. An answer's value is the asked string alone (what qualifies it goes in qualifier). The kinds used most have a tool of their own with that kind's fields and rules only: record_finding, record_answer, record_coverage, record_limitation, record_absence.",
+    promptSnippet: "Record an event, an indicator, a finding with what it indicates, or an answer",
+    promptGuidelines: [
+      "Record every dated event you establish as kind=event with ts in UTC; the timeline is built from them.",
+      "Record a finding while the artefact is open: value is what you saw, indicates what it means, confidence_why why that confidence, basis observed or inferred; an inferred one lists alternatives or says in alternatives_none_why why none was considered.",
+      "source and evidence are required on every record but an answer: where you saw it, and the command or id that lets somebody else see it too.",
+      "A finding names the objects it rests on in refs (job:<id>/<path>, input:<path>, member:<gen>#<n>, sha256:<hex>, or unresolved:<why>); one resting on a job that did not succeed says why in qualifies.",
+      "A wrong entry is corrected, never deleted: record the right one with supersedes=<seq of the wrong one>.",
+      "kind=absence is optional: record a search that found nothing only when the absence matters to the case, with the scope it holds for.",
+      "Name the goal section an entry answers in answers; link an entry that supports or contradicts another with rel.",
+      "Record what you could not examine, or could only partly, as kind=limitation with its reason; a proposition you are still testing as kind=hypothesis.",
+      "Before a negative answer (bounded_negative) or a not_determinable one on a material question, record kind=coverage: what was searched, over which objects, how, what was covered, skipped and failed, the results, what is still open, and whether the event would have left a trace here at all.",
+      "An answer (kind=answer) is written from the ledger, not from memory: one per question, one summary, one narrative, each citing E-<seq> for every claim.",
+      "The reply to an answer carries the finish line's warnings on its question (warnings): a not_determinable with no acquisition ask and no reason for none, a partial every review holds whole, what the record ties to the question and the answer leaves out, a partial answer to a question that presumes an event with no test of that premise. They hold nothing: weigh each now, and record the answer again if it is right.",
+      "Before answering a question that presumes an event (questions shows its presumes; a person's question is a proposition to test), test whether the event happened at all. If the evidence does not support it, the answer is premise_not_supported. A clue that fits the question's frame is a candidate to test against that rival, not an answer: say what the test showed in premise_tested {outcome, refs}.",
+    ],
+    parameters: recordSchema,
+    prepareArguments: (args: unknown) => argsForValidator(recordSchema, args) as never,
+    async execute(_id, params, _signal, _onUpdate, toolCtx: ToolCtx) {
+      return runRecord("record", params as Record<string, unknown>, toolCtx);
     },
   });
+
+  // A kind's own tool: its fields, its required list as the check has it, its rules and no other kind's.
+  const REFS_WORDS = "The run's objects it rests on, each checked: input:<path>, job:<id>/<path> (a file the shell shows at store/jobs/j000149/out/x is job:j000149/x), import:<id>/<path>, member:<gen>#<n>, sha256:<hex>, or unresolved:<why>. A file only in your own work/ is not an object of the run: run the work as a job and cite job:.";
+  const COMMON_WORDS = "A refusal names every defect of the entry at once, each with what to send: fix them all and call once more. To correct an entry, yours or a peer's, record the corrected one with supersedes=<its seq> and because=<why>.";
+  const P = recordProps;
+  const kindTools: Array<{ kind: (typeof LEDGER_AGENT_KINDS)[number]; label: string; snippet: string; description: string; guidelines: string[]; schema: TSchema }> = [
+    {
+      kind: "finding",
+      label: "Record a finding",
+      snippet: "Record a finding: what you saw, and what it indicates",
+      description:
+        "Record a finding in the swarm's ledger, while the artefact is open: an observation and what you make of it. value is what you saw, fact only, one sentence; source where (a path, a log, a registry key); evidence how a reader re-derives it (the command, the query, the record id, the hash); refs the objects it rests on. basis is observed or inferred; confidence comes with confidence_why (where the data came from, whether the method is reliable for it, how specific the observation is, whether your sources depend on each other: the quality of the evidence, not a count); indicates says what the observation means and the step from one to the other, one to three sentences. " +
+        "An inferred finding lists alternatives [{explanation, status: rejected | open, why}], or says in alternatives_none_why why none was considered: never invent one. A ref whose job did not succeed needs qualifies [{ref, why}] (ref may name the job, job:<id>, for every ref of the entry from it), and such bytes never show that something is absent. answers names the question it bears on (\"3\"): an answer can rest only on an entry that names its question. " +
+        "A finding that says what was NOT found (no hit, none, not present) and rests on your own script or shell line names its control: control {ref, found}, a job in which the same scanner, with the same pattern and layout, found a planted or known value. One about pictures holds for the images you read: the hub names the images of the same job you were not handed. Before choosing among several places a value could be carried in, record one finding with carriers [{carrier, state: decoded | undecodable | not_examined, why}], a row each. " +
+        COMMON_WORDS,
+      guidelines: ["Use record_finding for an observation and what it indicates; a dated event is record(kind=event), a search that found nothing record_absence, what could not be examined record_limitation.", "A negative from your own scanner names its control run; a finding names the question it bears on in answers."],
+      schema: Type.Object({
+        value: need(P().value, "What you saw, fact only, in one sentence."),
+        source: need(P().source, "Where it was seen: a path, a log, a plugin, a registry key."),
+        evidence: need(P().evidence, "How a reader re-derives it: the command, the query, the record id, the hash."),
+        basis: need(P().basis, "observed in the evidence, or inferred from it."),
+        confidence: need(P().confidence, "high, medium or low: the quality of the evidence, not a count of it."),
+        confidence_why: need(P().confidence_why, "Why that confidence: where the data came from, whether the method is reliable for it, how specific the observation is, whether your sources depend on each other."),
+        indicates: need(P().indicates, "What the observation means, and the step from one to the other, in one to three sentences."),
+        refs: may(P().refs, REFS_WORDS),
+        answers: may(P().answers, "The questions it bears on, by id: \"3\", \"Q-19\"."),
+        alternatives: Type.Optional(Type.Array(Type.Object({ explanation: Type.String(), status: Type.Union(LEDGER_ALTERNATIVE_STATUS.map((k) => Type.Literal(k))), why: Type.String(), test_refs: Type.Optional(Type.Array(Type.String())) }), { description: "On an inferred finding: what else could explain it, each rejected (with why) or left open; test_refs the objects that tested it." })),
+        alternatives_none_why: may(P().alternatives_none_why, "On an inferred finding, in place of alternatives: why none was considered. Never invent one."),
+        qualifies: may(P().qualifies, "For each ref whose job did not succeed: {ref, why its kept bytes are still usable}. ref may name the job (job:<id>) for every ref from it."),
+        control: P().control,
+        images_read: P().images_read,
+        carriers: P().carriers,
+        significance: P().significance,
+        ts: P().ts,
+        clock: P().clock,
+        precision: P().precision,
+        locators: P().locators,
+        attribution: P().attribution,
+        rel: P().rel,
+        sensitive: P().sensitive,
+        supersedes: P().supersedes,
+        because: P().because,
+        opens: P().opens,
+        interprets: P().interprets,
+      }),
+    },
+    {
+      kind: "answer",
+      label: "Record an answer",
+      snippet: "Record the answer to one question: the asked string in value, the rest in qualifier",
+      description:
+        "Record the swarm's answer to one question of the goal (section question:<id>), written from the ledger, not from memory. value is the asked string alone, in the format the question asks (its Format line): the first line of value is what is graded, so it holds the answer and nothing else, no sentence, no label, no second candidate. qualifier holds whatever qualifies it (a candidate, a second reading, what is open). reasoning says how the cited entries lead to it, citing E-<seq> for every claim; the answer rests on at least one standing entry recorded with answers naming its question. " +
+        "result is established (on findings), partial, bounded_negative or not_determinable (each on a coverage record, worded \"No evidence of <what> was found in <scope>\"), out_of_scope or premise_not_supported. confidence comes with confidence_why; alternatives_open says what else could still explain it (\"nothing remains open\" is refused while a carrier table or a partial coverage record it cites shows one unexamined); would_change says what evidence would change it. A partial answer carries parts [{id, part, status: established | open | limited, refs, open_by?, limited_by?}] with at least one open or limited: then value holds only the piece of the format that is established, or is empty, and nothing is asked for the open part. " +
+        "One answer stands per question: a second one from you is taken as its revision (supersedes). A revision that lowers confidence or result keeps value: a doubt, a dispute or a best_candidate review changes confidence, result and parts, never the asked string, and a candidate the answer held stays in qualifier; value changes only with value_changed_because naming the entry (E-<seq>) that shows it wrong. A superseded entry is cited only with its correction, and a disputed one or one resting on a failed job only with qualifies [{ref: \"E-<seq>\", why}]. " +
+        "An answer takes no refs, answers, basis or indicates: record the fact first (record_finding with answers: [\"<id>\"]), then this answer citing its E-<seq>. The summary and the narrative are record(kind=answer, section=summary | narrative). " +
+        COMMON_WORDS,
+      guidelines: ["record_answer's value is the asked string alone, as the question's Format line asks it; everything else goes in qualifier and reasoning.", "Lowering your confidence in an answer never changes its value: say the doubt in qualifier, confidence and result."],
+      schema: Type.Object({
+        section: need(P().section, "The question it answers: question:<id> (question:3; a register question Q-19 is question:19)."),
+        value: need(P().value, "The asked string alone, in the format the question asks; its first line is what is graded. Empty only on an answer that is not established and whose qualifier says what is known."),
+        qualifier: may(P().qualifier, "What qualifies value: a candidate, a second reading, the part still open, the words around it."),
+        reasoning: need(P().reasoning, "How the cited entries lead to the answer, citing E-<seq> for every claim."),
+        result: need(P().result, "established | partial | bounded_negative | not_determinable | out_of_scope | premise_not_supported."),
+        confidence: need(P().confidence, "high, medium or low."),
+        confidence_why: need(P().confidence_why, "The quality of the evidence the answer rests on, not a count of it."),
+        alternatives_open: need(P().alternatives_open, "What else could still explain it, or that nothing remains open and why."),
+        would_change: need(P().would_change, "What evidence would change this answer."),
+        parts: P().parts,
+        contrary: P().contrary,
+        contrary_none_why: P().contrary_none_why,
+        limitations: P().limitations,
+        qualifies: may(P().qualifies, "For a cited entry (E-<seq>) that is disputed or rests on a failed job: {ref: \"E-<seq>\", why it still supports the answer}."),
+        premises: P().premises,
+        premise_tested: P().premise_tested,
+        question_rev: P().question_rev,
+        asserts_absence: P().asserts_absence,
+        supersedes: P().supersedes,
+        because: P().because,
+        value_changed_because: P().value_changed_because,
+        downgrade: P().downgrade,
+        material: P().material,
+        sensitive: P().sensitive,
+      }),
+    },
+    {
+      kind: "coverage",
+      label: "Record coverage",
+      snippet: "Record what a negative was searched over, before the answer that rests on it",
+      description:
+        "Record what a search covered, before a bounded_negative or not_determinable answer on a material question rests on it (and for a question that asks for a complete set): value is the proposition the search tested; refs the objects it was over (a directory of a job's output or of the evidence counts); answers the questions it is for; time_range, search_method, settings, coverage_actual (what was actually covered), skipped and failures (\"none\", with how that is known); result_refs what the search produced: the entries (E-<seq>: absences, limitations, findings, events; never an answer or another coverage record) and the job outputs (job:<id>[/<path>]); alternatives, in words, what is still open; detection_opportunity {trace_expected: yes | no | unknown, why}: would the event have left a trace in these sources. " +
+        "looked_for is required, or looked_for_none_why: the literal strings a hit would contain (names, identifiers, addresses, keywords); the hub then searches every output the run holds for them, and a hit in an object the record does not name holds a negative until that object is examined. areas {allocated, deleted, unallocated, slack, secondary} when it backs an answer to a question that asks for a complete set; acquisition_ask (R-<n>) or acquisition_none_why when it backs a not_determinable. The hub adds whether the jobs behind it were given every object it names (complete or partial). Another seat reviews it (attest with review) before a negative resting on it may stand. " +
+        COMMON_WORDS,
+      guidelines: ["Before a negative answer or a not_determinable one on a material question, record_coverage: what was searched, over which objects, how, what was covered, skipped and failed, the results, what is still open, and whether the event would have left a trace."],
+      schema: Type.Object({
+        value: need(P().value, "The proposition the search tested, in one sentence."),
+        refs: need(P().refs, `The objects the search was over. ${REFS_WORDS}`),
+        answers: need(P().answers, "The questions the search was for, by id: \"3\", \"Q-19\"."),
+        time_range: need(P().time_range),
+        search_method: need(P().search_method),
+        settings: need(P().settings),
+        coverage_actual: need(P().coverage_actual),
+        skipped: need(P().skipped),
+        failures: need(P().failures),
+        result_refs: need(P().result_refs),
+        alternatives: Type.String({ description: "In words: the explanations or routes still open, or none and why." }),
+        detection_opportunity: need(P().detection_opportunity),
+        looked_for: P().looked_for,
+        looked_for_none_why: P().looked_for_none_why,
+        areas: P().areas,
+        acquisition_ask: P().acquisition_ask,
+        acquisition_none_why: P().acquisition_none_why,
+        source: P().source,
+        evidence: P().evidence,
+        supersedes: P().supersedes,
+        because: P().because,
+        sensitive: P().sensitive,
+      }),
+    },
+    {
+      kind: "limitation",
+      label: "Record a limitation",
+      snippet: "Record what the examination could not establish, and why",
+      description:
+        "Record what the examination could not establish, or could only partly: value says what, in one sentence; source what could not be examined (the object, volume, artefact or scope); evidence what was tried and why it could not be done (the command, the error, the missing key or tool); reason is not_examined, unavailable (the evidence that would settle it was not collected or no longer exists), failed, partial or excluded (the case leaves it out). refs names the objects it concerns, a failed job's output among them (no qualifies: a limitation rests on what could not be done). answers names the question it bounds: an answer cites it in limitations, or holds a part open or limited by it. A limitation is not a finding, and it never shows that something is absent. " +
+        COMMON_WORDS,
+      guidelines: ["Record what you could not examine, or could only partly, with record_limitation and its reason; a limitation that bounds a question names it in answers."],
+      schema: Type.Object({
+        value: need(P().value, "What the examination could not establish, in one sentence."),
+        source: need(P().source, "What could not be examined: the object, volume, artefact or scope."),
+        evidence: need(P().evidence, "What was tried and why it could not be done: the command, the error, the missing key or tool."),
+        reason: need(P().reason, "not_examined | unavailable | failed | partial | excluded."),
+        refs: may(P().refs, REFS_WORDS),
+        answers: may(P().answers, "The questions it bounds, by id: \"3\", \"Q-19\"."),
+        confidence: P().confidence,
+        rel: P().rel,
+        sensitive: P().sensitive,
+        supersedes: P().supersedes,
+        because: P().because,
+        opens: P().opens,
+        interprets: P().interprets,
+      }),
+    },
+    {
+      kind: "absence",
+      label: "Record an absence",
+      snippet: "Record a search that found nothing, with what it was over and its control",
+      description:
+        "Record a search that found nothing, when that matters to the case (an empty grep on the way to something else is not an entry): value is what was looked for and not found, one sentence; source what was searched (the path, image, log or artefact: \"not found\" is only ever \"not found there\"); evidence the query, the tool and its version, and the scope (allocated files only, or unallocated space and slack too, and the time range); refs the objects searched and the job that searched them; completion how far the search got (complete, partial, failed). " +
+        "An absence that rests on your own script or shell line (a command job, not a pack tool that reports what it covered) names its control: control {ref, found}, a job in which the same scanner, with the same pattern and layout, found a planted or known value (plant one in a copy, or run it over a file known to hold one); a search that could not have matched reads the same as one that found nothing. A search over a compressed or encrypted container is not a search of its content. One about pictures holds for the images you read: the hub names the images of the same job you were not handed, and an answer resting on the entry is held until they are read. The output of a job that did not succeed cannot show an absence: record it with completion partial or failed, and what was not reached with record_limitation. " +
+        COMMON_WORDS,
+      guidelines: ["An absence holds for the query and the scope it names, and one from your own scanner names the control run that shows the scanner could have matched."],
+      schema: Type.Object({
+        value: need(P().value, "What was looked for and not found, in one sentence."),
+        source: need(P().source, "What was searched: the path, image, log or artefact the search ran over."),
+        evidence: need(P().evidence, "The query, the tool and its version, and the scope searched."),
+        refs: may(P().refs, `The objects searched and the output of the job that searched them. ${REFS_WORDS}`),
+        completion: may(P().completion, "How far the search got: complete, partial or failed."),
+        control: P().control,
+        images_read: P().images_read,
+        answers: may(P().answers, "The questions it bears on, by id: \"3\", \"Q-19\"."),
+        confidence: P().confidence,
+        confidence_why: P().confidence_why,
+        basis: P().basis,
+        ts: P().ts,
+        rel: P().rel,
+        sensitive: P().sensitive,
+        supersedes: P().supersedes,
+        because: P().because,
+        opens: P().opens,
+        interprets: P().interprets,
+      }),
+    },
+  ];
+  for (const t of kindTools) {
+    pi.registerTool({
+      name: `record_${t.kind}`,
+      label: t.label,
+      description: t.description,
+      promptSnippet: t.snippet,
+      promptGuidelines: t.guidelines,
+      parameters: t.schema,
+      prepareArguments: (args: unknown) => argsForValidator(t.schema, args) as never,
+      async execute(_id, params, _signal, _onUpdate, toolCtx: ToolCtx) {
+        return runRecord(`record_${t.kind}`, { ...(params as Record<string, unknown>), kind: t.kind }, toolCtx);
+      },
+    });
+  }
 
   pi.registerTool({
     name: "ledger",
@@ -3800,25 +4032,7 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  pi.registerTool({
-    name: "attest",
-    label: "Attest",
-    description:
-      "Say that you re-derived a ledger entry somebody else recorded (a finding, an answer, any kind): how names what you re-derived and from which sealed object (job:<id>/<path>, input:<path>, …), and what you only read. refs lists the objects you re-derived from, each checked. The harness writes it, chained, into ledger/attestations.jsonl. You cannot attest your own entry; an attestation is a check by somebody else, not agreement. Review an answer source-first: the question and its original sources before the answer's conclusion, and the strongest rival reading of them.",
-    promptSnippet: "Record that you re-derived a peer's entry, and how",
-    promptGuidelines: [
-      "attest only what you re-derived from the sealed refs yourself, and say in how what you re-derived and what you only read.",
-      "A critic attests or disputes every answer before the run ends; the author of an entry never attests it.",
-      "A negative (a coverage record, or an answer bounded_negative or not_determinable) is attested with review: say whether you challenged the detection assumptions, reproduced a decisive check and tried a materially different route, and what you did or why not.",
-      "Review source-first: read the question as asked, its scope and the original sources it rests on before the answer's conclusion, and weigh the strongest rival reading of those sources (another time, entity, mechanism or activity, or the premise not holding). A review offer leads with them and links the answer by its seq.",
-      "An answer to a question is attested with strength (established or best_candidate) and answer_review: what you reproduced and what you only read, each part the question asks and whether it is established, the inference, the alternatives you weighed, and whether another source family was checked. A best candidate you cannot break is still a best candidate: say so, and open the lead for the route would_change names.",
-      "An established attest of an answer that claims established, on a material question, also names answer_review.discriminator {rival, test, favours_if, outcome, refs}: the strongest rival, the test that separates it from the answer, the result that would favour each, what it showed, and the E-<seq> or job:<id>/<path> it rests on; and, where a value the answer or an entry it rests on states is in the bytes, says where it read it, answer_review.reproduced_at [{ref, offset, value}] (the sealed object, the byte offset where the value begins, the value as it is there and as the answer or that entry states it; the hub reads those bytes, in UTF-8 and UTF-16LE), or, for a derived value (a converted time, a decoded field), answer_review.derivation {job, inputs}. Without a discriminator, or with a locator that does not verify (its bytes at the offset, its value among the words of the answer or of an entry it rests on) or a derivation that does not resolve, it is recorded best_candidate, and the reply says how to fix it; with neither a locator nor a derivation it is warned, never capped (an answer that is an inference over several entries stands on its discriminator). Bytes at an offset prove the value is there, not that it answers the question: that is the discriminator's.",
-      "A question that presumes an event (its presumes in the register, or a person's question framed as a proposition) is reviewed against the premise itself: name the rival \"the question's premise is not supported\" and say what the test showed, answer_review.premise_tested {outcome, refs} (the observation or job it rests on, never the answer under review). If the evidence does not support the premise, the answer is premise_not_supported: dispute an answer that says otherwise. A clue that fits the question's frame is a candidate to test against that rival, not an answer. An established attest of an answer that claims established, on a material question that presumes an event, without that test is recorded best_candidate, and the reply says how to fix it; a partial answer without it is warned (premise_untested), never held.",
-      "\"Best candidate\" concerns only an answer that claims established. Partial is a disposition: a review of a partial answer checks the parts the answer claims, those it says are established and those it declares open. A part it declares open is held established: false with declared_open naming the limitation or coverage record the answer cites for it; that part, and the answer's confidence, do not cap your review, and a partial answer never holds the run as a best candidate.",
-      "Before you attest an answer established, name at least one alternative explanation you weighed, why the evidence rules it out, and the entries that show it: answer_review.alternatives [{explanation, why, evidence: [E-<seq>]}] (a decoy that looks like the answer, another actor, another mechanism, another time). An established attest that names none, or only placeholders, is recorded best_candidate, and the reply says so. Only an established answer attested so keeps a high confidence; any other high is recorded medium.",
-      "The reply carries the finish line's warnings on what you attested (warnings): a partial answer you hold whole, what the record ties to the question and the answer leaves out, a not_determinable with no acquisition ask. They hold nothing: tell the answer's author on the board, or say in your review which part is open.",
-    ],
-    parameters: Type.Object({
+  const attestSchema = Type.Object({
       seq: Type.Number({ description: "The entry's seq (standing, not your own)." }),
       how: Type.String({ description: "What you re-derived, from which sealed object, and what you only read." }),
       refs: Type.Optional(Type.Array(Type.String(), { description: "The objects you re-derived from: input:<path>, job:<id>/<path>, member:<gen>#<n>, sha256:<hex>." })),
@@ -3843,6 +4057,7 @@ export default function (pi: ExtensionAPI) {
           {
             reproduced: Type.String({ description: "What you re-derived yourself, from which sealed objects" }),
             read: Type.String({ description: "What you only read (a peer's entry, a summary) without re-deriving it" }),
+            link: Type.String({ description: "What ties the artefact the answer cites to what the question asks, apart from the value re-deriving from it: whose it is, where it sits, when it was written, why this one and not another carrier of the same kind. A value that re-derives from the wrong artefact re-derives all the same" }),
             parts: Type.Array(
               Type.Object({
                 id: Type.Optional(Type.String({ description: "The answer's part this row weighs, by its id, when the answer carries parts: weigh each of them; a row the answer holds open needs no declared_open" })),
@@ -3906,8 +4121,32 @@ export default function (pi: ExtensionAPI) {
           { description: "Required with strength on an answer to a question: the review part by part, source-first." },
         ),
       ),
-    }),
-    async execute(_id, params, _signal, _onUpdate, toolCtx: ToolCtx) {
+    });
+  pi.registerTool({
+    name: "attest",
+    label: "Attest",
+    description:
+      "Say that you re-derived a ledger entry somebody else recorded (a finding, an answer, any kind): how names what you re-derived and from which sealed object (job:<id>/<path>, input:<path>, …), and what you only read. refs lists the objects you re-derived from, each checked. The harness writes it, chained, into ledger/attestations.jsonl. You cannot attest your own entry; an attestation is a check by somebody else, not agreement. Review an answer source-first: the question and its original sources before the answer's conclusion, and the strongest rival reading of them.",
+    promptSnippet: "Record that you re-derived a peer's entry, and how",
+    promptGuidelines: [
+      "attest only what you re-derived from the sealed refs yourself, and say in how what you re-derived and what you only read.",
+      "A critic attests or disputes every answer before the run ends; the author of an entry never attests it.",
+      "A negative (a coverage record, or an answer bounded_negative or not_determinable) is attested with review: say whether you challenged the detection assumptions, reproduced a decisive check and tried a materially different route, and what you did or why not.",
+      "Reviewing an answer, compare the first line of its value with the question's Format line: the asked string alone, in that form. A right value in another form, or a sentence around it, is said to its author (a dispute, or a best_candidate attest); a doubt of yours changes the answer's confidence, result and parts, never its value, and a reading you dispute gains your candidate beside the author's until a check rules one out.",
+      "Say in answer_review.link what ties the cited artefact to the question, apart from the value re-deriving: a decoy re-derives too. A payload that calls itself fake, test or decoy is a decoy candidate; a file in a vendor's path with the vendor's timestamps is not case data; a value saved by a form's autofill is a lead, not \"the password noted down\".",
+      "Review source-first: read the question as asked, its scope and the original sources it rests on before the answer's conclusion, and weigh the strongest rival reading of those sources (another time, entity, mechanism or activity, or the premise not holding). A review offer leads with them and links the answer by its seq.",
+      "An answer to a question is attested with strength (established or best_candidate) and answer_review: what you reproduced and what you only read, what links the cited artefact to the question (link), each part the question asks and whether it is established, the inference, the alternatives you weighed, and whether another source family was checked. A best candidate you cannot break is still a best candidate: say so, and open the lead for the route would_change names.",
+      "An established attest of an answer that claims established, on a material question, also names answer_review.discriminator {rival, test, favours_if, outcome, refs}: the strongest rival, the test that separates it from the answer, the result that would favour each, what it showed, and the E-<seq> or job:<id>/<path> it rests on; and, where a value the answer or an entry it rests on states is in the bytes, says where it read it, answer_review.reproduced_at [{ref, offset, value}] (the sealed object, the byte offset where the value begins, the value as it is there and as the answer or that entry states it; the hub reads those bytes, in UTF-8 and UTF-16LE), or, for a derived value (a converted time, a decoded field), answer_review.derivation {job, inputs}. Without a discriminator, or with a locator that does not verify (its bytes at the offset, its value among the words of the answer or of an entry it rests on) or a derivation that does not resolve, it is recorded best_candidate, and the reply says how to fix it; with neither a locator nor a derivation it is warned, never capped (an answer that is an inference over several entries stands on its discriminator). Bytes at an offset prove the value is there, not that it answers the question: that is the discriminator's.",
+      "A question that presumes an event (its presumes in the register, or a person's question framed as a proposition) is reviewed against the premise itself: name the rival \"the question's premise is not supported\" and say what the test showed, answer_review.premise_tested {outcome, refs} (the observation or job it rests on, never the answer under review). If the evidence does not support the premise, the answer is premise_not_supported: dispute an answer that says otherwise. A clue that fits the question's frame is a candidate to test against that rival, not an answer. An established attest of an answer that claims established, on a material question that presumes an event, without that test is recorded best_candidate, and the reply says how to fix it; a partial answer without it is warned (premise_untested), never held.",
+      "\"Best candidate\" concerns only an answer that claims established. Partial is a disposition: a review of a partial answer checks the parts the answer claims, those it says are established and those it declares open. A part it declares open is held established: false with declared_open naming the limitation or coverage record the answer cites for it; that part, and the answer's confidence, do not cap your review, and a partial answer never holds the run as a best candidate.",
+      "Before you attest an answer established, name at least one alternative explanation you weighed, why the evidence rules it out, and the entries that show it: answer_review.alternatives [{explanation, why, evidence: [E-<seq>]}] (a decoy that looks like the answer, another actor, another mechanism, another time). An established attest that names none, or only placeholders, is recorded best_candidate, and the reply says so. Only an established answer attested so keeps a high confidence; any other high is recorded medium.",
+      "The reply carries the finish line's warnings on what you attested (warnings): a partial answer you hold whole, what the record ties to the question and the answer leaves out, a not_determinable with no acquisition ask. They hold nothing: tell the answer's author on the board, or say in your review which part is open.",
+    ],
+    parameters: attestSchema,
+    // A review left short of a required field, or with a value its schema would not take, is answered by the attest's own check, which names every defect at once (argsForValidator): Pi's answer was the whole call echoed back, 30 times on the run sf4406b for "reproduced, read, alternatives".
+    prepareArguments: (args: unknown) => argsForValidator(attestSchema, args) as never,
+    async execute(_id, given, _signal, _onUpdate, toolCtx: ToolCtx) {
+      const params = argsAsSent(given as Record<string, unknown>) as typeof given;
       const started = Date.now();
       const result = await attestEntry(ctxFrom(toolCtx.cwd, agentId), { seq: params.seq, how: params.how, ...(params.refs?.length ? { refs: params.refs } : {}), ...(params.review ? { review: params.review } : {}), ...(params.strength ? { strength: params.strength } : {}), ...(params.answer_review ? { answer_review: params.answer_review } : {}), ...(params.second_review_why ? { second_review_why: params.second_review_why } : {}) });
       if (!result.ok) {
@@ -3928,7 +4167,7 @@ export default function (pi: ExtensionAPI) {
     name: "dispute",
     label: "Dispute",
     description:
-      "Say why a ledger entry somebody else recorded does not hold (a finding, an answer, any kind), with the objects that show it in refs; or, with withdraw: true, take back your own dispute and say why. The harness writes it, chained, into ledger/disputes.jsonl. An answer resting on a disputed entry stops standing until its author records it again with the dispute answered; to correct your own entry, record the correction with supersedes instead.",
+      "Say why a ledger entry somebody else recorded does not hold (a finding, an answer, any kind), with the objects that show it in refs; or, with withdraw: true, take back your own dispute and say why. The harness writes it, chained, into ledger/disputes.jsonl. An answer resting on a disputed entry stops standing until its author records it again with the dispute answered; to correct your own entry, record the correction with supersedes instead. A dispute about a reading (a transcription, a glyph, a look-alike character) adds a candidate: say yours, and the author keeps the earlier one beside it (an answer's qualifier) until a check rules one out; a dispute about how sure an answer is changes its confidence or result, never the asked string in its value.",
     promptSnippet: "Record why a peer's entry does not hold",
     promptGuidelines: ["dispute says what does not hold and what shows it; a wrong entry of your own is corrected with record(supersedes), never disputed."],
     parameters: Type.Object({

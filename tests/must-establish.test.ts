@@ -110,7 +110,7 @@ async function partialOne(r: Awaited<ReturnType<typeof run>>) {
 /** Question 1 not determinable on a coverage record another seat reviewed: a disposition under the ordinary bar. */
 async function notDeterminableOne(r: Awaited<ReturnType<typeof run>>) {
   const lead = await planned(r.a0, "1", [{ source: "input:logs/a.log", method: "search the logons" }]);
-  const abs = ok(await rec(r.a0, { kind: "absence", value: "an account name for the logon", source: "the log", evidence: "a search", completion: "complete", refs: ["job:j000002/hits.txt"], answers: ["1"] })).entry;
+  const abs = ok(await rec(r.a0, { kind: "absence", value: "an account name for the logon", source: "the log", evidence: "a search", completion: "complete", refs: ["job:j000002/hits.txt"], control: { ref: "job:j000002/hits.txt", found: "the same search finds a planted row" }, answers: ["1"] })).entry;
   const cov = ok(await rec(r.a0, coverage("1", ["input:logs/a.log"], [`E-${abs.seq}`, "job:j000002/hits.txt"], { acquisition_none_why: "no source outside the evidence records it" }))).entry;
   const a = ok(await rec(r.a1, { kind: "answer", section: "question:1", value: "Who logged on cannot be determined from the log", reasoning: `E-${cov.seq}`, ...A, result: "not_determinable" })).entry;
   assert.ok((await P.attestEntry(r.a2, { seq: cov.seq, how: "ran the search again from job:j000002", review: REVIEW })).ok);
@@ -290,7 +290,7 @@ test("an answered question that must be established is never told it must be, wh
     assert.ok(quick.ok, (quick as { reason?: string }).reason);
     const qid = (quick as { lead: { id: string } }).lead.id;
     await L.attachJob(r.S, "a0", "j000001", qid);
-    const abs = ok(await rec(r.a0, { kind: "absence", value: `nothing for ${q}`, source: "inputs/disk.E01", evidence: "a search", completion: "complete", refs: ["job:j000001/hits.txt"], answers: [q] })).entry;
+    const abs = ok(await rec(r.a0, { kind: "absence", value: `nothing for ${q}`, source: "inputs/disk.E01", evidence: "a search", completion: "complete", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: [q] })).entry;
     assert.ok((await L.recordInterpretations(r.S, "a0", abs.seq, [{ job: "j000001" }])).ok);
     const closed = await L.closeLead(r.a0, qid, { disposition: "negative", ref: `E-${abs.seq}` });
     assert.ok(closed.ok && (closed as { lead: L.LeadView }).lead.quick_negative, "a quick negative");

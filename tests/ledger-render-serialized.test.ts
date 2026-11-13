@@ -21,7 +21,7 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 test("a render that began before the store sweep line was written cannot overwrite the render that saw it", { skip: process.platform === "win32" }, async () => {
   const { S, a0 } = await run();
   await planned(a0, "2");
-  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
+  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["2"] })).entry;
   ok(await rec(a0, coverage("2", ["input:disk.E01"], [`E-${abs.seq}`, "job:j000001/hits.txt"], { looked_for: ["alice"] })));
   await SW.awaitSweeps(S);
   const sweepsFile = join(S, SW.LEDGER_SWEEPS);

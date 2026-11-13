@@ -37,7 +37,7 @@ const OPERATOR: Q.Actor = { kind: "human", role: "operator", person: "tester@lab
 
 test("a coverage record names what a hit would contain, or why nothing literal would: each string checked", async () => {
   const { a0 } = await run();
-  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
+  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["2"] })).entry;
   const base = coverage("2", ["input:disk.E01"], [`E-${abs.seq}`]);
   const { looked_for_none_why: _n, ...bare } = base as Record<string, unknown>;
   refused(await rec(a0, bare), /looked_for is required on a coverage record: the literal strings a hit would contain/);
@@ -60,7 +60,7 @@ test("the store sweep: a hit outside the record's objects holds the negative, UT
   await jobWith(S, "j000007", "export.csv", "time,user,host\n09:58,ALICE,ws-11\n");
   await jobWith(S, "j000008", "strings.bin", Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from("header bob-laptop tail", "utf16le")]));
   await planned(a0, "2");
-  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
+  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["2"] })).entry;
   const covR = ok(await rec(a0, coverage("2", ["input:disk.E01"], [`E-${abs.seq}`, "job:j000001/hits.txt"], { looked_for: ["alice", "bob-laptop", "no-such-string-xyz"] })));
   assert.match(covR.note ?? "", /the hub now searches every output the run holds .* for "alice", "bob-laptop", "no-such-string-xyz", in UTF-8 and UTF-16LE/);
   const cov = covR.entry;
@@ -102,7 +102,7 @@ test("the store sweep: a hit outside the record's objects holds the negative, UT
   assert.equal(r.dispositions["question:2"], undefined);
   // What each hit object showed, recorded after the sweep: a finding on the export, a search of the listing that found no tool.
   const seenExport = ok(await rec(a0, { kind: "finding", ...F, value: "the export's row with alice is a user of another host", source: "the export", evidence: "row 2", refs: ["job:j000007/export.csv"], answers: ["2"] })).entry;
-  const seenListing = ok(await rec(a0, { kind: "absence", value: "a remote tool in the listing", source: "the listing", evidence: "read whole: it names a host", refs: ["job:j000008/strings.bin"], answers: ["2"] })).entry;
+  const seenListing = ok(await rec(a0, { kind: "absence", value: "a remote tool in the listing", source: "the listing", evidence: "read whole: it names a host", refs: ["job:j000008/strings.bin"], control: { ref: "job:j000008/strings.bin", found: "the same search finds a planted row" }, answers: ["2"] })).entry;
   // The record revised to name what the sweep found, with what it showed; its own sweep then holds nothing.
   const cov2 = ok(await rec(a0, coverage("2", ["input:disk.E01", "job:j000007/export.csv", "job:j000008"], [`E-${abs.seq}`, "job:j000001/hits.txt", `E-${seenExport.seq}`, `E-${seenListing.seq}`], { looked_for: ["alice", "bob-laptop", "no-such-string-xyz"], supersedes: cov.seq, coverage_actual: "the disk, and the export and the listing the sweep named: the export's row is a user of another host, the listing names a host, not a tool" }))).entry;
   ok(await rec(a1, { kind: "answer", section: "question:2", value: "No evidence of a remote tool was found on the disk, the export or the listing", reasoning: `E-${cov2.seq}`, ...A, result: "bounded_negative", supersedes: ans.seq }));
@@ -131,7 +131,7 @@ test("naming a hit object in a revised record is not examining it (the run sb1b3
   await planned(a0, "2");
   // Recorded before any sweep: it names the export, but it was not written in answer to the hit (it says nothing of what the hit is).
   const early = ok(await rec(a0, { kind: "finding", ...F, value: "the export lists logons", source: "the export", evidence: "its header", refs: ["job:j000007/export.csv"], answers: ["2"] })).entry;
-  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
+  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["2"] })).entry;
   const cov = ok(await rec(a0, coverage("2", ["input:disk.E01"], [`E-${abs.seq}`, "job:j000001/hits.txt"], { looked_for: ["alice"] }))).entry;
   let ans = ok(await rec(a1, { kind: "answer", section: "question:2", value: "No evidence of a remote tool was found on the disk", reasoning: `E-${cov.seq}`, ...A, result: "bounded_negative" })).entry;
   await SW.awaitSweeps(S);
@@ -151,7 +151,7 @@ test("naming a hit object in a revised record is not examining it (the run sb1b3
   assert.equal(r.dispositions["question:2"], undefined);
   // What each showed: a finding on the export; one absence over the other two, but first one that names only a directory, which examines nothing in particular.
   const seen = ok(await rec(a3, { kind: "finding", ...F, value: "the export's alice is a user of another host", source: "the export", evidence: "row 2", refs: ["job:j000007/export.csv"], answers: ["2"] })).entry;
-  const byDir = ok(await rec(a3, { kind: "absence", value: "a remote tool in the notes", source: "the notes", evidence: "read", refs: ["job:j000008", "job:j000009"], answers: ["2"] })).entry;
+  const byDir = ok(await rec(a3, { kind: "absence", value: "a remote tool in the notes", source: "the notes", evidence: "read", refs: ["job:j000008", "job:j000009"], control: { ref: "job:j000008", found: "the same search finds a planted row" }, answers: ["2"] })).entry;
   const cov3 = ok(await rec(a0, coverage("2", ["input:disk.E01", "job:j000007", "job:j000008", "job:j000009"], [`E-${abs.seq}`, "job:j000001/hits.txt", `E-${seen.seq}`, `E-${byDir.seq}`], { looked_for: ["alice"], supersedes: named.entry.seq }))).entry;
   ans = ok(await rec(a1, { kind: "answer", section: "question:2", value: "No evidence of a remote tool was found on the disk or the outputs", reasoning: `E-${cov3.seq}`, ...A, result: "bounded_negative", supersedes: ans.seq })).entry;
   await SW.awaitSweeps(S);
@@ -162,7 +162,7 @@ test("naming a hit object in a revised record is not examining it (the run sb1b3
   assert.match(d.what, /names 2 objects an earlier sweep found hits in .*: job:j000008\/a\.txt .*; job:j000009\/b\.txt/);
   assert.doesNotMatch(d.what, /export\.csv/, "the export is examined: a finding written after the sweep names it");
   // One absence over both, naming each object: released.
-  const both = ok(await rec(a3, { kind: "absence", value: "a remote tool in the notes", source: "the notes", evidence: "read whole: each names a person, no tool", refs: ["job:j000008/a.txt", "job:j000009/b.txt"], answers: ["2"] })).entry;
+  const both = ok(await rec(a3, { kind: "absence", value: "a remote tool in the notes", source: "the notes", evidence: "read whole: each names a person, no tool", refs: ["job:j000008/a.txt", "job:j000009/b.txt"], control: { ref: "job:j000008/a.txt", found: "the same search finds a planted row" }, answers: ["2"] })).entry;
   const cov4 = ok(await rec(a0, coverage("2", ["input:disk.E01", "job:j000007", "job:j000008", "job:j000009"], [`E-${abs.seq}`, "job:j000001/hits.txt", `E-${seen.seq}`, `E-${both.seq}`], { looked_for: ["alice"], supersedes: cov3.seq })));
   assert.doesNotMatch(cov4.note ?? "", /Naming a hit is not examining it/);
   ok(await rec(a1, { kind: "answer", section: "question:2", value: "No evidence of a remote tool was found on the disk or the outputs", reasoning: `E-${cov4.entry.seq}`, ...A, result: "bounded_negative", supersedes: ans.seq }));
@@ -177,7 +177,7 @@ test("a hit in an object the record names does not hold; a partial sweep names w
   const { S, a0, a1, a2 } = await run();
   await jobWith(S, "j000007", "export.csv", "time,user\n09:58,alice\n");
   const lead = await planned(a0, "2");
-  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
+  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["2"] })).entry;
   assert.ok((await L.closeLead(a0, lead, { disposition: "negative", ref: `E-${abs.seq}` })).ok);
   // Named already: the export is among the record's objects.
   const named = ok(await rec(a0, coverage("2", ["input:disk.E01", "job:j000007"], [`E-${abs.seq}`], { looked_for: ["alice"] }))).entry;

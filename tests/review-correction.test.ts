@@ -249,7 +249,7 @@ test("B3/A4: a limiting route stops holding the finish line only once its questi
 test("the negative's review is unchanged by strengths: a reviewed negative answers without a strength", async () => {
   const c = await run();
   await planned(c.a0, "2");
-  const absence = ok(await rec(c.a0, { kind: "absence", value: "a remote tool", source: "inputs/disk.E01", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
+  const absence = ok(await rec(c.a0, { kind: "absence", value: "a remote tool", source: "inputs/disk.E01", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["2"] })).entry;
   const cov = ok(await rec(c.a0, coverage("2", ["input:disk.E01"], [`E-${absence.seq}`]))).entry;
   const ans = ok(await rec(c.a1, { kind: "answer", section: "question:2", value: "No evidence of a remote tool was found on the disk", reasoning: `E-${cov.seq}`, ...A, result: "bounded_negative" })).entry;
   refused(await P.attestEntry(c.a2, { seq: ans.seq, how: "x", strength: "established", answer_review: review() }), /answer_review is for an answer to a question; #\d+ is a negative/);

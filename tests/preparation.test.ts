@@ -54,7 +54,7 @@ async function codes(S: string, q: string, existence: string[] = []): Promise<{ 
 /** Question 2 (an existence question) answered: no remote tool, it did not happen, over the whole disk, reviewed by another seat. */
 async function absence(o: { S: string; a0: P.SwarmContext; a1: P.SwarmContext; a2: P.SwarmContext }): Promise<P.LedgerEntry> {
   const lead = await planned(o.a0, "2");
-  const found = ok(await rec(o.a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
+  const found = ok(await rec(o.a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["2"] })).entry;
   assert.ok((await L.closeLead(o.a0, lead, { disposition: "negative", ref: `E-${found.seq}` })).ok);
   const cov = ok(await rec(o.a0, coverage("2", ["input:disk.E01"], [`E-${found.seq}`, "job:j000001/hits.txt"], { acquisition_none_why: "the disk is the whole of the case" }))).entry;
   assert.equal(cov.coverage, "complete", "the job behind it declared the disk");
@@ -110,14 +110,14 @@ test("a negative whose coverage is complete over the source is held; a plain neg
   await receipt(S, "attempted", { job: "j000009" });
   // Question 4: not determinable on a coverage record complete over the disk.
   await planned(a0, "4");
-  const f4 = ok(await rec(a0, { kind: "absence", value: "a start time", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["4"] })).entry;
+  const f4 = ok(await rec(a0, { kind: "absence", value: "a start time", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["4"] })).entry;
   const c4 = ok(await rec(a0, coverage("4", ["input:disk.E01"], [`E-${f4.seq}`, "job:j000001/hits.txt"], { acquisition_none_why: "none would settle it" }))).entry;
   assert.equal(c4.coverage, "complete");
   const a4 = ok(await rec(a1, { kind: "answer", section: "question:4", value: "When it started cannot be determined from the disk", reasoning: `E-${c4.seq}`, ...A, result: "not_determinable" }));
   assert.ok((await P.attestEntry(a2, { seq: a4.entry.seq, how: "ran it again", review: REVIEW })).ok);
   // Question 1: not determinable on a partial record naming the disk (its job read a log, not the disk).
   await planned(a0, "1");
-  const f1 = ok(await rec(a0, { kind: "absence", value: "a logon", source: "the log", evidence: "a search", refs: ["job:j000002/hits.txt"], answers: ["1"] })).entry;
+  const f1 = ok(await rec(a0, { kind: "absence", value: "a logon", source: "the log", evidence: "a search", refs: ["job:j000002/hits.txt"], control: { ref: "job:j000002/hits.txt", found: "the same search finds a planted row" }, answers: ["1"] })).entry;
   const c1 = ok(await rec(a0, coverage("1", ["input:disk.E01", "input:logs/a.log"], [`E-${f1.seq}`, "job:j000002/hits.txt"], { acquisition_none_why: "none would settle it" }))).entry;
   assert.equal(c1.coverage, "partial");
   const a1rec = ok(await rec(a1, { kind: "answer", section: "question:1", value: "Who logged on cannot be determined", reasoning: `E-${c1.seq}`, ...A, result: "not_determinable" }));
@@ -125,13 +125,13 @@ test("a negative whose coverage is complete over the source is held; a plain neg
   assert.ok(a1rec.warnings?.some((w) => /weighed without a produced broad extraction of what it rests on: coverage record E-\d+ names inputs\/disk\.E01: broad extraction tpack\/whole 1\.0\.0 attempted \(job j000009\)/.test(w)), JSON.stringify(a1rec.warnings));
   // Question 5: complete, over a member of the disk's catalogue (a job declared it).
   await planned(a0, "5", [{ source: "member:g0001#2", method: "read the volume" }]);
-  const f5 = ok(await rec(a0, { kind: "absence", value: "an account", source: "the volume", evidence: "a search", refs: ["job:j000003/hits.txt"], answers: ["5"] })).entry;
+  const f5 = ok(await rec(a0, { kind: "absence", value: "an account", source: "the volume", evidence: "a search", refs: ["job:j000003/hits.txt"], control: { ref: "job:j000003/hits.txt", found: "the same search finds a planted row" }, answers: ["5"] })).entry;
   const c5 = ok(await rec(a0, coverage("5", ["member:g0001#2"], [`E-${f5.seq}`, "job:j000003/hits.txt"], { acquisition_none_why: "none would settle it" }))).entry;
   assert.equal(c5.coverage, "complete");
   ok(await rec(a1, { kind: "answer", section: "question:5", value: "Which account ran it cannot be determined from the volume", reasoning: `E-${c5.seq}`, ...A, result: "not_determinable" }));
   // Question 6: complete, over an output made from the disk (a job that read everything stands behind it).
   await planned(a0, "6", [{ source: "job:j000001/hits.txt", method: "read the hits" }]);
-  const f6 = ok(await rec(a0, { kind: "absence", value: "a transfer", source: "the hits", evidence: "a search", refs: ["job:j000006/hits.txt"], answers: ["6"] })).entry;
+  const f6 = ok(await rec(a0, { kind: "absence", value: "a transfer", source: "the hits", evidence: "a search", refs: ["job:j000006/hits.txt"], control: { ref: "job:j000006/hits.txt", found: "the same search finds a planted row" }, answers: ["6"] })).entry;
   const c6 = ok(await rec(a0, coverage("6", ["job:j000001/hits.txt"], [`E-${f6.seq}`, "job:j000006/hits.txt"], { acquisition_none_why: "none would settle it" }))).entry;
   assert.equal(c6.coverage, "complete");
   ok(await rec(a1, { kind: "answer", section: "question:6", value: "What left the network cannot be determined from the hits", reasoning: `E-${c6.seq}`, ...A, result: "not_determinable" }));
@@ -182,7 +182,7 @@ test("the operator's acceptance of the question releases the hold, and a run wit
 test("a negative's review offer leads with the state of each source it rests on", async () => {
   const { S, a0, a1 } = await run();
   await planned(a0, "4");
-  const f4 = ok(await rec(a0, { kind: "absence", value: "a start time", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["4"] })).entry;
+  const f4 = ok(await rec(a0, { kind: "absence", value: "a start time", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["4"] })).entry;
   const c4 = ok(await rec(a0, coverage("4", ["input:disk.E01"], [`E-${f4.seq}`, "job:j000001/hits.txt"], { acquisition_none_why: "none would settle it" }))).entry;
   const ans = ok(await rec(a1, { kind: "answer", section: "question:4", value: "When it started cannot be determined from the disk", reasoning: `E-${c4.seq}`, ...A, result: "not_determinable" })).entry;
   assert.equal(await L.negativePreparationWords(S, await L.leadsSnapshot(S), ans.seq), null, "no receipt, nothing to lead with");
@@ -480,12 +480,12 @@ test("replay --prepare-as asks this checkout's packs about the run's own evidenc
   await job(r.S, "j000007", "hits.txt", { spec: { kind: "command", scope: "declared", inputs: ["input:phone.tar"], command: "search" } });
   // Question 4 not determinable on coverage complete over the phone; question 1 on coverage that names it and is partial.
   await planned(r.a0, "4", [{ source: "input:phone.tar", method: "search the phone" }]);
-  const f4 = ok(await rec(r.a0, { kind: "absence", value: "a start time", source: "the phone", evidence: "a search", refs: ["job:j000007/hits.txt"], answers: ["4"] })).entry;
+  const f4 = ok(await rec(r.a0, { kind: "absence", value: "a start time", source: "the phone", evidence: "a search", refs: ["job:j000007/hits.txt"], control: { ref: "job:j000007/hits.txt", found: "the same search finds a planted row" }, answers: ["4"] })).entry;
   const c4 = ok(await rec(r.a0, coverage("4", ["input:phone.tar"], [`E-${f4.seq}`, "job:j000007/hits.txt"], { acquisition_none_why: "none would settle it" }))).entry;
   assert.equal(c4.coverage, "complete");
   ok(await rec(r.a1, { kind: "answer", section: "question:4", value: "When it started cannot be determined from the phone", reasoning: `E-${c4.seq}`, ...A, result: "not_determinable" }));
   await planned(r.a0, "1", [{ source: "input:phone.tar", method: "search the phone" }]);
-  const f1 = ok(await rec(r.a0, { kind: "absence", value: "a logon", source: "the log", evidence: "a search", refs: ["job:j000002/hits.txt"], answers: ["1"] })).entry;
+  const f1 = ok(await rec(r.a0, { kind: "absence", value: "a logon", source: "the log", evidence: "a search", refs: ["job:j000002/hits.txt"], control: { ref: "job:j000002/hits.txt", found: "the same search finds a planted row" }, answers: ["1"] })).entry;
   const c1 = ok(await rec(r.a0, coverage("1", ["input:phone.tar", "input:logs/a.log"], [`E-${f1.seq}`, "job:j000002/hits.txt"], { acquisition_none_why: "none would settle it" }))).entry;
   ok(await rec(r.a1, { kind: "answer", section: "question:1", value: "Who logged on cannot be determined", reasoning: `E-${c1.seq}`, ...A, result: "not_determinable" }));
   const before = await registerDigest(r.S);

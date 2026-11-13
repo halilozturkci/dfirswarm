@@ -186,7 +186,7 @@ test("a pass killed in the middle is not paid for twice: the next one reads only
 test("a coverage record whose sweep was lost with its process gets it when the hub starts, and from the hub's rounds once it is older than the orphan bound", async () => {
   const { S, a0 } = await run();
   await planned(a0, "2");
-  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
+  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["2"] })).entry;
   const c1 = ok(await rec(a0, coverage("2", ["input:disk.E01"], [`E-${abs.seq}`], { looked_for: ["mallory"] }))).entry;
   const c2 = ok(await rec(a0, coverage("2", ["input:disk.E01", "input:logs/a.log"], [`E-${abs.seq}`], { looked_for: ["trent"] }))).entry;
   await SW.awaitSweeps(S);

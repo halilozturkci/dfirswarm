@@ -37,7 +37,7 @@ test("a downgrade names its counter-evidence: refused without it, admitted with 
   assert.deepEqual(codes(r, "question:1"), ["answer_disputed"]);
   // Walked down with no counter-evidence: refused, pointing to the dispute and a lower strength.
   await planned(a0, "1");
-  const abs = ok(await rec(a0, { kind: "absence", value: "a logon", source: "the log", evidence: "a search", refs: ["job:j000002/hits.txt"], answers: ["1"] })).entry;
+  const abs = ok(await rec(a0, { kind: "absence", value: "a logon", source: "the log", evidence: "a search", refs: ["job:j000002/hits.txt"], control: { ref: "job:j000002/hits.txt", found: "the same search finds a planted row" }, answers: ["1"] })).entry;
   const cov = ok(await rec(a0, coverage("1", ["input:logs/a.log"], [`E-${abs.seq}`]))).entry;
   const down = { kind: "answer", section: "question:1", value: "Who logged on cannot be determined from the log", reasoning: `E-${cov.seq}`, ...A, result: "not_determinable", supersedes: est.seq };
   refused(await rec(a1, down), new RegExp(`#${est.seq} answered question:1 established; recording it not determinable is a downgrade, and a downgrade names what undermines the earlier chain: downgrade \\{evidence: .*dispute #${est.seq} \\(why, refs\\), and if the doubt stands attest it best_candidate or record it again with confidence medium; the answer stays. A part the evidence cannot settle makes an answer partial, never not determinable while the findings it rests on stand`));
@@ -74,7 +74,7 @@ test("a downgrade of a partial answer resting on standing findings, citing only 
   const part = ok(await rec(a1, { kind: "answer", section: "question:1", value: "A logon from the office network at 09:14; the account is not established", reasoning: `E-${f1.seq} and E-${f2.seq}; the account is open (E-${lim.seq})`, ...A, limitations: [lim.seq], result: "partial", parts: [{ id: "when", part: "when and from where", status: "established", refs: [`E-${f1.seq}`, `E-${f2.seq}`] }, { id: "who", part: "which account", status: "open", open_by: `E-${lim.seq}` }] })).entry;
   await attested(a2, { seq: part.seq, how: "re-read lines 12 and 13", ...ESTABLISHED, answer_review: { ...ESTABLISHED.answer_review, parts: [{ id: "when", part: "when and from where", established: true, why: "lines 12 and 13" }, { id: "who", part: "which account", established: false, why: "not in the log", declared_open: `E-${lim.seq}` }] } });
   // The downgrader's own coverage record for the open part.
-  const abs = ok(await rec(a3, { kind: "absence", value: "an account name for the logon", source: "the log", evidence: "a search", refs: ["job:j000002/hits.txt"], answers: ["1"] })).entry;
+  const abs = ok(await rec(a3, { kind: "absence", value: "an account name for the logon", source: "the log", evidence: "a search", refs: ["job:j000002/hits.txt"], control: { ref: "job:j000002/hits.txt", found: "the same search finds a planted row" }, answers: ["1"] })).entry;
   const cov = ok(await rec(a3, coverage("1", ["input:logs/a.log"], [`E-${abs.seq}`]))).entry;
   const down = { kind: "answer", section: "question:1", value: "Who logged on cannot be determined from the log", reasoning: `E-${cov.seq}; E-${lim.seq}`, ...A, limitations: [lim.seq], result: "not_determinable", supersedes: part.seq };
   const r = await rec(a3, { ...down, downgrade: { evidence: [`E-${lim.seq}`, `E-${cov.seq}`, `E-${other.seq}`], why: "the account cannot be established" } });

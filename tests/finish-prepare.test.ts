@@ -46,6 +46,7 @@ const ESTABLISHED = {
   answer_review: {
     reproduced: "re-derived the cited finding from its sealed ref",
     read: "nothing beyond the cited entries",
+    link: "the cited record is the host's own log of the event the question asks about",
     parts: [{ part: "the question as asked", established: true, why: "the cited finding shows it" }],
     inference: "the finding is the answer",
     alternatives: [{ explanation: "a copy of the record left by another process", why: "the record's own metadata ties it to the event", evidence: ["E-1"] }],

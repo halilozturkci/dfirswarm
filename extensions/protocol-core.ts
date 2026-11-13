@@ -6252,7 +6252,7 @@ export const TOOL_RESERVED_NAMES = new Set([
   "post", "inbox", "wait", "claim_file", "release_file", "claims", "list_team", "budget",
   "file_history", "file_restore", "file_diff", "thread_open", "thread_join", "done",
   "playwright", "browser_check", "make_tool", "tools", "system", "inputs", "name", "record", "ledger",
-  "attest", "dispute",
+  "attest", "dispute", "record_finding", "record_answer", "record_coverage", "record_limitation", "record_absence",
   // the harness's own trace events: a forged tool with one of these names
   // would land its calls under the same name and be counted as the event
   "agent_start", "agent_stop", "thinking", "claim_violation", "inputs_guard", "inputs_violation",
@@ -8259,6 +8259,16 @@ export type LedgerEntry = {
   /** A coverage record, written by the hub: the planned routes of its questions that nothing under them examined. */
   not_examined?: Array<{ source: string; method: string; why: string }>;
   /** An external entry: where the material came from (LEDGER_SOURCE_CLASSES), written by the harness. */
+  /** An answer's qualifier (candidate, partial, the open part), apart from its value; and why a revision changed a value that was in the asked format. */
+  qualifier?: string;
+  value_changed_because?: string;
+  /** A negative that rests on the seat's own scanner: the control runs that show the scanner finds what it looks for. */
+  control?: Array<{ ref: string; found: string }>;
+  /** A negative that rests on pictures: the ones the recording seat was handed, and those of the same job and directory it was not. */
+  images_read?: string[];
+  images_unread?: Array<{ job: string; dir: string; total: number; unread: string[] }>;
+  /** A finding's carriers of a value, each decoded, undecodable or not examined. */
+  carriers?: Array<{ carrier: string; state: "decoded" | "undecodable" | "not_examined"; why: string }>;
   source_class?: (typeof LEDGER_SOURCE_CLASSES)[number];
   /** An external entry: who supplied it, when, from where, its sha256, what it may be used for (and, for a capture, its grant and request). */
   provenance?: { supplied_by: string; at: string; from: string; sha256?: string; permitted_use: string } & Record<string, unknown>;
@@ -8353,6 +8363,14 @@ function ledgerV4Fields(e: LedgerEntry): Record<string, unknown> {
     ...coverageFields(e),
     ...(e.source_class ? { source_class: e.source_class } : {}),
     ...(e.provenance ? { provenance: canonicalValue(e.provenance) } : {}),
+    // An answer's qualifier and why its value changed, a negative's control and the images read and not read for it, a
+    // finding's carriers: each only when present, so an entry from before them has the core it always had.
+    ...(e.qualifier ? { qualifier: e.qualifier } : {}),
+    ...(e.value_changed_because ? { value_changed_because: e.value_changed_because } : {}),
+    ...(e.control?.length ? { control: e.control.map((c) => ({ ref: c.ref, found: c.found })) } : {}),
+    ...(e.images_read?.length ? { images_read: e.images_read } : {}),
+    ...(e.images_unread?.length ? { images_unread: e.images_unread.map((x) => ({ job: x.job, dir: x.dir, total: x.total, unread: x.unread })) } : {}),
+    ...(e.carriers?.length ? { carriers: e.carriers.map((c) => ({ carrier: c.carrier, state: c.state, why: c.why })) } : {}),
   };
 }
 

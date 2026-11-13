@@ -87,7 +87,7 @@ test("an echo is not held: an output made from the run's registers, a summary th
   await writeFile(join(S, "tool-output", "a3", "trace-spill.jsonl"), `${JSON.stringify({ agent: "a3", tool: "bash", args: { command: "grep -ri alice inputs/" } })}\n`);
   const spill = "tool:a3/trace-spill.jsonl";
   await planned(a0, "2");
-  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
+  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["2"] })).entry;
   const cov = ok(await rec(a0, coverage("2", ["input:disk.E01", "job:j000007"], [`E-${abs.seq}`, "job:j000001/hits.txt"], { looked_for: ["alice"] }))).entry;
   const ans = ok(await rec(a1, { kind: "answer", section: "question:2", value: "No evidence of a remote tool was found on the disk", reasoning: `E-${cov.seq}`, ...A, result: "bounded_negative" })).entry;
   await SW.awaitSweeps(S);
@@ -144,7 +144,7 @@ test("a hit still holds when what made it read evidence the record does not name
   // The trace's last line, with no anchor to hold it: not on the chain yet.
   made.unchained = (await kept(S, "a1", "20260930081600000-bash-jjjj.out.log", "alice, the last line\n", { tool: "bash", args: { command: "cat ledger/entries.jsonl" } }, { follow: false })).ref;
   await planned(a0, "2");
-  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
+  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["2"] })).entry;
   const cov = ok(await rec(a0, coverage("2", ["input:disk.E01"], [`E-${abs.seq}`, "job:j000001/hits.txt"], { looked_for: ["alice"] }))).entry;
   ok(await rec(a1, { kind: "answer", section: "question:2", value: "No evidence of a remote tool was found on the disk", reasoning: `E-${cov.seq}`, ...A, result: "bounded_negative" }));
   await SW.awaitSweeps(S);
@@ -169,7 +169,7 @@ test("a job whose own command names the string is an echo when it read only name
   await jobWith(S, "j000012", "summary.txt", "users seen: alice (1)\n", { kind: "command", scope: "declared", inputs: ["job:j000007/export.csv"], network: "off", command: "python3 summarise.py" });
   await jobWith(S, "j000013", "hits.txt", "export.csv, whole:alice\n", grep(["input:disk.E01"]));
   await planned(a0, "2");
-  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
+  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["2"] })).entry;
   const cov = ok(await rec(a0, coverage("2", ["input:disk.E01", "job:j000007"], [`E-${abs.seq}`, "job:j000001/hits.txt"], { looked_for: ["alice"] }))).entry;
   ok(await rec(a1, { kind: "answer", section: "question:2", value: "No evidence of a remote tool was found on the disk", reasoning: `E-${cov.seq}`, ...A, result: "bounded_negative" }));
   await SW.awaitSweeps(S);
@@ -201,7 +201,7 @@ test("a kept output and the import it was sealed as are one object: a record tha
   await writeFile(join(staging2, file), body);
   await sealTree(S, staging2, join(storePaths(S).imports, "j000020", "out"), "j000020", 1);
   await planned(a0, "2");
-  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
+  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["2"] })).entry;
   const cov = ok(await rec(a0, coverage("2", ["input:disk.E01"], [`E-${abs.seq}`, "job:j000001/hits.txt"], { looked_for: ["alice"] }))).entry;
   let ans = ok(await rec(a1, { kind: "answer", section: "question:2", value: "No evidence of a remote tool was found on the disk", reasoning: `E-${cov.seq}`, ...A, result: "bounded_negative" })).entry;
   await SW.awaitSweeps(S);
@@ -271,7 +271,7 @@ test("replay --resweep reads a recorded sweep again: the hit an older harness he
     if (spec) await writeFile(join(dir, "j000021", "job.json"), JSON.stringify({ id: "j000021", state: "committed", status: "ok", requester: { agent: "a1" }, spec: { kind: "import", scope: "declared", inputs: [`tool-output/a1/${file}`], seal: { ref: k.ref } } }));
   }
   await planned(a0, "2");
-  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
+  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["2"] })).entry;
   const seen = ok(await rec(a0, { kind: "finding", ...F, value: "the alice in the strings is another host's user", source: "the strings", evidence: "line 1", refs: [`import:j000021/${file}`], answers: ["2"] })).entry;
   const cov = ok(await rec(a0, coverage("2", ["input:disk.E01", `import:j000021/${file}`], [`E-${abs.seq}`, "job:j000001/hits.txt", `E-${seen.seq}`], { looked_for: ["alice"] }))).entry;
   ok(await rec(a1, { kind: "answer", section: "question:2", value: "No evidence of a remote tool was found on the disk or the strings", reasoning: `E-${cov.seq}`, ...A, result: "bounded_negative" }));
@@ -318,7 +318,7 @@ test("a job that read a whole job read what is accounted for when the record nam
   await jobFiles(S, "j000468", { "hits.txt": "a.txt:09:58 alice\n" }, grep(["job:j000104"]));
   await jobFiles(S, "j000469", { "hits.txt": "a.txt:09:58 alice (j000105)\n" }, grep(["job:j000105"]));
   await planned(a0, "2");
-  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
+  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["2"] })).entry;
   const cov = ok(await rec(a0, coverage("2", ["input:disk.E01", "job:j000104/a.txt", "job:j000105/a.txt"], [`E-${abs.seq}`, "job:j000001/hits.txt"], { looked_for: ["alice"] }))).entry;
   await SW.awaitSweeps(S);
   const sw = SW.sweepOf(cov, await SW.readSweeps(S))!;
@@ -332,7 +332,7 @@ test("a sweep hit examined in place: an entry for the question naming the hit ob
   const { S, a0, a1, a2 } = await run();
   await jobFiles(S, "j000201", { "hits.txt": "b.log: alice logged on\n" }, { kind: "command", scope: "declared", inputs: ["input:logs/b.log"], network: "off", command: "grep -H alice" });
   await planned(a0, "2");
-  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
+  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["2"] })).entry;
   const cov = ok(await rec(a0, coverage("2", ["input:disk.E01"], [`E-${abs.seq}`, "job:j000001/hits.txt"], { looked_for: ["alice"] }))).entry;
   ok(await rec(a1, { kind: "answer", section: "question:2", value: "No evidence of a remote tool was found on the disk", reasoning: `E-${cov.seq}`, ...A, result: "bounded_negative" }));
   await SW.awaitSweeps(S);

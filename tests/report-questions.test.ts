@@ -77,7 +77,7 @@ async function caseRun() {
   const l2 = okq(await L.openLead(a1, { title: "Removable media history", why: `${q7} asks it`, answers: [q7], take: true, proposition: "files were copied to a removable drive", negation: "no file was copied to a removable drive", routes: [{ source: "input:disk.E01", method: "device history and link files" }] })).lead.id;
   await L.attachJob(S, "a1", "j000001", l2);
   await pause();
-  const absence = ok(await rec(a1, { kind: "absence", value: "a link file pointing at a removable drive", source: "inputs/disk.E01", evidence: "a search of the link files", refs: ["job:j000001/hits.txt"], answers: ["7"] })).entry;
+  const absence = ok(await rec(a1, { kind: "absence", value: "a link file pointing at a removable drive", source: "inputs/disk.E01", evidence: "a search of the link files", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["7"] })).entry;
   okq(await L.closeLead(a1, l2, { disposition: "negative", ref: `E-${absence.seq}` }));
   // A second seat opens the same work, and closes it as a duplicate.
   const l3 = okq(await L.openLead(a2, { title: "Removable media again", why: "the same", answers: [q7], take: true, overlap: "verification", overlap_why: "check it" } as never)).lead.id;

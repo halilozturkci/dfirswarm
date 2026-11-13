@@ -66,7 +66,7 @@ after(async () => {
 
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 /** How a critic attests an answer to a question since B2: established, with the review part by part. */
-const EST = { strength: "established", answer_review: { reproduced: "re-derived the cited finding from its sealed ref", read: "nothing beyond the cited entries", parts: [{ part: "the question as asked", established: true, why: "the cited finding shows it" }], inference: "the finding is the answer", alternatives: [{ explanation: "a copy of the record left by another process", why: "the cited record's own metadata ties it to the event", evidence: ["E-1"] }], other_family: { checked: false, text: "no other source family holds it in this fixture" }, discriminator: { rival: "a copy of the record written later by a backup process", test: "read the record's write time against the backup's run times", favours_if: "the answer if it falls outside every backup run; the rival if inside one", outcome: "it falls outside every backup run", refs: ["job:j000001/rows.txt"] }, derivation: { job: "j000001", inputs: ["input:disk.E01"] } } } as const;
+const EST = { strength: "established", answer_review: { reproduced: "re-derived the cited finding from its sealed ref", read: "nothing beyond the cited entries", link: "the cited record is the host's own log of the event the question asks about", parts: [{ part: "the question as asked", established: true, why: "the cited finding shows it" }], inference: "the finding is the answer", alternatives: [{ explanation: "a copy of the record left by another process", why: "the cited record's own metadata ties it to the event", evidence: ["E-1"] }], other_family: { checked: false, text: "no other source family holds it in this fixture" }, discriminator: { rival: "a copy of the record written later by a backup process", test: "read the record's write time against the backup's run times", favours_if: "the answer if it falls outside every backup run; the rival if inside one", outcome: "it falls outside every backup run", refs: ["job:j000001/rows.txt"] }, derivation: { job: "j000001", inputs: ["input:disk.E01"] } } } as const;
 /** A finding's version 4 fields, observed. */
 const F = { basis: "observed", confidence: "high", indicates: "What the observation shows, and the step to it.", confidence_why: "Read directly from the object it cites." } as const;
 /** A question's answer's required fields: an established result (the negative bar says what a negative needs). */
@@ -156,15 +156,20 @@ test("a finding on a failed job's output says why in qualifies; it can never sho
   const { a0 } = await run();
   const base = { kind: "finding", ...F, value: "Three events were parsed", source: "Security.evtx", evidence: "evtx_query", refs: ["job:j000002/partial.txt"] };
   refused(await rec(a0, base), /job:j000002\/partial\.txt: failed\): say in qualifies/);
-  refused(await rec(a0, { ...base, qualifies: [{ ref: "job:j000001/rows.txt", why: "w" }] }), /not one of the entry's refs/);
+  // A why on a job none of the entry's failed refs is from qualifies nothing: left out and said, and the ref that does need one is still named. Something that is no job is told which ref to use.
+  refused(await rec(a0, { ...base, qualifies: [{ ref: "job:j000001/rows.txt", why: "w" }] }), /this finding rests on the kept output of a job that did not succeed \(job:j000002\/partial\.txt: failed\).*qualifies on job:j000001\/rows\.txt is left out: no ref of the entry from a job that failed is from that job/);
+  refused(await rec(a0, { ...base, qualifies: [{ ref: "the parser's output", why: "w" }] }), /qualifies names "the parser's output", which is not one of the entry's refs: use exactly job:j000002\/partial\.txt, as refs has it/);
   refused(await rec(a0, { ...base, qualifies: [{ ref: "job:j000002/partial.txt" }] }), /qualifies is \[\{ref, why\}\]/);
   const q = ok(await rec(a0, { ...base, qualifies: [{ ref: "job:j000002/partial.txt", why: "the parser wrote three whole records before it failed" }] }));
   assert.equal(q.note, undefined);
-  refused(await rec(a0, { kind: "absence", value: "No 4624", source: "Security.evtx", evidence: "evtx_query", refs: ["job:j000002/partial.txt"] }), /cannot show that something is absent/);
-  refused(await rec(a0, { kind: "absence", value: "No 4624", source: "Security.evtx", evidence: "evtx_query", refs: ["job:j000002/partial.txt"], completion: "complete" }), /cannot show that something is absent/);
-  const partial = ok(await rec(a0, { kind: "absence", value: "No 4624 in what was parsed", source: "Security.evtx", evidence: "evtx_query", refs: ["job:j000002/partial.txt"], completion: "partial" }));
+  refused(await rec(a0, { kind: "absence", value: "No 4624", source: "Security.evtx", evidence: "evtx_query", refs: ["job:j000002/partial.txt"], control: { ref: "job:j000001/rows.txt", found: "the same search finds a planted row" } }), /cannot show that something is absent/);
+  refused(await rec(a0, { kind: "absence", value: "No 4624", source: "Security.evtx", evidence: "evtx_query", refs: ["job:j000002/partial.txt"], control: { ref: "job:j000001/rows.txt", found: "the same search finds a planted row" }, completion: "complete" }), /cannot show that something is absent/);
+  const partial = ok(await rec(a0, { kind: "absence", value: "No 4624 in what was parsed", source: "Security.evtx", evidence: "evtx_query", refs: ["job:j000002/partial.txt"], control: { ref: "job:j000001/rows.txt", found: "the same search finds a planted row" }, completion: "partial" }));
   assert.match(partial.note ?? "", /job that did not succeed/);
-  refused(await rec(a0, { kind: "limitation", value: "The log was not parsed", source: "Security.evtx", evidence: "the parser failed", reason: "failed", refs: ["job:j000002/partial.txt"], qualifies: [{ ref: "job:j000002/partial.txt", why: "w" }] }), /a limitation rests on what could not be done/);
+  // qualifies on a limitation says nothing the limitation does not: left out, and said (it was a refusal with nothing else to fix).
+  const lim = ok(await rec(a0, { kind: "limitation", value: "The log was not parsed", source: "Security.evtx", evidence: "the parser failed", reason: "failed", refs: ["job:j000002/partial.txt"], qualifies: [{ ref: "job:j000002/partial.txt", why: "w" }] }));
+  assert.match(lim.note ?? "", /qualifies is left out of this limitation: it says why a failed job's bytes still support a claim, and a limitation rests on what could not be done/);
+  assert.equal(lim.entry.qualifies, undefined);
 });
 
 test("the hub writes how each cited object was made, canonical and chained, and the line alone re-verifies", async () => {
@@ -270,8 +275,11 @@ test("an answer rests on the entries it cites by hash; every claimed support is 
   refused(await rec(a3, { ...ans, reasoning: "E-99" }), /E-99: there is no entry #99/);
   refused(await rec(a3, { ...ans, reasoning: `E-${f2.seq} and E-${hyp.seq}` }), new RegExp(`rests on at least one standing finding, search, limitation or coverage record recorded with answers=\\["1"\\].*none of E-${f2.seq}, E-${hyp.seq} names it`));
   refused(await rec(a3, { ...ans, reasoning: `E-${f1.seq}`, limitations: [f2.seq] }), /limitations names #\d+, a finding/);
-  refused(await rec(a3, { ...ans, reasoning: `E-${f1.seq}`, qualifies: [{ ref: `E-${f1.seq}`, why: "w" }] }), /is neither disputed nor resting on a failed job/);
-  const a = ok(await rec(a3, { ...ans, section: "Q1", reasoning: `Prefetch says so (E-${f1.seq}); it was on the desktop (E-${f2.seq}); a hypothesis (E-${hyp.seq}).`, contrary: [`E-${hyp.seq}`], limitations: [lim.seq] }));
+  // A qualifies on an entry the answer does not cite is refused, with the entries that need one; one on a cited entry that needs none is left out and said (the answer below).
+  refused(await rec(a3, { ...ans, reasoning: `E-${f1.seq}`, qualifies: [{ ref: `E-${f2.seq}`, why: "w" }] }), /qualifies names E-\d+, which the answer does not cite as support: it qualifies only a cited entry that needs it \(none of the entries it cites does: leave qualifies out\)/);
+  const a = ok(await rec(a3, { ...ans, section: "Q1", reasoning: `Prefetch says so (E-${f1.seq}); it was on the desktop (E-${f2.seq}); a hypothesis (E-${hyp.seq}).`, contrary: [`E-${hyp.seq}`], limitations: [lim.seq], qualifies: [{ ref: `E-${f1.seq}`, why: "w" }] }));
+  assert.match(a.note ?? "", new RegExp(`Taken as meant, nothing to change there: qualifies on E-${f1.seq} is left out: it is neither disputed nor resting on a failed job`));
+  assert.equal(a.entry.qualifies, undefined);
   assert.equal(a.entry.section, "question:1", "Q1 is question:1");
   assert.deepEqual(a.entry.support, [{ seq: f1.seq, hash: f1.hash }, { seq: f2.seq, hash: f2.hash }], "contrary evidence is not support");
   assert.deepEqual(a.entry.contrary, [{ seq: hyp.seq, hash: hyp.hash }]);
@@ -573,7 +581,7 @@ test("the brief's questions are counted as the goals' awk counts them, and the c
 test("in ledger mode too, a bounded negative is examination-limited unless its question asks whether something exists and it says the event did not happen under the stronger bar, covered and reviewed; it is a disposition either way", async () => {
   const { a0, a1, a2, a3, root } = await run();
   assert.ok((await openLead(a0, { title: "Look for a second wallet", why: "question 1", answers: ["1"], take: true, routes: [{ source: "input:disk.E01", method: "list every file, allocated and deleted" }] })).ok);
-  const none = ok(await rec(a0, { kind: "absence", value: "No second wallet file", source: "inputs/disk.E01", evidence: "fls over the whole image, allocated and deleted", refs: ["job:j000001/rows.txt"], answers: ["1"] })).entry;
+  const none = ok(await rec(a0, { kind: "absence", value: "No second wallet file", source: "inputs/disk.E01", evidence: "fls over the whole image, allocated and deleted", refs: ["job:j000001/rows.txt"], control: { ref: "job:j000001/rows.txt", found: "the same search finds a planted row" }, answers: ["1"] })).entry;
   const cov = ok(await rec(a0, { kind: "coverage", looked_for_none_why: "no literal form a byte search could find", proposition: "A second wallet file exists on the disk", refs: ["input:disk.E01"], answers: ["1"], time_range: "no time bound", search_method: "a full file listing", settings: "fls -r, allocated and deleted", coverage_actual: "every file system entry of the image", skipped: "none: the listing ran to its end", failures: "none", result_refs: [`E-${none.seq}`, "job:j000001/rows.txt"], alternatives: "a wallet held only in memory", detection_opportunity: { trace_expected: "yes", why: "a wallet on this disk is a file the listing names" } })).entry;
   assert.equal(cov.coverage, "complete", "the job behind it read the disk (no declared scope: everything)");
   refused(await rec(a3, { kind: "answer", section: "question:1", value: "The second wallet did not happen", reasoning: `E-${cov.seq}`, ...Q, result: "bounded_negative" }), /worded as the event's absence/);

@@ -401,7 +401,7 @@ test("the finish line: an in-scope arrival makes it not ready, a proposed one do
   assert.equal(ans.entry.section, `question:${q.slice(2)}`, "Q-n is question:n");
   const g2 = await gate();
   assert.deepEqual(g2.defects.map((d) => d.code), ["question_answer"], "a critic has not acted on it yet");
-  const att = await P.attestEntry(a1, { seq: ans.entry.seq, how: "re-read the finding it rests on", strength: "established", answer_review: { reproduced: "re-read the finding from its ref", read: "nothing else", parts: [{ part: "the route", established: true, why: "the finding shows it" }], inference: "the finding is the answer", alternatives: [{ explanation: "the archive was copied in from elsewhere", why: "the finding's record names the route", evidence: ["E-1"] }], other_family: { checked: false, text: "one family only in this fixture" } } } as never);
+  const att = await P.attestEntry(a1, { seq: ans.entry.seq, how: "re-read the finding it rests on", strength: "established", answer_review: { reproduced: "re-read the finding from its ref", read: "nothing else", link: "the finding is the route the question asks about, read from the host's own record", parts: [{ part: "the route", established: true, why: "the finding shows it" }], inference: "the finding is the answer", alternatives: [{ explanation: "the archive was copied in from elsewhere", why: "the finding's record names the route", evidence: ["E-1"] }], other_family: { checked: false, text: "one family only in this fixture" } } } as never);
   assert.ok((att as { ok: boolean }).ok, JSON.stringify(att));
   assert.deepEqual((await gate()).defects, []);
   // Amended after its answer: the answer is stale.
@@ -505,7 +505,7 @@ test("hypothesis framing: the first agent lead under a person's question states 
   if (!ans.ok) return;
   assert.deepEqual([ans.entry.result, ans.entry.contrary_none_why], ["premise_not_supported", "no device history, cloud log or mail shows a copy"]);
   assert.equal(P.verifyLedgerChain(await readFile(join(S, P.LEDGER_ENTRIES), "utf8")).ok, true, "the new fields are in the chained core");
-  refused(await P.recordEntry(a1, { kind: "answer", section: "summary", value: "s", reasoning: `E-${f.entry.seq}`, result: "premise_not_supported" } as P.LedgerInput), /a question's answer's/);
+  refused(await P.recordEntry(a1, { kind: "answer", section: "summary", value: "s", reasoning: `E-${f.entry.seq}`, result: "premise_not_supported", contrary_none_why: "x" } as P.LedgerInput), /a question's answer's/);
   // A goal question's answer is not held to it.
   const g = await P.recordEntry(a0, { kind: "finding", ...F, value: "The account alice made it", source: "metadata", evidence: "owner", refs: ["unresolved:the fixture has no store object"], answers: ["1"] } as P.LedgerInput);
   assert.ok(g.ok);
