@@ -29,3 +29,33 @@ test("a finding that answers an unanswered question is said after ten minutes, a
   assert.equal(foundNotAnsweredLine([], "s05"), null);
   assert.deepEqual(foundNotAnswered(snapOf([entry(1, "finding", 3, { answers: ["1"] })], [], []), T0), [], "a fresh finding is not said yet");
 });
+
+test("--seed-leads: one open, unheld lead for each question no lead answers; --lead-max-questions bounds a lead's width", async () => {
+  const { mkdtempSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const P = await import("../extensions/protocol.ts");
+  const L = await import("../extensions/leads.ts");
+  const S = mkdtempSync(join(tmpdir(), "seed-leads-"));
+  await P.initSandbox(S, { reset: true, agentIds: ["a0", "a1"] });
+  writeFileSync(join(S, "SWARM.md"), ["## Goal", "", "Examine the host.", "", "### Questions", "", "1. What is the host name?", "2. When did it run?", "3. Which file?", "", "## Definition of done", "", "d", "", "## Checks", "", '- `node x "$SWARM_HARNESS/scripts/check-answers.ts" --sections 1,2,3`', ""].join("\n"));
+  const mine = await L.openLead({ sandboxRoot: S, agentId: "a0" }, { title: "Host name", why: "q1", answers: ["1"], take: true });
+  assert.ok(mine.ok);
+  const seeded = await L.seedQuestionLeads(S);
+  assert.equal(seeded.opened.length, 2, JSON.stringify(seeded));
+  const snap = await L.leadsSnapshot(S);
+  const made = seeded.opened.map((id) => snap.state.leads.get(id)!);
+  assert.deepEqual(made.map((l) => [l.holder, l.answers]), [[null, ["2"]], [null, ["3"]]]);
+  assert.ok(made.every((l) => /^Answer question [23]/.test(l.title)));
+  assert.deepEqual((await L.seedQuestionLeads(S)).opened, [], "seeding again opens nothing");
+  assert.equal(L.leadMaxAnswers({}), 8);
+  assert.equal(L.leadMaxAnswers({ SWARM_LEAD_MAX_QUESTIONS: "3" }), 3);
+  assert.equal(L.leadMaxAnswers({ SWARM_LEAD_MAX_QUESTIONS: "40" }), 8);
+  process.env.SWARM_LEAD_MAX_QUESTIONS = "1";
+  try {
+    const wide = await L.openLead({ sandboxRoot: S, agentId: "a1" }, { title: "Two at once", why: "x", answers: ["2", "3"] });
+    assert.ok(!wide.ok && /a lead names at most 1 questions: open one lead for each part of the work/.test(wide.reason), JSON.stringify(wide));
+  } finally {
+    delete process.env.SWARM_LEAD_MAX_QUESTIONS;
+  }
+});

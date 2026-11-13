@@ -210,7 +210,7 @@ export async function regroup(sandbox: string, now = Date.now()): Promise<{ post
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [cmd, sandboxArg, ...rest] = process.argv.slice(2);
   const usage = () => {
-    process.stderr.write("usage: leads-cli.ts list|note|reopen|nudge-line|regroup <sandbox> ...\n");
+    process.stderr.write("usage: leads-cli.ts list|note|reopen|nudge-line|regroup|seed <sandbox> ...\n");
     process.exit(2);
   };
   if (!cmd || !sandboxArg) usage();
@@ -261,6 +261,11 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       const r = await L.reopenLead(sandbox, lead, "operator", why.join(" ") || "the operator reopened it", "operator");
       process.stdout.write(`${JSON.stringify(r)}\n`);
       process.exit(r.ok ? 0 : 1);
+      break;
+    }
+    case "seed": {
+      // One open, unheld lead per question no lead answers (swarm.sh --seed-leads).
+      process.stdout.write(`${JSON.stringify(await L.seedQuestionLeads(sandbox))}\n`);
       break;
     }
     case "regroup": {

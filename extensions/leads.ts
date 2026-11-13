@@ -91,6 +91,11 @@ export const LEAD_REF_MAX = 2000;
 export const LEAD_NOTE_MAX = 4000;
 export const LEAD_MAX_NEEDS = 20;
 export const LEAD_MAX_ANSWERS = 8;
+/** The most questions one lead may name in this run: SWARM_LEAD_MAX_QUESTIONS (1 to 8; swarm.sh --lead-max-questions), else 8. */
+export function leadMaxAnswers(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(env.SWARM_LEAD_MAX_QUESTIONS);
+  return Number.isInteger(n) && n >= 1 && n <= LEAD_MAX_ANSWERS ? n : LEAD_MAX_ANSWERS;
+}
 export const LEAD_MAX_OPENS = 10;
 /** Whole seconds from the environment, in milliseconds, or the default when unset or not a number. */
 function envMs(name: string, dfltSec: number): number {
@@ -1493,6 +1498,28 @@ export type LeadsSnapshot = {
   questions: import("./questions.ts").QuestionsSnapshot | null;
 };
 
+/**
+ * One open, unheld lead for each question of the goal that no lead answers, opened by the harness (swarm.sh
+ * --seed-leads, at kickoff): every question has a lead from the first minute, and a seat takes one with lead_claim
+ * instead of opening a broad one. The open-weight teams opened 11 to 20 leads a run, several questions to a lead, and
+ * a question's only holder could hang for an hour with nobody else on it. Returns the leads opened.
+ */
+export async function seedQuestionLeads(sandboxRoot: string): Promise<{ opened: string[]; had: number }> {
+  const snap = await leadsSnapshot(sandboxRoot);
+  const covered = new Set<string>();
+  for (const l of snap.state.leads.values()) if (!l.closed) for (const a of l.answers) covered.add(P.sectionKey(String(a).replace(/^question:/, "")));
+  const opened: string[] = [];
+  for (const q of snap.goal.questions) {
+    const key = P.sectionKey(q);
+    if (covered.has(key) || snap.answered.has(key)) continue;
+    const text = String((snap.questions?.bySection.get(key) as { text?: string } | undefined)?.text ?? "").replace(/\s+/g, " ").trim();
+    const title = `Answer question ${key}${text ? `: ${text.length > 90 ? `${text.slice(0, 89)}\u2026` : text}` : ""}`;
+    const r = await openLead({ sandboxRoot, agentId: P.SYSTEM_AGENT }, { title, why: "The goal asks it. Seeded at kickoff so that the question has a lead from the first minute: claim it (lead_claim) to work on it, and close it with the answer.", answers: [key] });
+    if (r.ok) opened.push(r.lead.id);
+  }
+  return { opened, had: covered.size };
+}
+
 /** How long a standing finding that answers a question may stand with no answer entry before it is said, and before anyone may write it. */
 export const FOUND_NOT_ANSWERED_MS = 10 * 60_000;
 export const FOUND_ANYONE_ANSWERS_MS = 20 * 60_000;
@@ -1870,7 +1897,8 @@ function checkAnswers(raw: unknown): { ok: true; answers: string[]; registered: 
     const key = P.sectionKey(a.replace(/^question:/i, ""));
     if (!answers.includes(key)) answers.push(key);
   }
-  if (answers.length + registered.length > LEAD_MAX_ANSWERS) return { ok: false, reason: `a lead names at most ${LEAD_MAX_ANSWERS} questions` };
+  const most = leadMaxAnswers();
+  if (answers.length + registered.length > most) return { ok: false, reason: `a lead names at most ${most} questions${most < LEAD_MAX_ANSWERS ? ": open one lead for each part of the work, so that each question has a holder who can close it (a lead that named three to five questions lived 50 to 96 minutes in four runs and left its questions without a second hand)" : ""}` };
   const bad = answers.find((a) => !P.LEDGER_ANSWER_ID.test(a));
   if (bad) return { ok: false, reason: `answers takes question ids: Q-19 from the question register, or the goal's own ("3", "Q3", "question:3"; got ${JSON.stringify(bad)})` };
   return { ok: true, answers, registered };

@@ -3709,6 +3709,7 @@ cmd_start() {
   local skill_release=""
   # Whether a note's card comes with the result of a call to one of its tools: on (empty) or off.
   local skill_cards=""
+  local seed_leads=0 lead_max_questions=""
   local pack_skills=""
   local extra_env=()
   while [[ $# -gt 0 ]]; do
@@ -3837,6 +3838,9 @@ cmd_start() {
       --inbox-page-chars) inbox_page_chars="$2"; shift 2 ;;
       --skill-release) skill_release="$2"; shift 2 ;;
       --skill-cards) skill_cards="$2"; shift 2 ;;
+      # One open, unheld lead per question at kickoff (leads-cli.ts seed), and the most questions one lead may name.
+      --seed-leads) seed_leads=1; shift ;;
+      --lead-max-questions) lead_max_questions="$2"; [[ "$lead_max_questions" =~ ^[1-8]$ ]] || { echo "BLOCKER: --lead-max-questions takes 1 to 8." >&2; exit 2; }; shift 2 ;;
       --pack-skills) pack_skills="$2"; shift 2 ;;
       --case-id) case_id="$2"; shift 2 ;;
       --examiner) examiner="$2"; shift 2 ;;
@@ -6241,6 +6245,14 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
   else
     echo "WARN: the question register could not be seeded now; the first act on it seeds it from the goal." >&2
   fi
+  if [[ "${seed_leads:-0}" -eq 1 ]]; then
+    local seeded_leads
+    if seeded_leads="$(SWARM_RUNS_DIR="$RUNS_DIR" node --experimental-strip-types --no-warnings "$ROOT/scripts/leads-cli.ts" seed "$sandbox" 2>/dev/null)"; then
+      echo "Leads:        $(jq -r '.opened | length' <<<"$seeded_leads") seeded, one for each question no lead answers ($(jq -r '.opened | join(", ")' <<<"$seeded_leads")): open and unheld, for a seat to claim"
+    else
+      echo "WARN: --seed-leads: the leads could not be seeded; the seats open their own." >&2
+    fi
+  fi
   # The operator's notify command, outside the run and 0600: a webhook's
   # URL is often its secret, and nothing an agent writes may name what the
   # host runs.
@@ -6557,6 +6569,10 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
   fi
   if [[ -n "$skill_cards" ]]; then
     provider_env+=(--env "SWARM_SKILL_CARDS=$skill_cards")
+  fi
+  if [[ -n "${lead_max_questions:-}" ]]; then
+    provider_env+=(--env "SWARM_LEAD_MAX_QUESTIONS=$lead_max_questions")
+    export SWARM_LEAD_MAX_QUESTIONS="$lead_max_questions"
   fi
   if [[ "${pack_skills:-on}" == "off" ]]; then
     provider_env+=(--env "SWARM_PACK_SKILLS=off")
@@ -9065,6 +9081,7 @@ vm_build_spec() { # <hub dir> <out file>
   [[ -n "$inbox_page_chars" ]] && add_env SWARM_INBOX_PAGE_CHARS "$inbox_page_chars"
   [[ -n "${skill_release:-}" ]] && add_env SWARM_SKILL_RELEASE "$skill_release"
   [[ -n "${skill_cards:-}" ]] && add_env SWARM_SKILL_CARDS "$skill_cards"
+  [[ -n "${lead_max_questions:-}" ]] && add_env SWARM_LEAD_MAX_QUESTIONS "$lead_max_questions"
   [[ "${pack_skills:-on}" == "off" ]] && add_env SWARM_PACK_SKILLS off
   # The hub refuses a part larger than its own size: a size set for this run
   # reaches the guests too, so both ends cut the same parts.
