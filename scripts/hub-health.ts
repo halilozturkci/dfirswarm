@@ -75,3 +75,24 @@ export function snapshotAt(env: NodeJS.ProcessEnv = process.env): number {
 export function snapshotDue(h: { heap_used_mb: number; heap_limit_mb: number }, taken: boolean, at = snapshotAt()): boolean {
   return !taken && at > 0 && h.heap_limit_mb > 0 && h.heap_used_mb > at * h.heap_limit_mb;
 }
+
+/** The share of the heap limit past which a supervised hub restarts itself at a quiet moment (SWARM_HUB_RECYCLE_AT, 0 for never). */
+export function recycleAt(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(env.SWARM_HUB_RECYCLE_AT);
+  return env.SWARM_HUB_RECYCLE_AT !== undefined && Number.isFinite(n) && n >= 0 && n < 1 ? n : 0.85;
+}
+
+/**
+ * Whether the hub should end now so that its keeper starts it again with --resume: its heap is past recycleAt, it is
+ * kept by hub-supervise (a hub nobody restarts must not end itself), no seat's call is in flight, and no job runs or
+ * waits to be sealed (a queued or committed job is on the journal and replayed whole). Two hubs of the runs s082123 and
+ * s17fdfe ran out of heap mid-call and took every seat's board with them; a restart at a quiet moment costs a few
+ * seconds of links that reconnect.
+ */
+export function recycleDue(h: { heap_used_mb: number; heap_limit_mb: number }, o: { supervised: boolean; callsInFlight: number; jobsBusy: number }, at = recycleAt()): { due: boolean; why: string } {
+  if (!(at > 0) || !(h.heap_limit_mb > 0) || h.heap_used_mb <= at * h.heap_limit_mb) return { due: false, why: "below the line" };
+  if (!o.supervised) return { due: false, why: "no keeper would start it again" };
+  if (o.callsInFlight > 0) return { due: false, why: `${o.callsInFlight} call(s) in flight` };
+  if (o.jobsBusy > 0) return { due: false, why: `${o.jobsBusy} job(s) running or waiting to be sealed` };
+  return { due: true, why: `heap ${h.heap_used_mb} of ${h.heap_limit_mb} MB, past ${Math.round(at * 100)}%, with no call in flight and no job running` };
+}

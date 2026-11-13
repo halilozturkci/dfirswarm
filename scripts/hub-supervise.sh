@@ -197,7 +197,7 @@ while :; do
   sleep 2
   over && exit 0
   # A hub that runs out of heap leaves a snapshot in its own directory (operator-only), never in the run's.
-  node --experimental-strip-types --no-warnings --max-old-space-size="${SWARM_HUB_HEAP_MB:-8192}" --heapsnapshot-near-heap-limit=1 --diagnostic-dir="$HUB_DIR" "$HUB_SCRIPT" --resume "$HUB_DIR" >>"$SANDBOX/traces/vm-hub.log" 2>&1 </dev/null &
+  SWARM_HUB_SUPERVISED=1 node --experimental-strip-types --no-warnings --max-old-space-size="${SWARM_HUB_HEAP_MB:-8192}" --heapsnapshot-near-heap-limit=1 --diagnostic-dir="$HUB_DIR" "$HUB_SCRIPT" --resume "$HUB_DIR" >>"$SANDBOX/traces/vm-hub.log" 2>&1 </dev/null &
   PID=$!
   up_since=$SECONDS
   echo "$PID" > "$SANDBOX/hub.pid"

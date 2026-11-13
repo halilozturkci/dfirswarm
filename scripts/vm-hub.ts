@@ -97,7 +97,7 @@ import { resolveScope, scopeKindOf } from "./job-scope.ts";
 import { commandNames, freshCoverage, libraryHint, shortHint, type CoverageHint, type ShortHint } from "./library-hint.ts";
 import { boundRpcAnswer } from "../extensions/reply-bound.ts";
 import { jobsListing, storeFind } from "./store-find.ts";
-import { loopMonitor, sampleHealth, snapshotAt, snapshotDue } from "./hub-health.ts";
+import { loopMonitor, recycleDue, sampleHealth, snapshotAt, snapshotDue } from "./hub-health.ts";
 import { sensitiveIndex } from "./output-hygiene.ts";
 import { ACCESS_RULES, apiPageHit, classifyTraceRow, type AccessHit } from "./sensitive-access.ts";
 
@@ -1059,6 +1059,8 @@ export class Hub {
   private told = new Set<string>();
   private lastWrite = new Map<string, { who: string; at: number }>();
   private inFlight = new Map<string, number>();
+  /** Set once the hub has decided to end for its keeper to restart it (hub-health.ts recycleDue). */
+  private recycling = false;
   private queue = new Map<string, Array<() => void>>();
   /** Per seat: connections open, and bytes buffered across them. */
   private conns = new Map<string, number>();
@@ -1428,6 +1430,18 @@ export class Hub {
         } catch (err) {
           void this.event("hub_heap_snapshot", {}, { ok: false, reason: (err as Error).message }).catch(() => undefined);
         }
+      }
+      // Past the recycle line, at a quiet moment, a supervised hub ends so that its keeper starts it again with --resume.
+      const busyJobs = [...(this.jobService?.jobs.values() ?? [])].filter((j) => j.state === "running" || j.state === "fenced" || j.state === "finished").length;
+      const calls = [...this.inFlight.values()].reduce((a, n) => a + n, 0);
+      const recycle = recycleDue(h, { supervised: process.env.SWARM_HUB_SUPERVISED === "1", callsInFlight: calls, jobsBusy: busyJobs });
+      if (recycle.due && !this.recycling) {
+        this.recycling = true;
+        this.log(`memory: ending for a restart by the keeper: ${recycle.why}`);
+        void this.event("hub_recycled", {}, { ok: true, why: recycle.why, heap_used_mb: h.heap_used_mb, heap_limit_mb: h.heap_limit_mb })
+          .catch(() => undefined)
+          .then(() => this.flushRefusals().catch(() => undefined))
+          .then(() => process.exit(75));
       }
     }, 60_000);
     this.healthTimer.unref();

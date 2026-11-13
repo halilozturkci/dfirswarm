@@ -30,3 +30,20 @@ test("the snapshot is taken once, at 60% of the heap limit by default, while it 
   assert.equal(snapshotDue({ heap_used_mb: 4000, heap_limit_mb: 4288 }, true), false, "once");
   assert.equal(snapshotDue({ heap_used_mb: 4000, heap_limit_mb: 4288 }, false, 0), false);
 });
+
+test("a supervised hub past its heap line ends for a restart only at a quiet moment", async () => {
+  const { recycleAt, recycleDue } = await import("../scripts/hub-health.ts");
+  assert.equal(recycleAt({}), 0.85);
+  assert.equal(recycleAt({ SWARM_HUB_RECYCLE_AT: "0" }), 0);
+  assert.equal(recycleAt({ SWARM_HUB_RECYCLE_AT: "2" }), 0.85);
+  const high = { heap_used_mb: 7100, heap_limit_mb: 8192 };
+  const quiet = { supervised: true, callsInFlight: 0, jobsBusy: 0 };
+  assert.equal(recycleDue({ heap_used_mb: 6000, heap_limit_mb: 8192 }, quiet, 0.85).due, false);
+  const due = recycleDue(high, quiet, 0.85);
+  assert.equal(due.due, true);
+  assert.match(due.why, /heap 7100 of 8192 MB, past 85%, with no call in flight and no job running/);
+  assert.match(recycleDue(high, { ...quiet, supervised: false }, 0.85).why, /no keeper would start it again/);
+  assert.match(recycleDue(high, { ...quiet, callsInFlight: 2 }, 0.85).why, /2 call\(s\) in flight/);
+  assert.match(recycleDue(high, { ...quiet, jobsBusy: 1 }, 0.85).why, /1 job\(s\) running or waiting to be sealed/);
+  assert.equal(recycleDue(high, quiet, 0).due, false, "0 turns it off");
+});
