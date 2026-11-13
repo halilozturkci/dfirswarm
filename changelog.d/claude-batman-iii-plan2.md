@@ -137,3 +137,35 @@ An argument that is wholly `job:<id>/<path>`, `import:<id>/<path>` or `input:<pa
 reference that names nothing is refused before the job runs. A job's write quota is the free room shared among the jobs that
 run at once. A hand-off's header is at most 2,000 characters beside the note and the skills line. The leads header says how
 many seats work now. Custody holds a sweep line's side list to the sha256 the line names.
+
+### Changed: a record is a tool of its kind, checked whole and refused once
+
+`record_finding`, `record_answer`, `record_coverage`, `record_limitation` and `record_absence` each take the fields of their
+kind, and a refusal names every field that fails at once instead of one per call. An answer carries its value apart from its
+`qualifier`, says why a value changed (`value_changed_because`), the controls it ran (`control`), the images it read and did not
+read and the carriers it holds; the report prints the qualifier apart from the value and says when no value is established.
+`store_find` and `jobs` are seat tools. `image_crop` gives a region of a PNG at its own resolution.
+
+### Changed: a seat's shell output, its waits and its finish are bounded and said
+
+A kept shell output is its first and last part, at most 64 MiB (`shellKeepMaxBytes`). After three waits nothing woke, a wait's
+answer leads with the work nobody holds. A seat at work whose evidence job ended after its last record holds the finish until it
+records. A tool no one note is the method of shows its own manifest's rules with its first result. The Harness row says
+`job_run`'s text, the hints' share of it, the largest answer and the empty summaries.
+
+### Changed: a supervised hub past 85% of its heap ends at a quiet moment for its keeper to restart it
+
+With no call in flight and no busy job the hub exits 75 (`hub_recycled`); `hub-supervise.sh` and `swarm.sh` start it again.
+
+### Added: computer-forensics-base reads a QR symbol, a video's frames, a line of glyphs and a cache body (1.17.0)
+
+`qr_read`, `frame_survey`, `glyph_strip` and `cache_body`, with the note `evidence/first-stage` and the recipe
+`first-stage-candidates`. ffmpeg, ffprobe and tesseract are optional host programs; a tool says when one is absent.
+
+### Fixed: pack tools after their independent verification
+
+memory-forensics 1.16.1: `minidump_map` keeps one clock for the whole call, resumes a find, names handle types, records the PDB
+and filters memory over regions. windows-forensics 1.8.1: `thumbcache_read` reads from the header's end; `regkv` answers as
+`regkv/5`; cards on 27 notes. ransomware-response 1.14.1: `stream_kpa_check` tries the trailer hypothesis on every other member
+within its bounds; `cipher_state_scan` finds a key schedule that begins or ends in zero bytes; `encrypted_survey` measures a
+tail instead of printing it.
