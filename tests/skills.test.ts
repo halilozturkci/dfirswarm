@@ -738,8 +738,7 @@ test("a note's card comes first in the result of the first call to its tool, onc
     assert.deepEqual(rows.at(-1)?.tool, "skill_card");
     assert.deepEqual(rows.at(-1)?.args, { tool: "ad1_extract", id: "evidence/ad1" });
     assert.equal(await result("job_run", { tool: "ad1_extract" }), null, "once");
-    // A tool four notes name is a generic one: no note is its method, and no list of ids is shown.
-    assert.equal(await result("catalog_search", { query: "x" }), null);
+    // A tool four notes name is a generic one: no note is its method, and no list of ids is shown (its own manifest's rules are, below).
     assert.equal(rows.filter((r) => r.tool === "skill_card").length, 1);
     assert.match((await result("ewf_verify", {}))!, /^Before you read this result, the rules of ewf_verify \(from the note `evidence\/e01`.*\nVerify the set first with ewf_verify/, "a note's own card: line");
     // A generic tool whose manifest says more than one sentence gets that, once: what its description says past the first sentence.
@@ -751,6 +750,7 @@ test("a note's card comes first in the result of the first call to its tool, onc
     assert.ok(generic?.endsWith("Job j000001 done"));
     assert.deepEqual(rows.at(-1)?.args, { tool: "catalog_search", id: "manifest" });
     assert.equal(await result("catalog_search", { query: "y" }), null, "once");
+    assert.doesNotMatch(generic!, /Notes that name/);
     // A manifest of one sentence, or none, gives nothing.
     await mk(join(sandbox, "tools", "short_one"), { recursive: true });
     await wf(join(sandbox, "tools", "short_one", "manifest.json"), JSON.stringify({ name: "short_one", description: "It does one thing." }));
