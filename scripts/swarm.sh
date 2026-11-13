@@ -2944,12 +2944,19 @@ const path = require("path");
 const [file, tools] = process.argv.slice(1);
 const packs = new Set(process.env.SWARM_SECTION_PACKS.split(",").filter(Boolean));
 const rows = [];
+const full = [];
 for (const dir of fs.readdirSync(tools).sort()) {
   let m;
   try { m = JSON.parse(fs.readFileSync(path.join(tools, dir, "manifest.json"), "utf8")); } catch { continue; }
   if (!m || m.name !== dir || !m.pack || !packs.has(m.pack)) continue;
   const params = Object.entries(m.params || {}).map(([k, p]) => `${k}${p && p.required ? "" : "?"}: ${(p && p.type) || "string"}`);
-  rows.push(`- \`${m.name}\` (${m.pack}): ${String(m.description || "").replace(/\s+/g, " ").trim()} Parameters: ${params.length ? params.join(", ") : "no params"}.`);
+  const whole = String(m.description || "").replace(/\s+/g, " ").trim();
+  full.push(`- \`${m.name}\` (${m.pack}): ${whole} Parameters: ${params.length ? params.join(", ") : "no params"}.`);
+  // One line in the contract: the first sentence, bounded, and the parameter names. The whole is in PACK-TOOLS.md.
+  let about = whole.split(/(?<=[.:;])\s/)[0] || "";
+  if (about.length > 140) about = about.slice(0, 139) + "\u2026";
+  const names = Object.entries(m.params || {}).map(([k, p]) => `${k}${p && p.required ? "" : "?"}`);
+  rows.push(`- \`${m.name}\` (${m.pack}): ${about} Parameters: ${names.length ? names.join(", ") : "none"}.`);
 }
 if (!rows.length) { console.error("no tool of " + [...packs].join(", ") + " is in the run"); process.exit(1); }
 const text = fs.readFileSync(file, "utf8");
@@ -2958,8 +2965,12 @@ const section =
   `The tools of the packs ${[...packs].sort().join(", ")} are not in your tool list; a skill of those packs that names one means this call. ` +
   "Run one with `job_run(tool: <name>, args: {...})`: it runs sealed in a worker VM of its pack'"'"'s image, what it writes under `{OUT}/<name>` is sealed " +
   "in the store and cited as `job:<id>/<path>`, and `args` are the parameters below (a name ending in `?` is optional). " +
-  "A wrong or missing one is refused, naming the tool'"'"'s parameters.\n\n" +
+  "A wrong or missing one is refused, naming the tool'"'"'s parameters. Each tool is one line here; its whole description and its parameter types are in " +
+  "`PACK-TOOLS.md` beside this file (grep it for the name) and in `tools(name: <name>)`.\n\n" +
   rows.join("\n") + "\n\n";
+fs.writeFileSync(path.join(path.dirname(file), "PACK-TOOLS.md"),
+  "# Pack tools run as jobs: each tool whole\n\nOne entry a tool: what it does and its parameters with their types (a name ending in `?` is optional). " +
+  "Run one with `job_run(tool: <name>, args: {...})`.\n\n" + full.join("\n\n") + "\n");
 let at = text.indexOf("\n## Job images\n");
 if (at < 0) {
   const start = text.indexOf("## Tool jobs\n");
@@ -2968,7 +2979,15 @@ if (at < 0) {
   at = next < 0 ? text.length : next;
 }
 at += 1;
-fs.writeFileSync(file + ".tmp", text.slice(0, at) + section + text.slice(at));
+let out = text.slice(0, at) + section + text.slice(at);
+// The file says its own size and sections first: a reader that is given its first 50 KB knows what lies beyond.
+const heads = [...out.matchAll(/^## (.+)$/gm)].map((m) => m[1]);
+const first = out.indexOf("\n## ");
+if (first > 0 && !out.includes("\nSections of this file")) {
+  const head = `\nSections of this file (about ${Math.round((out.length + 300) / 1024)} KB; read past the first page with an offset, or grep a heading): ${heads.join("; ")}.\n`;
+  out = out.slice(0, first) + head + out.slice(first);
+}
+fs.writeFileSync(file + ".tmp", out);
 fs.renameSync(file + ".tmp", file);
 ' "$sandbox/SWARM.md" "$sandbox/tools" || {
     echo "BLOCKER: --pack-tools-as-jobs: SWARM.md could not list the tools of $packs as jobs (see above); the seats would be left without them." >&2
