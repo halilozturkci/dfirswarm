@@ -9379,6 +9379,16 @@ launch_vm_agents() {
   else
     echo "Agents:       $n Pi sessions up in their VMs, each linked to the hub"
   fi
+  # What each job image can do, by known-answer probes in a worker of that image (scripts/image-capabilities.ts): one job an
+  # image, in the background; the seats get the result on the board and in job-capabilities.json. SWARM_IMAGE_CAPABILITIES=off skips it.
+  if [[ "${SWARM_IMAGE_CAPABILITIES:-on}" != off ]]; then
+    local cap_profiles
+    cap_profiles="$(json_get "$swarm_id" 2>/dev/null | jq -r '(.isolation.jobs.images // {}) | keys | join(",")' 2>/dev/null || true)"
+    if [[ -n "$cap_profiles" && -S "$hub_dir/admin.sock" ]]; then
+      ( node --experimental-strip-types --no-warnings "$ROOT/scripts/image-capabilities.ts" "$sandbox" --hub-admin "$hub_dir/admin.sock" --profiles "$cap_profiles" >"$sandbox/traces/image-capabilities.log" 2>&1 & ) >/dev/null 2>&1
+      echo "Capabilities: each job image ($cap_profiles) is being tested with known-answer probes; the seats are told on the board (job-capabilities.json)"
+    fi
+  fi
   SWARM_GUARD_MEASURED="microvm"
 }
 
