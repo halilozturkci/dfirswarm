@@ -1249,6 +1249,31 @@ export async function seatAvailable(sandboxRoot: string, agent: string, activity
   return { available: true, why: `${agent} can take it` };
 }
 
+/**
+ * "Seats working: n of N" for the header: a seat works when it wrote a
+ * working row within the stale limit or a job of its runs; the others are
+ * named with what they are (done, marked dead, compacting, silent). One
+ * line, the names cut past six.
+ */
+export async function seatsWorkingLine(sandboxRoot: string, snap: LeadsSnapshot, now = Date.now()): Promise<string | null> {
+  const ids = await P.teamIds(sandboxRoot).catch(() => [] as string[]);
+  if (ids.length < 2) return null;
+  const act = await recentActivity(sandboxRoot, Math.max(leadStaleMs(), LEAD_COMPACTION_BOUND_MS), now);
+  let working = 0;
+  const not: string[] = [];
+  for (const id of ids) {
+    const mark = (["done", "dead"] as const).find((m) => existsSync(join(sandboxRoot, "done", "agents", `${id}.${m}`)));
+    const row = act.get(id);
+    const job = snap.jobs.some((j) => j.agent === id && jobOpen(j));
+    if (mark) not.push(`${id} ${mark === "done" ? "done" : "marked dead"}`);
+    else if (row?.compacting && now - row.compacting < LEAD_COMPACTION_BOUND_MS) not.push(`${id} compacting`);
+    else if ((row?.last && now - row.last < leadStaleMs()) || job) working += 1;
+    else not.push(`${id} silent ${row?.last ? `${Math.round((now - row.last) / 60_000)} min` : `${Math.round(leadStaleMs() / 60_000)}+ min`}`);
+  }
+  const rest = not.length > 6 ? `${not.slice(0, 6).join(", ")} and ${not.length - 6} more` : not.join(", ");
+  return `Seats working: ${working} of ${ids.length}${not.length ? ` (${rest})` : ""}.`;
+}
+
 /** How long a held lead may go with no job and no act on it while its holder works elsewhere before it shows as parked (SWARM_LEAD_PARK_SEC, 600). */
 export function parkMs(): number {
   return envMs("SWARM_LEAD_PARK_SEC", 600);
@@ -4072,6 +4097,9 @@ export async function leadsDigest(ctx: P.SwarmContext, o: { mark?: boolean } = {
     if (p?.state === "suspected_stall") stuck.push(T.progressWords(j.id, p));
   }
   if (stuck.length) lines.push(`Your running jobs that look stuck: ${stuck.join("; ")}.`);
+  // How many seats work now: with three of eight seats working and the rest waiting, each seat saw only its own state.
+  const working = await seatsWorkingLine(ctx.sandboxRoot, snap).catch(() => null);
+  if (working) lines.push(working);
   // Parked leads (A2) and closures waiting for confirmation (A3): everyone sees them.
   const parked = await parkedLeads(ctx.sandboxRoot, snap).catch(() => [] as ParkedLead[]);
   if (parked.length) lines.push(`Parked (held, no job and no act on it for ${Math.round(parkMs() / 60_000)}+ min while the holder works elsewhere; offered to an idle seat unless the holder acts): ${parked.map((p) => `${p.lead} (${p.holder}, ${Math.round(p.idle_ms / 60_000)} min; ${p.elsewhere})`).join("; ")}.`);
