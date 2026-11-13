@@ -138,3 +138,10 @@ of the pack holds (a negative is bounded, a converted time keeps its raw value, 
 the router and nothing under it; the base, reverse-engineering and ransomware routers may have 500 tokens for it
 (`scripts/skill-budgets.json`). Packs: computer-forensics-base 1.16.12, windows-forensics 1.7.36, reverse-engineering 1.16.10,
 ransomware-response 1.13.8, encrypted-containers 1.14.10.
+
+### Added: the run's metrics say what the seats made of the skills
+
+`swarm.sh metrics` gains a Skills row: loads (failed, already held) and cards per seat, the share of tool jobs a seat ran while holding the
+note on that tool (loaded or shown as a card since its last compaction, which drops a body from the context), the tools run uncovered most,
+and how often a compaction after a load was followed by a load again. On one Batman III run it reads 1 of 55 tool jobs (2%): 44 of the
+uncovered were `ad1_extract`. It is the measure of the skills experiment.
