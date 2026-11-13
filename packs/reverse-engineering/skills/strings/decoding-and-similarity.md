@@ -3,6 +3,7 @@ id: strings/decoding-and-similarity
 title: Decoding blobs and comparing samples by bytes
 when: A string looks encoded, or you want to cluster samples by byte similarity.
 needs: []
+card: fuzzy_hash ({"path": "<file>", "compare_to": "<other file>"}): run it on the original bytes first, and separately on a comparable derived form. SHA-256 identifies bytes; ssdeep and TLSH measure similarity only, and the tool needs both programs. tlsh_status insufficient_input means the file is too short or uniform: unavailable is not dissimilar. A distance is a lead (shared libraries, packing and padding produce it): name distinctive shared code or structure before saying family. Decode strings only with non-evaluating transformations, in a job with secret_output: true; do not invoke PowerShell on an encoded command. Does not show: provenance, authorship or family.
 tools: [fuzzy_hash]
 requires_host: [ssdeep, tlsh]
 ---

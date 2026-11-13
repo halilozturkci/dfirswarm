@@ -3,6 +3,7 @@ id: strings/obfuscated
 title: Literal and derived strings as evidence
 when: You need strings from a binary, with offsets and a statement of what they can support.
 needs: [triage/quarantine]
+card: ioc_scan ({"path": "<file>", "needles": "<a>|<b>"}) searches only the needles you give, single-byte and UTF-16LE: it is not an enumeration of every string, and other encodings need another reader. It returns locators (offset, needle, encoding); context bytes go to a file only with {"write_values": true}, in a job run with secret_output: true. Never put a secret in a needle. Enumerate with strings -a -t x and strings -a -e l -t x into a file under $OUT and keep offsets. A FLOSS string is derived, not a literal at a file offset. "No reference recovered" does not show the string is unused. Report place, kind and length, never the value. Does not show: use, origin or intent.
 tools: [ioc_scan]
 requires_host: [floss, strings, r2]
 ---

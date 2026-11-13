@@ -3,6 +3,7 @@ id: pe/structure
 title: A PE file and what its structure shows
 when: The sample is a Windows-format executable, DLL or driver.
 needs: [triage/quarantine]
+card: Read status, problems and coverage in the pe_info answer ({"path": "<pe>"}) first; partial is a cut structure, not an absence. header_timestamp_utc is a reading of a number, not a compile time. Imports name what the loader is asked for, not what the code does. pe_directories reads the CLR tables only with {"clr_tables": true}. Does not show: packing, a valid signature.
 tools: [pe_info, pe_directories, entropy_map, timestamp_decode]
 requires_host: [r2]
 ---

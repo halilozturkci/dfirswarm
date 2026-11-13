@@ -3,6 +3,7 @@ id: keys/other-sources
 title: Password stores, memory, escrow and shell history
 when: Key material may sit in a store, keychain, memory image, escrow record or shell history.
 needs: []
+card: Read a password store's rows without printing values: sqlite_query {"db_path": "<store>", "write_values": true, "table": "<table>"} in a job; the answer carries locators. A credential found is an indicator: never test it on a live service. Record "not decrypted", never "absent". Does not show: that it is reusable on the encrypted object.
 tools: [sqlite_query]
 requires_host: []
 ---

@@ -4,6 +4,7 @@ title: Identifying encrypted evidence and its limits
 when: A volume, archive or document may be encrypted.
 core: 1
 needs: []
+card: crypto_id ({"path": "<image>", "offset": <bytes>}): the offset is into the file you give, not its wrapper's. "No scheme recognised" is not "not encrypted".
 tools: [crypto_id, file_type]
 requires_host: []
 ---
@@ -48,7 +49,7 @@ trying anything further.
 
 An unreadable volume is not necessarily encrypted. Rule out a volume manager, a
 damaged partition table, a sparse or truncated image and a wrong offset first
-(`evidence/imaging`): they are cheaper to fix and common. The base pack's
+(`evidence/imaging`): cheaper to fix, and common. The base pack's
 `filesystem/encrypted` separates encryption from the other causes of unreadability.
 
 Report exactly one of: format and protection state confirmed (by which reader);

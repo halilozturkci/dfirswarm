@@ -3,6 +3,7 @@ id: volumes/veracrypt-truecrypt
 title: VeraCrypt and TrueCrypt containers
 when: A file or partition may be a VeraCrypt or TrueCrypt volume, which has no signature.
 needs: []
+card: These volumes leave no signature: high entropy (crypto_id) and a whole number of sectors are leads, never an identification. Find the volume's own offset first and give it in bytes. With a case-supplied candidate password, tcrypt_header in a job with secret_output: true: {"source": "<volume>", "password_file": "<sealed 0600 file>", "header": "normal", "offset": <bytes, a multiple of 512>}; try "hidden" and "backup" as separate attempts. A PIM is refused. The answer is whether a header decrypted, with its non-secret fields. Does not show: that a header that did not decrypt means the object is not VeraCrypt or TrueCrypt.
 tools: [crypto_id, tcrypt_header]
 requires_host: [cryptsetup, mmls]
 ---

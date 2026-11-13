@@ -3,6 +3,7 @@ id: identify/by-format
 title: Encryption signs by format, and their limits
 when: You name BitLocker, LUKS, Apple, VeraCrypt, archive, Office or PDF protection from a signature.
 needs: []
+card: crypto_selftest ({}) runs each installed reader on a synthetic sample and says parsed, not parsed or unavailable: that is about the sample, not about your volume. crypto_id ({"path": "<image>", "offset": <bytes>}) gives a lead, not a format's protection: an FVE signature is a lead for a metadata reader; an APFS container signature does not show every volume is encrypted; high entropy, an aligned size and no signature do not identify VeraCrypt or TrueCrypt. Once the case supplies a candidate password, tcrypt_header ({"source": "<volume>", "password_file": "<sealed 0600 file>"}) reads a header, only in a secret_output job. Does not show: that a supported archive container is encrypted.
 tools: [crypto_id, crypto_selftest, tcrypt_header]
 requires_host: [cryptsetup]
 ---

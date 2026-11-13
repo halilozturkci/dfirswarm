@@ -3,6 +3,7 @@ id: documents/second-reading
 title: Second readings of encryption by qpdf and msoffcrypto-tool
 when: doc_structure left an encryption variant unsupported.
 needs: [triage/quarantine]
+card: Ask for it: doc_structure with {"path": "<file>", "second_reading": true} runs qpdf (PDF) or msoffcrypto-tool (Office) only where the first reading left an encryption variant unsupported; otherwise second_reading.applicable is false and no program starts. It sits beside the first reading: where the two differ, neither is taken as right. Read second_reading.status: only read is a reading; failed, ambiguous, not_installed, not_attempted and not_finished mean "second reading not made". No key is passed: opened_with says whether qpdf's own empty password opened the file; content stays unread. Does not show: plaintext, execution, or which of two differing readings is right.
 tools: [doc_structure]
 requires_host: [qpdf]
 ---

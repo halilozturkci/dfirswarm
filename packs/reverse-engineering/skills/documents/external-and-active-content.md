@@ -3,6 +3,7 @@ id: documents/external-and-active-content
 title: External targets, PDF actions and RTF objects
 when: A document has an external relationship, a PDF action marker or an RTF object.
 needs: []
+card: doc_probe ({"path": "<document>"}) locates and resolves nothing. external_targets is a target and a type, not a completed fetch: never contact a target. The whole target is written to doc-probe-values.jsonl only in a job with {"write_values": true} and secret_output: true; cite it by finding_id. PDF markers (/OpenAction, /AA, /Launch, /JavaScript, /JS, /EmbeddedFile) are name tokens with offsets: whether an action is reachable is doc_structure's to read (actions, trigger, reached_from_catalog). Object streams hide keywords: a zero count is not an absence. encrypt_marker_present is a marker, not an encryption determination. Does not show: fetch, execution, trigger conditions or reachability.
 tools: [doc_probe, doc_structure]
 requires_host: []
 ---

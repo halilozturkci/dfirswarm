@@ -3,6 +3,7 @@ id: volumes/bitlocker
 title: BitLocker protectors and authorised examination
 when: A Windows volume may use BitLocker.
 needs: []
+card: crypto_id recognises the FVE signature and reads no protectors. crypto_metadata ({"path": "<image>", "offset": <bytes>}) runs bdeinfo at the byte offset and lists protector types; unavailable is not an empty list. A TPM-only protector cannot ordinarily be satisfied from an image. Does not show: that a protector list is complete, or that a located value opens this volume.
 tools: [crypto_id, crypto_metadata]
 requires_host: [bdeinfo]
 ---

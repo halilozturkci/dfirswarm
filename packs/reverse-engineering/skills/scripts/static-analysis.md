@@ -3,6 +3,7 @@ id: scripts/static-analysis
 title: PowerShell, JavaScript and VBScript read as evidence
 when: A recovered script must be read, decoded or described without being run.
 needs: [triage/quarantine]
+card: Never run a recovered script or paste it into an interpreter. Decode only without evaluating; stop at the first layer only evaluation resolves and record it as unresolved. Never contact an indicator: look for it with ioc_scan ({"path": "<file>", "needles": "<a>|<b>"}). A call in the text is a conditional capability. Does not show: that a line ran.
 tools: [ioc_scan]
 requires_host: [strings]
 ---
