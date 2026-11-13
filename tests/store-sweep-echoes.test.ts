@@ -325,7 +325,7 @@ test("a job that read a whole job read what is accounted for when the record nam
   const said = sw.named_hits.find((h) => h.ref === "job:j000468/hits.txt");
   assert.deepEqual(said?.origins, [{ name: "job:j000468/hits.txt", by: "job:j000468", why: "named_sources", reads: ["job:j000104"] }], "every object under job:j000104 holding the string is named: said among the named hits");
   assert.deepEqual(sw.hits.map((h) => h.ref).sort(), ["job:j000105/c.txt", "job:j000469/hits.txt"], "c.txt holds it unnamed: what read the whole of j000105 holds, and so does c.txt");
-  assert.equal(SW.SWEEP_RULES, 3);
+  assert.equal(SW.SWEEP_RULES, 4);
 });
 
 test("a sweep hit examined in place: an entry for the question naming the hit object, written after the sweep, clears it once another seat attests it, with no new coverage record; unattested, or attested by its author, it holds", async () => {

@@ -41,7 +41,11 @@ import { fileURLToPath } from "node:url";
 import * as NB from "./negative-bar.ts";
 import * as PM from "./premises.ts";
 import * as PR from "./preparation.ts";
+import * as SWS from "./store-sweep.ts";
 import { importHitExamined, importHitsFor, importHitWords, INTERPRETING_KINDS, unexaminedHits, type ImportSweepRecord, type SweepHit, type SweepRecord, type UnexaminedHit } from "./store-sweep.ts";
+
+/** How many of a sweep's hits a gate item names; the rest are counted (ledger/sweeps.jsonl holds each). */
+const SWEEP_GATE_HITS = 20;
 import type { LedgerAlternative, LedgerEdge, LedgerEntry, LedgerKind, LedgerLocator, LedgerMethod, LedgerQualify, LedgerRel, SwarmContext } from "./protocol-core.ts";
 import { ANSWER_ONLY_REL_KINDS, DELTA_REL_KINDS, LEDGER_ACT_MAX_CHARS, LEDGER_ALTERNATIVE_STATUS, LEDGER_ANSWER_ID, LEDGER_ANSWER_RESULTS, LEDGER_ATTESTATIONS, LEDGER_BASIS, LEDGER_BECAUSE_MAX_CHARS, LEDGER_CLOCK_MAX_CHARS, LEDGER_COMPLETION, LEDGER_CONFIDENCE, LEDGER_DIR, LEDGER_DISPUTES, LEDGER_ENTRIES, LEDGER_EVIDENCE_MAX_CHARS, LEDGER_HYPOTHESIS_STATUS, LEDGER_INDICATES_MAX_CHARS, LEDGER_KINDS, LEDGER_LIMITATION_REASONS, LEDGER_LOCATOR_MAX_CHARS, LEDGER_MAX_ALTERNATIVES, LEDGER_MAX_ANSWERS, LEDGER_MAX_CITATIONS, LEDGER_MAX_ENTRIES, LEDGER_MAX_LOCATORS, LEDGER_MAX_QUALIFIES, LEDGER_MAX_REFS, LEDGER_MAX_REL, LEDGER_MD, LEDGER_PRECISION, LEDGER_REASONING_MAX_CHARS, LEDGER_REF_MAX_CHARS, LEDGER_REL_KINDS, LEDGER_SECTION_SPECIAL, LEDGER_SOURCE_CLASSES, LEDGER_SOURCE_MAX_CHARS, LEDGER_SUBJECT_MAX_CHARS, LEDGER_SUBJECT_TYPES, LEDGER_VALUE_MAX_CHARS, LEDGER_VERSION, LEDGER_WHY_MAX_CHARS, REGISTER_LOCK, canonicalValue, ledgerContent, ledgerHash, sha256Hex, traceHarnessEntry, withNamedLock, withTableLock } from "./protocol-core.ts";
 
@@ -711,7 +715,7 @@ export async function recordEntry(ctx: SwarmContext, input: LedgerInput): Promis
   if (v3.fields.completion && v3.fields.completion !== "complete") {
     notes.push(`the search was ${v3.fields.completion}: this absence holds only for what was searched; record what was not reached as kind=limitation (reason ${v3.fields.completion === "failed" ? "failed" : "partial"})`);
   }
-  return withTableLock(ctx.sandboxRoot, async (held) => {
+  return withTableLockRendered(ctx.sandboxRoot, async (held) => {
     const entries = await readLedger(ctx.sandboxRoot);
     const replaced = supersededBy(entries);
     const bySeq = new Map(entries.map((e) => [e.seq, e]));
@@ -786,12 +790,12 @@ async function mergeSameContent(ctx: SwarmContext, held: { assertOwned(): Promis
     await appendAttestation(ctx.sandboxRoot, attested, { v: 2, act: "same_content", seq: same.seq, target: same.hash ?? ledgerHash(same, "genesis"), by: ctx.agentId, at: new Date().toISOString() });
   }
   const all = await withAttestations(ctx.sandboxRoot, await readLedger(ctx.sandboxRoot, { raw: true }));
-  await renderLedger(ctx.sandboxRoot, all);
+  renderOnceLetGo(held);
   const stood = all.find((e) => e.seq === same.seq) ?? same;
   return { ok: true, entry: stood, merged: true, total: all.length, note: already ? `#${same.seq} already says this, recorded by you` : `#${same.seq} already says this word for word: recorded as your attestation of it (ledger/attestations.jsonl), not as a new entry` };
 }
 
-/** Chain and append one entry, and render ledger.md again. */
+/** Chain and append one entry; ledger.md is rendered again once the lock is let go (withTableLockRendered). */
 async function appendLedgerEntry(ctx: SwarmContext, held: { assertOwned(): Promise<void> }, entries: LedgerEntry[], entry: LedgerEntry, notes: string[]): Promise<LedgerResult> {
   if (entries.length >= LEDGER_MAX_ENTRIES) return { ok: false, reason: `the ledger holds ${LEDGER_MAX_ENTRIES} entries already` };
   // Every record an agent makes, of every kind, held to the case policy's
@@ -822,7 +826,7 @@ async function appendLedgerEntry(ctx: SwarmContext, held: { assertOwned(): Promi
   await held.assertOwned();
   await appendFile(join(ctx.sandboxRoot, LEDGER_ENTRIES), `${JSON.stringify(entry)}\n`, "utf8");
   entries.push(entry);
-  await renderLedger(ctx.sandboxRoot, await withAttestations(ctx.sandboxRoot, entries));
+  renderOnceLetGo(held);
   return { ok: true, entry, merged: false, total: entries.length, ...(notes.length ? { note: notes.join("; ") } : {}) };
 }
 
@@ -879,7 +883,7 @@ export async function recordExternal(sandboxRoot: string, input: { value: string
   if (!input.refs.length || input.refs.length > LEDGER_MAX_REFS) return { ok: false, reason: "an external entry cites the material it records" };
   const checked = await checkRefs(sandboxRoot, input.refs);
   if (!checked.ok) return checked;
-  const r = await withTableLock(sandboxRoot, async (held): Promise<LedgerResult> => {
+  const r = await withTableLockRendered(sandboxRoot, async (held): Promise<LedgerResult> => {
     const entries = await readLedger(sandboxRoot);
     const same = entries.find((e) => e.kind === "external" && e.source_class === input.source_class && JSON.stringify(e.refs ?? []) === JSON.stringify(input.refs));
     if (same) return { ok: true, entry: same, merged: true, total: entries.length, note: `#${same.seq} records it already` };
@@ -1803,6 +1807,8 @@ function mdCell(text: string | undefined): string {
 
 /** The renders waiting or running, one chain per ledger path in this process. */
 const renderChains = new Map<string, Promise<unknown>>();
+/** The render asked for and not begun, by ledger path: whoever asks meanwhile is given it. */
+const renderWaiting = new Map<string, Promise<string>>();
 
 /**
  * ledger/ledger.md: the timeline in time order, the indicators, the findings.
@@ -1815,16 +1821,59 @@ const renderChains = new Map<string, Promise<unknown>>();
  * lock beside the registers orders them against another process. A render
  * given `entries` renders those entries (the caller holds the register), the
  * rest it reads when it runs.
+ *
+ * Renders asked for while one waits its turn are that one: it has read
+ * nothing yet, so it will read what each of them wrote. A burst of records
+ * is then one render after the one that is running, not one each (the run
+ * s17fdfe rendered the document whole for each of 113 records, under the
+ * table lock).
  */
 export async function renderLedger(sandboxRoot: string, entries?: LedgerEntry[]): Promise<string> {
   const key = resolve(sandboxRoot);
-  const turn = (renderChains.get(key) ?? Promise.resolve()).catch(() => undefined).then(() => withNamedLock(sandboxRoot, RENDER_LOCK, () => renderLedgerNow(sandboxRoot, entries)));
+  if (!entries) {
+    const waiting = renderWaiting.get(key);
+    if (waiting) return waiting;
+  }
+  const turn: Promise<string> = (renderChains.get(key) ?? Promise.resolve()).catch(() => undefined).then(() => {
+    // Begun: what is written from now on is the next render's to read.
+    if (renderWaiting.get(key) === turn) renderWaiting.delete(key);
+    return withNamedLock(sandboxRoot, RENDER_LOCK, () => renderLedgerNow(sandboxRoot, entries));
+  });
+  if (!entries) renderWaiting.set(key, turn);
   renderChains.set(key, turn);
   try {
     return await turn;
   } finally {
     if (renderChains.get(key) === turn) renderChains.delete(key);
+    if (renderWaiting.get(key) === turn) renderWaiting.delete(key);
   }
+}
+
+/** The table locks whose holder changed what ledger.md says: rendered once the lock is let go. */
+const renderDue = new WeakSet<object>();
+/** Said under the table lock by whoever appended to the ledger, its attestations or its disputes: the document is rendered when the lock is let go, never while it is held. */
+function renderOnceLetGo(held: object): void {
+  renderDue.add(held);
+}
+
+/**
+ * The table lock, and ledger.md rendered after it is let go when the
+ * holder changed what the document says (renderOnceLetGo): the render reads
+ * the registers itself, outside the lock, and several records in a burst
+ * share one (renderLedger). The run s17fdfe's records held the lock for 7
+ * to 97 s each while the document was rendered whole inside it. The call
+ * still returns after a render that read what it wrote.
+ */
+async function withTableLockRendered<T>(sandboxRoot: string, fn: (held: Parameters<Parameters<typeof withTableLock>[1]>[0]) => Promise<T>): Promise<T> {
+  let mine: object | null = null;
+  const result = await withTableLock(sandboxRoot, (held) => {
+    // This call's own handle on the lock: what it marks is its own.
+    const own = { ...held };
+    mine = own;
+    return fn(own);
+  });
+  if (mine && renderDue.has(mine)) await renderLedger(sandboxRoot);
+  return result;
 }
 
 const RENDER_LOCK = "ledger-render";
@@ -2548,7 +2597,7 @@ export async function attestEntry(ctx: SwarmContext, input: LedgerActInput): Pro
   const evidence = preAnswer && answerReview && (strength === "established" || answerReview.reproduced_at?.length || answerReview.derivation) ? await reviewEvidenceCaps(ctx.sandboxRoot, preAnswer, answerReview, { material: preBar?.material ?? true, entries: pre, presumption: preBar?.presumption ?? null }) : null;
   // The negatives a review recorded here answers (the answer itself, or those resting on the coverage record): their offers are taken up after the lock.
   const reviewed: string[] = [];
-  const result = await withTableLock(ctx.sandboxRoot, async (held): Promise<AttestResult> => {
+  const result = await withTableLockRendered(ctx.sandboxRoot, async (held): Promise<AttestResult> => {
     const entries = await readLedger(ctx.sandboxRoot);
     const t = actTarget(entries, input.seq, ctx.agentId, "attest");
     if (!t.ok) return t;
@@ -2704,7 +2753,7 @@ export async function attestEntry(ctx: SwarmContext, input: LedgerActInput): Pro
     if (mine.length && !upgrade) return { ok: true, line: mine.at(-1)!, appended: false, note: `you attested #${t.entry.seq} already` };
     await held.assertOwned();
     const line = await appendAttestation(ctx.sandboxRoot, attested, { v: 2, act: "attest", seq: t.entry.seq, target, by: ctx.agentId, at: new Date().toISOString(), how: how.value, ...(refs.length ? { refs } : {}), ...(review ? { review } : {}), ...(recorded ? { strength: recorded } : {}), ...(answerReview ? { answer_review: answerReview } : {}), ...(questionAnswer && (caps.length || downgraded.length) ? { capped: [...caps, ...downgraded] } : {}), ...(secondWhy.value ? { second_review_why: secondWhy.value } : {}) });
-    await renderLedger(ctx.sandboxRoot);
+    renderOnceLetGo(held);
     const noAlternative = downgraded.includes(NO_ALTERNATIVE_CAP);
     // A partial answer's locators are checked too, and what does not verify is said (partial is a disposition: nothing is capped on it).
     const unverified = !downgradeFixes.length ? (evidence?.locators ?? []).filter((v): v is Extract<LocatorVerdict, { ok: false }> => !v.ok) : [];
@@ -2892,7 +2941,7 @@ export async function disputeEntry(ctx: SwarmContext, input: LedgerActInput): Pr
       if (use) return { ok: false, reason: use };
     }
   }
-  return withTableLock(ctx.sandboxRoot, async (held) => {
+  return withTableLockRendered(ctx.sandboxRoot, async (held) => {
     const entries = await readLedger(ctx.sandboxRoot);
     const t = actTarget(entries, input.seq, ctx.agentId, "dispute");
     if (!t.ok) return t;
@@ -2911,7 +2960,7 @@ export async function disputeEntry(ctx: SwarmContext, input: LedgerActInput): Pr
     await held.assertOwned();
     await mkdir(join(ctx.sandboxRoot, LEDGER_DIR), { recursive: true });
     await appendFile(join(ctx.sandboxRoot, LEDGER_DISPUTES), `${JSON.stringify(line)}\n`, "utf8");
-    await renderLedger(ctx.sandboxRoot);
+    renderOnceLetGo(held);
     return { ok: true, line, appended: true };
   });
 }
@@ -3332,7 +3381,7 @@ async function recordCoverage(ctx: SwarmContext, input: LedgerInput): Promise<Le
   const L = await import("./leads.ts");
   const leads = await L.leadsSnapshot(ctx.sandboxRoot);
   const method2 = await ledgerMethods(ctx.sandboxRoot, objects);
-  const recorded = await withTableLock(ctx.sandboxRoot, async (held): Promise<LedgerResult> => {
+  const recorded = await withTableLockRendered(ctx.sandboxRoot, async (held): Promise<LedgerResult> => {
     const entries = await readLedger(ctx.sandboxRoot);
     const bySeq = new Map(entries.map((e) => [e.seq, e]));
     const replaced = supersededBy(entries);
@@ -3734,7 +3783,7 @@ async function recordAnswer(ctx: SwarmContext, input: LedgerInput): Promise<Ledg
         if (bad) return { ok: false as const, reason: bad };
       }
     }
-    return withTableLock(ctx.sandboxRoot, async (held) => {
+    return withTableLockRendered(ctx.sandboxRoot, async (held) => {
       const entries = await readLedger(ctx.sandboxRoot);
       const disputes = await readDisputes(ctx.sandboxRoot);
       const bySeq = new Map(entries.map((e) => [e.seq, e]));
@@ -4763,7 +4812,10 @@ export function ledgerGate(o: { entries: LedgerEntry[]; attestations: LedgerAtte
         if (hold.code === "sweep_pending") {
           defects.push({ code: "sweep_pending", section: sec.section, seqs: [a.seq, c.seq], what: `answer #${a.seq} (${sec.section}) rests on coverage record E-${c.seq}, whose store sweep for ${c.looked_for!.map((t) => `"${t}"`).join(", ")} has not finished (pending)`, fix: "wait for the sweep: the hub runs it when the record is written and records it in ledger/sweeps.jsonl (the finish line runs one lost with its process); then examine what it found", named_by: [] });
         } else if (hold.code === "sweep_hits") {
-          const words = (hold.hits ?? sw?.hits ?? []).map((h) => `"${h.term}" in ${h.ref}${h.also?.length ? ` (also ${h.also.join(", ")})` : ""} (${h.count} time${h.count === 1 ? "" : "s"}, first at byte ${h.first_offset}${h.encodings.includes("utf-16le") ? `, ${h.encodings.join(" and ")}` : ""})`);
+          // The first of them named, the rest counted: a gate item is read by a seat, and ledger/sweeps.jsonl holds each.
+          const holding = hold.hits ?? sw?.hits ?? [];
+          const words = holding.slice(0, SWEEP_GATE_HITS).map((h) => `"${h.term}" in ${h.ref}${h.also?.length ? ` (also ${h.also.slice(0, 8).join(", ")}${h.also.length > 8 ? ` and ${h.also.length - 8} more` : ""})` : ""} (${h.count} time${h.count === 1 ? "" : "s"}, first at byte ${h.first_offset}${h.encodings.includes("utf-16le") ? `, ${h.encodings.join(" and ")}` : ""})`);
+          if (holding.length > SWEEP_GATE_HITS) words.push(`and ${holding.length - SWEEP_GATE_HITS} more (ledger/sweeps.jsonl holds each)`);
           const unexamined = hold.unexamined ?? [];
           const named = unexamined.map((u) => `${u.ref}${u.also.length ? ` (also ${u.also.join(", ")})` : ""} (${u.terms.map((t) => `"${t}"`).join(", ")}, found by the sweep of E-${u.found_by})`);
           const said = [
@@ -4783,8 +4835,10 @@ export function ledgerGate(o: { entries: LedgerEntry[]; attestations: LedgerAtte
             code: "sweep_partial",
             section: sec.section,
             seqs: [a.seq, c.seq],
-            what: `answer #${a.seq} (${sec.section}) rests on coverage record E-${c.seq}, whose store sweep is partial: ${sw!.searched.objects} object(s) searched, not searched: ${sw!.unsearched.map((u) => `${u.ref} (${u.why})`).join("; ")}`,
-            fix: `a partial sweep is not a clean one: record the coverage again with supersedes=${c.seq} (its sweep runs again; SWARM_SWEEP_MAX_BYTES and SWARM_SWEEP_MAX_SEC set its budget), or the operator accepts the question's limits`,
+            what: `answer #${a.seq} (${sec.section}) rests on coverage record E-${c.seq}, whose store sweep is partial: ${sw!.searched.objects} object(s) searched, not searched: ${SWS.unsearchedWords(sw!)}`,
+            fix: SWS.unsearchedLeft(sw!)
+              ? `wait: the hub goes on with what a pass's budget left in the next pass, by itself, until the sweep is clean or names hits (ledger/sweeps.jsonl); what no pass can search stays named, and then the coverage is recorded again with supersedes=${c.seq} under a larger budget (SWARM_SWEEP_MAX_BYTES, SWARM_SWEEP_MAX_SEC), or the operator accepts the question's limits`
+              : `a partial sweep is not a clean one: record the coverage again with supersedes=${c.seq} (its sweep runs again; SWARM_SWEEP_MAX_BYTES and SWARM_SWEEP_MAX_SEC set its budget), or the operator accepts the question's limits`,
             named_by: [],
           });
         }

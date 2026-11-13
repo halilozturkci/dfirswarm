@@ -188,11 +188,12 @@ test("a hit in an object the record names does not hold; a partial sweep names w
   await writeFile(join(S, SW.LEDGER_SWEEPS), "");
   assert.equal(await SW.reconcileSweeps(S, { orphanMs: 0 }), 1);
   assert.equal(SW.sweepOf(named, await SW.readSweeps(S))?.state, "clean");
-  // A budget the sweep cannot keep: partial, every object it did not reach named.
+  // A budget the sweep cannot keep: partial, every object it did not reach named. A string no pass has searched for yet: what the store holds of
+  // "alice" is kept from the pass above, and a sweep for it reads nothing, whatever its budget.
   process.env.SWARM_SWEEP_MAX_BYTES = "1";
   let partial: P.LedgerEntry;
   try {
-    partial = ok(await rec(a0, coverage("2", ["input:disk.E01"], [`E-${abs.seq}`], { looked_for: ["alice"], supersedes: named.seq }))).entry;
+    partial = ok(await rec(a0, coverage("2", ["input:disk.E01"], [`E-${abs.seq}`], { looked_for: ["mallory"], supersedes: named.seq }))).entry;
     await SW.awaitSweeps(S);
   } finally {
     delete process.env.SWARM_SWEEP_MAX_BYTES;
