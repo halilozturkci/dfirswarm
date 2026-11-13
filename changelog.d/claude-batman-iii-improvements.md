@@ -172,3 +172,9 @@ Three whole-image AD1 extractions of one run stopped with ENOSPC at 4,294,967,27
 quota on a bind mount given none: measured on msb, a write in a VM stops at exactly 4,294,967,296 bytes, and the same write with
 `.quota(8192)` goes past it. A job's `$OUT` is now mounted with a quota of its own: the room free where it is kept less the service's
 reserve, never below 4 GiB (`SWARM_JOB_OUT_QUOTA_MB` sets it). The job's accessible mounts say it.
+
+### Added: --pack-skills off runs the packs' tools without their notes
+
+The skills experiment needs an arm that has the packs' tools and recipes and none of their notes. `--pack-skills off` leaves the skill
+index out of the prompt and registers no `skill` tool and no cards; it is recorded as `pack_skills` in the registry and reaches the seats'
+VMs.
