@@ -1664,6 +1664,14 @@ export async function takeCustody(sandboxInput: string, options: CustodyOptions 
   if ("text" in sweepsRead && sweepsRead.text.trim()) {
     const v = verifySweepChain(sweepsRead.text);
     state.sweeps = { lines: v.total, intact: v.ok, detail: v.ok ? `${v.total} lines, chain intact` : `broken at line ${v.broken_at} (${v.reason})` };
+    // A line whose list of what it did not search is long names a side file by its sha256 (ledger/sweeps/unsearched-<sha256>.jsonl): held to it.
+    if (v.ok) {
+      const side = await sweepSideLists(sandbox, sweepsRead.text);
+      if (side.named) {
+        state.sweeps.detail += `; ${side.named} side list(s) of what was not searched, ${side.bad.length ? `${side.bad.length} NOT as named (${side.bad.slice(0, 3).join("; ")})` : "each as its line names it"}`;
+        if (side.bad.length) state.sweeps.intact = false;
+      }
+    }
     if (state.seal) state.seal.sweeps = { lines: v.total, head: v.head };
   } else if ("why" in sweepsRead && sweepsRead.why !== "missing") {
     state.sweeps = { lines: 0, intact: false, detail: `the store sweeps are ${sweepsRead.why}` };
@@ -3032,4 +3040,47 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
         process.exit(1);
       });
   }
+}
+
+/**
+ * The side lists the sweep lines name (`unsearched_all.file`: a path under
+ * ledger/sweeps/ and the sha256 of its bytes), each hashed as a stream and
+ * held to its line. A list that is missing, is not a regular file under
+ * ledger/sweeps/, or hashes otherwise is named.
+ */
+export async function sweepSideLists(sandbox: string, sweepsText: string): Promise<{ named: number; bad: string[] }> {
+  const want = new Map<string, string>();
+  for (const line of sweepsText.split("\n")) {
+    if (!line.includes('"unsearched_all"')) continue;
+    try {
+      const f = (JSON.parse(line) as { unsearched_all?: { file?: { path?: unknown; sha256?: unknown } } }).unsearched_all?.file;
+      if (f && typeof f.path === "string" && typeof f.sha256 === "string") want.set(f.path, f.sha256);
+    } catch {
+      // The chain check has read every line already: a line that does not parse is its finding, not this one's.
+    }
+  }
+  const bad: string[] = [];
+  const { createHash } = await import("node:crypto");
+  const { createReadStream, lstatSync } = await import("node:fs");
+  for (const [path, sha] of want) {
+    if (!/^ledger\/sweeps\/unsearched-[0-9a-f]{64}\.jsonl$/.test(path)) {
+      bad.push(`${path.slice(0, 120)}: not a side list's path`);
+      continue;
+    }
+    const abs = join(sandbox, path);
+    let regular = false;
+    try {
+      regular = lstatSync(abs).isFile();
+    } catch {
+      regular = false;
+    }
+    if (!regular) {
+      bad.push(`${path}: missing`);
+      continue;
+    }
+    const h = createHash("sha256");
+    await new Promise<void>((done, fail) => createReadStream(abs).on("data", (c) => h.update(c)).on("end", () => done()).on("error", fail)).catch(() => undefined);
+    if (h.digest("hex") !== sha) bad.push(`${path}: its bytes are not the ${sha.slice(0, 12)}\u2026 its line names`);
+  }
+  return { named: want.size, bad };
 }
