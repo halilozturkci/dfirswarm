@@ -1434,6 +1434,39 @@ async function closeChanged(sandboxRoot: string, s: L.LeadsSnapshot, all: string
   return after.filter((w) => changed.has(w.section));
 }
 
+/**
+ * The seats still at work (on the team, neither done nor marked dead, with a working row on the trace within the stale
+ * limit) whose newest ended job of evidence (a command or tool job that ended ok) ended after their newest ledger entry:
+ * one item a seat. In the run s082123 a seat had computed an answer at minute 152 and never recorded it, and the run was
+ * stopped with the value in its context alone; a finish that does not wait for such a seat ends without it.
+ */
+export async function unrecordedWork(sandboxRoot: string, s: L.LeadsSnapshot, now = Date.now()): Promise<string[]> {
+  const ids = await P.teamIds(sandboxRoot).catch(() => [] as string[]);
+  if (!ids.length) return [];
+  const act = await L.recentActivity(sandboxRoot, L.leadStaleMs(), now);
+  const lastEntry = new Map<string, number>();
+  for (const e of s.ledger.entries) {
+    const at = Date.parse(e.at ?? "");
+    if (!Number.isFinite(at)) continue;
+    for (const by of [e.by, ...((e as { authors?: string[] }).authors ?? [])]) if (by) lastEntry.set(by, Math.max(lastEntry.get(by) ?? 0, at));
+  }
+  const out: string[] = [];
+  for (const id of ids) {
+    if (["done", "dead"].some((m) => existsSync(join(sandboxRoot, "done", "agents", `${id}.${m}`)))) continue;
+    const row = act.get(id);
+    if (!row?.last || now - row.last >= L.leadStaleMs()) continue;
+    let newest: { id: string; at: number } | null = null;
+    for (const j of s.jobs) {
+      if (j.agent !== id || (j.kind !== "command" && j.kind !== "tool") || j.status !== "ok" || !j.finished_at) continue;
+      const at = Date.parse(j.finished_at);
+      if (Number.isFinite(at) && (!newest || at > newest.at)) newest = { id: j.id, at };
+    }
+    if (!newest || newest.at <= (lastEntry.get(id) ?? 0)) continue;
+    out.push(`${id} is at work and its job ${newest.id} ended after its last record (${lastEntry.has(id) ? new Date(lastEntry.get(id)!).toISOString() : "none"}): ask it to record what that job showed, or wait for it`);
+  }
+  return out;
+}
+
 async function computeReadiness(sandboxRoot: string, s: L.LeadsSnapshot, revision: string): Promise<Readiness> {
   const items: string[] = [];
   const limited: string[] = [];
@@ -1447,6 +1480,8 @@ async function computeReadiness(sandboxRoot: string, s: L.LeadsSnapshot, revisio
   // An addition committed and not yet applied (docs/adr/0014): what it reopens may still look settled; the gate holds it too.
   const M = await import("../scripts/material.ts").catch(() => null);
   for (const a of (await M?.unappliedAdditions(sandboxRoot).catch(() => [])) ?? []) items.push(`import:${a.import} (${a.type === "evidence_added" ? "evidence" : "material"} added at ${a.at}) is committed and not all it implies is recorded yet (the hub records it at its next round)`);
+  // A seat still at work whose newest job of evidence ended after its newest record: what that job showed is on no record yet.
+  for (const w of await unrecordedWork(sandboxRoot, s).catch(() => [])) items.push(w);
   const sections = await readinessSections(sandboxRoot, s);
   const inputs = await gateInputs(sandboxRoot, s);
   const { attestations } = inputs;

@@ -462,3 +462,22 @@ test("what holds the finish is given by code, and the trace keeps the codes and 
   assert.ok(((p.readiness as { held?: unknown[] }).held ?? []).length >= 1, JSON.stringify(p.readiness));
   assert.deepEqual(F.heldCodes([{ code: "sweep_hits" }, { code: "sweep_hits" }, { code: "no_critic_act" }, {}]), { sweep_hits: 2, no_critic_act: 1 });
 });
+
+test("a seat at work whose evidence job ended after its last record holds the finish; one that recorded since, is done, or is silent does not", async () => {
+  const r = await run("fp-unrec");
+  await established(r); // a0 records a finding and a coverage record, a1 an answer
+  const later = new Date(Date.now() + 60_000).toISOString();
+  // a1's command job ended after its answer; a0's tool job ended before its records; a2's is a recipe, not a seat's evidence job.
+  await job(r.S, "j000002", "out.txt", { requester: { agent: "a1" }, spec: { kind: "command", command: "decode" }, finished_at: later });
+  await job(r.S, "j000003", "o.txt", { requester: { agent: "a0" }, spec: { kind: "tool", tool: "t" }, finished_at: "2026-01-01T00:00:00.000Z" });
+  await job(r.S, "j000004", "r.txt", { requester: { agent: "a2" }, spec: { kind: "recipe" }, finished_at: later });
+  const held = await F.unrecordedWork(r.S, await L.leadsSnapshot(r.S), Date.now());
+  assert.equal(held.length, 1, JSON.stringify(held));
+  assert.match(held[0]!, /^a1 is at work and its job j000002 ended after its last record \(20\d\d-.*\): ask it to record what that job showed, or wait for it$/);
+  // Silent past the stale limit: not at work, not held.
+  assert.deepEqual(await F.unrecordedWork(r.S, await L.leadsSnapshot(r.S), Date.now() + 2 * L.leadStaleMs()), []);
+  // Done: not held.
+  await mkdir(join(r.S, "done", "agents"), { recursive: true });
+  await writeFile(join(r.S, "done", "agents", "a1.done"), "");
+  assert.deepEqual(await F.unrecordedWork(r.S, await L.leadsSnapshot(r.S), Date.now()), []);
+});
