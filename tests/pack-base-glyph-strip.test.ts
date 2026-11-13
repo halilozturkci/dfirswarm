@@ -146,7 +146,18 @@ test("an OCR engine is a second reader when the image holds one, and the answer 
     assert.equal(withIt.doc.status, CLEAN, withIt.doc.status_basis);
     assert.deepEqual(withIt.doc.ocr, { available: true, engine: "tesseract 0.0-standin", read: true, characters: 11, characters_without_spaces: 10, text_file: "store/jobs/j000001/out/glyph_strip-2/ocr.txt" });
     assert.deepEqual(withIt.doc.readers.map((x: Doc) => [x.reader, x.agrees_with_count ?? null]), [["tesseract 0.0-standin", true], ["glyph_strip (this tool)", null], ["the caller", true]]);
-    assert.deepEqual(withIt.doc.reading_against_ocr, { same_length: true, positions_that_differ: [1], differ: 1, of_them_uncertain: 1 });
+    // Where the two texts differ follows the OCR text, which the answer does not show: the positions are in a file of their own, never in
+    // the answer, so that calls with readings varied a character at a time cannot rebuild ocr.txt from answers.
+    const against = withIt.doc.reading_against_ocr as Doc;
+    assert.deepEqual(Object.keys(against).sort(), ["file", "same_length", "what"]);
+    assert.equal(against.same_length, true);
+    assert.equal(against.file, "store/jobs/j000001/out/glyph_strip-2/reading_against_ocr.tsv");
+    for (const key of ["positions_that_differ", "differ", "of_them_uncertain"]) assert.ok(!withIt.stdout.includes(`"${key}"`), `${key} is not in the answer`);
+    const rows = (await readFile(join(out, "glyph_strip-2", "reading_against_ocr.tsv"), "utf8")).trim().split("\n").map((l) => l.split("\t"));
+    assert.deepEqual(rows[0], ["at", "differs", "uncertain"]);
+    assert.equal(rows.length, 12, "a row a position of the longer text");
+    assert.deepEqual(rows.slice(1).filter((r) => r[1] === "1").map((r) => [r[0], r[2]]), [["1", "1"]], "position 1 differs, and it was marked uncertain");
+    assert.equal((await lstat(join(out, "glyph_strip-2", "reading_against_ocr.tsv"))).mode & 0o777, 0o600);
     assert.equal(await readFile(join(out, "glyph_strip-2", "ocr.txt"), "utf8"), ocrText + "\n");
     assert.ok(!withIt.stdout.includes(ocrText), "the OCR text is not in the answer");
     assert.ok("program_group" in withIt.doc);
@@ -164,6 +175,121 @@ test("an engine that leaves a late child holding its pipe (an abandoned holder) 
     assert.equal(r.doc.ocr.read, true, "what the engine wrote before it ended is its reading");
     assert.ok(r.doc.program_group.left_behind > 0 || r.doc.program_group.unproven.length > 0);
     assert.ok(!r.stdout.includes("late"), "what the holder wrote after the program ended is not the reading");
+  });
+});
+
+/** Groups of glyphs on one line: the glyphs of a group touch (no blank column between them), two blank columns between groups. */
+function touching(groups: string[], scale = 3): Buffer {
+  const columns: number[][] = [];
+  const blank = (n: number): void => {
+    for (let i = 0; i < n * scale; i++) columns.push(new Array(7 * scale).fill(0));
+  };
+  blank(4);
+  for (const group of groups) {
+    for (const ch of group) {
+      const glyph = FONT[ch]!;
+      for (let x = 0; x < 5; x++) for (let k = 0; k < scale; k++) columns.push(Array.from({ length: 7 * scale }, (_, y) => (glyph[Math.floor(y / scale)]![x] === "#" ? 1 : 0)));
+    }
+    blank(2);
+  }
+  blank(4);
+  return greyPng(Array.from({ length: 7 * scale + 16 }, (_, y) => columns.map((col) => (y >= 8 && y < 8 + 7 * scale && col[y - 8] ? 15 : 240))));
+}
+
+test("glyphs that are the same drawing but read as two characters are not tied: the reading is the first candidate and every combination is in the set", async () => {
+  await withRun(async (run, out) => {
+    // Three l's drawn alike. A reader who reads them as l, I and 1 is not overruled by the drawing: the set keeps every combination of the
+    // three classes (4 x 4 x 4), the reading first, and the answer names the pairs that are one drawing read as two characters.
+    await writeFile(join(run, "inputs/case files/three.png"), line("lll"));
+    const apart = await call("glyph_strip", run, { image: "inputs/case files/three.png", reading: "lI1", ocr: "none" }, { out });
+    assert.equal(apart.doc.status, "complete", apart.doc.status_basis);
+    assert.deepEqual(apart.doc.same_shape_groups, [[1, 2, 3]]);
+    const c = apart.doc.candidates as Doc;
+    assert.equal(c.candidate_set_size, 64);
+    assert.equal(c.positions_tied, undefined, "nothing is tied against the reading");
+    assert.deepEqual(c.same_drawing_read_apart, [[0, 1], [0, 2], [1, 2]]);
+    assert.equal(c.first_line_is_the_reading, true);
+    const lines = (await readFile(join(out, "glyph_strip", "candidates.txt"), "utf8")).trim().split("\n");
+    assert.equal(lines.length, 64);
+    assert.equal(lines[0], "lI1", "the reading itself is the first candidate");
+    assert.equal(new Set(lines).size, 64);
+    for (const text of ["lll", "III", "111", "|||", "1Il"]) assert.ok(lines.includes(text), `${text} is in the set`);
+    // Read as l, I and l: the two l's are tied (one choice), the I is not tied to either, and the reading is still first.
+    const tied = await call("glyph_strip", run, { image: "inputs/case files/three.png", reading: "lIl", ocr: "none" }, { out });
+    const t = tied.doc.candidates as Doc;
+    assert.deepEqual([t.candidate_set_size, t.positions_tied, t.same_drawing_read_apart, t.first_line_is_the_reading], [16, [[0, 2]], [[0, 1], [1, 2]], true]);
+    const tiedLines = (await readFile(join(out, "glyph_strip-2", "candidates.txt"), "utf8")).trim().split("\n");
+    assert.equal(tiedLines[0], "lIl");
+    assert.ok(tiedLines.every((l) => l[0] === l[2]), "a tied pair holds one character in every candidate");
+    assert.ok(!apart.stdout.includes("lI1") && !tied.stdout.includes("lIl"), "no reading in the answer");
+  });
+});
+
+test("a picture of a shape no line has is refused by its header, before a row of it is decoded", async () => {
+  await withRun(async (run, out) => {
+    // A column one pixel wide and 100,000 high, and a thread 300,000 wide and 2 high: both within the pixel bound, neither a line.
+    await writeFile(join(run, "inputs/case files/column.png"), greyPng(Array.from({ length: 100_000 }, (_, y) => [y % 50 < 25 ? 15 : 240])));
+    const thread = Array.from({ length: 300_000 }, (_, x) => (x % 50 < 25 ? 15 : 240));
+    await writeFile(join(run, "inputs/case files/thread.png"), greyPng([thread, thread]));
+    for (const [name, size] of [["column.png", "1 x 100000"], ["thread.png", "300000 x 2"]]) {
+      const r = await call("glyph_strip", run, { image: `inputs/case files/${name}`, ocr: "none" }, { out, limitMs: 30_000 });
+      assert.deepEqual([r.code, r.doc.status], [1, "failed"], r.stdout);
+      assert.match(r.doc.error, new RegExp(`the picture is ${size} pixels: this tool takes a crop of one line \\(up to 6000000 pixels, at most 2000 high and 50000 wide\\)`));
+      assert.ok(r.ms < 10_000, `${name} was refused in ${r.ms} ms`);
+    }
+    assert.deepEqual(filesBelow(out), [], "nothing was written for a refused picture");
+  });
+});
+
+test("399 tall glyphs drawn alike and read alike are compared and tied well inside the clock", async () => {
+  await withRun(async (run, out) => {
+    // 399 bars 1,400 pixels tall, drawn alike and read alike: every pair is compared (pixel by pixel, the old way, that took 17 s on an
+    // M-series host) and all are tied into one choice, well inside the clock.
+    const row = Array.from({ length: 4000 }, (_, x) => (x >= 5 && (x - 5) % 10 < 4 && (x - 5) / 10 < 399 ? 15 : 240));
+    const paper = row.map(() => 240);
+    await writeFile(join(run, "inputs/case files/bars.png"), greyPng(Array.from({ length: 1420 }, (_, y) => (y >= 10 && y < 1410 ? row : paper))));
+    const bars = await call("glyph_strip", run, { image: "inputs/case files/bars.png", reading: "l".repeat(399), ocr: "none" }, { out, limitMs: 60_000 });
+    assert.equal(bars.doc.count, 399, bars.stdout.slice(0, 400));
+    assert.equal(bars.doc.status, "complete", bars.doc.status_basis);
+    assert.equal(bars.doc.candidates.candidate_set_size, 4);
+    assert.equal(bars.doc.candidates.positions_tied.length, 398);
+    assert.ok(bars.doc.seconds < 8, `399 tied glyphs took ${bars.doc.seconds} s`);
+  });
+});
+
+test("a blank crop with a reading has its candidate set written, and a run that is itself the median width can be wide", async () => {
+  await withRun(async (run, out) => {
+    await writeFile(join(run, "inputs/case files/blank.png"), greyPng(Array.from({ length: 40 }, () => new Array(200).fill(240))));
+    const blank = await call("glyph_strip", run, { image: "inputs/case files/blank.png", reading: "lO", ocr: "none" }, { out });
+    assert.deepEqual([blank.code, blank.doc.status, blank.doc.count], [0, "complete", 0], blank.stdout);
+    assert.equal(blank.doc.candidates.candidate_set_size, 12);
+    assert.equal(blank.doc.candidates.candidates_file, "store/jobs/j000001/out/glyph_strip/candidates.txt");
+    assert.match(blank.doc.candidates.glyphs_not_matched, /2 characters besides spaces and the line has 0 ink runs/);
+    assert.equal((await readFile(join(out, "glyph_strip", "candidates.txt"), "utf8")).trim().split("\n").length, 12);
+    assert.equal(blank.doc.readers.at(-1).agrees_with_count, false);
+    // An a, then two pairs of touching x's: two of the three runs are pairs, so the median width is a pair's; each pair is still wide.
+    await writeFile(join(run, "inputs/case files/pairs.png"), touching(["a", "xx", "xx"]));
+    const pairs = await call("glyph_strip", run, { image: "inputs/case files/pairs.png", ocr: "none" }, { out });
+    assert.deepEqual(pairs.doc.glyphs.map((g: Doc) => g.width), [15, 30, 30]);
+    assert.deepEqual(pairs.doc.wide, [2, 3]);
+  });
+});
+
+test("an OCR engine that floods its output is read up to its bound and ended, and the call answers in time", async () => {
+  await withRun(async (run, out) => {
+    await writeFile(join(run, "inputs/case files/line one.png"), line(TRUTH));
+    const bin = join(run, "work", "bin");
+    await mkdir(bin, { recursive: true });
+    await writeFile(join(bin, "tesseract"), `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "tesseract 0.0-standin"; exit 0; fi\nexec yes "a line that never ends"\n`);
+    await chmod(join(bin, "tesseract"), 0o755);
+    const r = await call("glyph_strip", run, { image: "inputs/case files/line one.png", reading: "x'7lO a`I0p" }, { out, path: `${bin}:/usr/bin:/bin`, limitMs: 40_000 });
+    assert.equal(r.killed, false);
+    assert.ok(r.ms < 8000, `the tool answered in ${r.ms} ms, not at the engine's 20-second clock`);
+    assert.equal(r.doc.count, 10);
+    assert.deepEqual([r.doc.ocr.read, r.doc.ocr.engine], [false, "tesseract 0.0-standin"]);
+    assert.match(r.doc.ocr.said, /the OCR engine did not read the crop \(it wrote more than 65536 bytes\)/);
+    assert.equal(r.doc.reading_against_ocr, undefined);
+    assert.ok(!filesBelow(out).some((f) => f.endsWith("ocr.txt")), "no OCR text was written");
   });
 });
 

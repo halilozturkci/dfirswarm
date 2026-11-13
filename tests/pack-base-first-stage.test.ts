@@ -12,7 +12,7 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { PYTHON3 } from "./host-gates.ts";
@@ -56,6 +56,8 @@ for d, _dirs, files in sorted(os.walk(root)):
         n += 1
         rows.append("%d\tx:%d\tfile\t%d\tC:\\%s" % (n, n, os.path.getsize(os.path.join(d, f)), os.path.relpath(os.path.join(d, f), root).replace("/", "\\")))
 open(top + "/members list.tsv", "w").write("\n".join(rows) + "\n")
+# The coverage record the recipe that wrote a list leaves beside it (a catalogue generation's coverage.json): this one says the list is whole.
+open(top + "/coverage.json", "w").write('{"recipe": "a-lister", "status": "complete", "status_basis": "every item of the image was listed"}')
 print(n)
 `;
 
@@ -99,7 +101,7 @@ test("a macro document outside the usual folders is ranked first, with the signa
     assert.ok(!rows.some((x) => x.path.includes("quarterly plan") || x.path.includes("~$")), "a plain document without a project and an owner file are no candidates");
     const cov = JSON.parse(await readFile(join(run, out, "coverage.json"), "utf8")) as Doc;
     assert.deepEqual([cov.status, cov.whole_list_read, cov.members, cov.candidates, cov.mode], ["complete", true, members, 4, "tree"]);
-    assert.match(cov.rule, /To answer "cannot be determined" to a "which file" question the whole member list must have been searched: whole_list_read says whether it was\./);
+    assert.match(cov.rule, /To answer "cannot be determined" to a "which file" question the whole member list must have been searched: whole_list_read says whether it was \(the recipe read the whole tree or list, and a member list's own coverage record says the list is complete\)\./);
     assert.match(cov.not_covered, /no macro was read or run/);
     assert.deepEqual(cov.sources, { recent_shortcuts: 1, registry_hives: 1, antivirus_files: 1, prefetch_applications: ["winword.exe"] });
   });
@@ -118,7 +120,72 @@ test("a member list gives the same first rank from names alone, and says what a 
     assert.match(rows[0]!.signals, /a Recent shortcut carries its name/);
     const cov = JSON.parse(await readFile(join(run, out, "coverage.json"), "utf8")) as Doc;
     assert.deepEqual([cov.mode, cov.whole_list_read, cov.members, cov.list_form], ["member list", true, members + 1, "a TSV with a path column (column 5)"]);
+    assert.deepEqual([cov.status, cov.list_read_to_its_end, cov.list_coverage.status, r.doc.list_coverage], ["complete", true, "complete", "complete"]);
+    assert.match(cov.status_basis, /its own coverage record says the list is complete/);
     assert.match(cov.not_covered, /a member list has names only: nothing inside a file was read/);
+  });
+});
+
+test("a member list that is itself partial, or whose coverage is not recorded, makes the ranking partial and whole_list_read false", async () => {
+  await withRun(async (run) => {
+    py(BUILD, [join(run, "inputs/case files")], run);
+    const record = join(run, "inputs/case files/coverage.json");
+    // The shape a lister writes when a segment of its image is missing: the list it wrote holds only what it could read.
+    await writeFile(record, JSON.stringify({ recipe: "a-lister", status: "partial", segments_missing: ["image.s03"], limits_hit: [],
+      status_basis: "a segment is missing: what lies in it is not listed" }));
+    const cut = recipe(run, "run", { paths: ["inputs/case files/members list.tsv"] }, "store/jobs/j000001/out/partial list");
+    assert.equal(cut.code, 0, JSON.stringify(cut.doc));
+    assert.deepEqual([cut.doc.status, cut.doc.whole_list_read, cut.doc.list_coverage], ["partial", false, "partial"]);
+    const cov = JSON.parse(await readFile(join(run, "store/jobs/j000001/out/partial list/coverage.json"), "utf8")) as Doc;
+    assert.deepEqual([cov.status, cov.whole_list_read, cov.list_read_to_its_end, cov.list_coverage.status, cov.list_coverage.recipe], ["partial", false, true, "partial", "a-lister"]);
+    assert.deepEqual(cov.list_coverage.why, ["segments_missing: image.s03", "a segment is missing: what lies in it is not listed"]);
+    assert.match(cov.status_basis, /^the ranking is of part of what was asked: the member list itself is not known to be whole: its coverage record \(coverage\.json\) says partial: segments_missing: image\.s03/);
+    const rows = await table(join(run, "store/jobs/j000001/out/partial list/candidates.tsv"));
+    assert.equal(rows.length, 3, "what the list holds is still ranked");
+
+    await rm(record);
+    const bare = recipe(run, "run", { paths: ["inputs/case files/members list.tsv"] }, "store/jobs/j000001/out/bare list");
+    assert.deepEqual([bare.doc.status, bare.doc.whole_list_read, bare.doc.list_coverage], ["partial", false, "not recorded"]);
+    const bareCov = JSON.parse(await readFile(join(run, "store/jobs/j000001/out/bare list/coverage.json"), "utf8")) as Doc;
+    assert.match(bareCov.list_coverage.why[0], /^no coverage\.json beside the list/);
+
+    await writeFile(record, "{not json");
+    const unreadable = recipe(run, "run", { paths: ["inputs/case files/members list.tsv"] }, "store/jobs/j000001/out/odd list");
+    assert.deepEqual([unreadable.doc.status, unreadable.doc.whole_list_read, unreadable.doc.list_coverage], ["partial", false, "unknown"]);
+  });
+});
+
+test("a link in a tree is ranked by its own name and not followed, and makes the run partial; no output file is written through a link", async () => {
+  await withRun(async (run) => {
+    py(BUILD, [join(run, "inputs/case files")], run);
+    // The link's target, outside the tree, holds a VBA project: it must not be read.
+    py(String.raw`
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], "w") as z:
+    z.writestr("word/vbaProject.bin", b"x")
+`, [join(run, "inputs/elsewhere.docm")], run);
+    await mkdir(join(run, "inputs/case files/vol one/Users/sam/Downloads"), { recursive: true });
+    await symlink(join(run, "inputs/elsewhere.docm"), join(run, "inputs/case files/vol one/Users/sam/Downloads/invoice copy.docm"));
+    const out = "store/jobs/j000001/out/linked";
+    await mkdir(join(run, out), { recursive: true });
+    const victim = join(run, "inputs/left alone.txt");
+    await writeFile(victim, "unchanged\n");
+    for (const name of ["index.tsv", "candidates.tsv.tmp", "coverage.json.tmp"]) await symlink(victim, join(run, out, name));
+    const r = recipe(run, "run", { paths: ["inputs/case files/vol one"] }, out);
+    assert.equal(r.code, 0, JSON.stringify(r.doc) + r.stderr);
+    assert.deepEqual([r.doc.status, r.doc.whole_list_read], ["partial", true]);
+    const rows = await table(join(run, out, "candidates.tsv"));
+    const row = rows.find((x) => x.path === "Users/sam/Downloads/invoice copy.docm");
+    assert.ok(row, "the link is ranked by its name");
+    assert.match(row!.signals, /\+0 a link in the tree: not followed, so only its own name was read/);
+    assert.match(row!.signals, /\+0 not told whether it holds a VBA project: it is a link, which is not followed/);
+    assert.doesNotMatch(row!.signals, /\+4 a VBA project inside/);
+    const cov = JSON.parse(await readFile(join(run, out, "coverage.json"), "utf8")) as Doc;
+    assert.equal(cov.links_not_followed, 1);
+    assert.match(cov.status_basis, /1 link\(s\) in the tree were not followed: each is ranked by its own name only/);
+    assert.equal(await readFile(victim, "utf8"), "unchanged\n", "nothing was written through a link in the output directory");
+    assert.ok((await lstat(join(run, out, "index.tsv"))).isFile());
+    assert.match(await readFile(join(run, out, "index.tsv"), "utf8"), /^candidates\.tsv\tfirst-stage candidates/);
   });
 });
 

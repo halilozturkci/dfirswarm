@@ -14,6 +14,7 @@ import { spawnSync } from "node:child_process";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
+import { inflateSync } from "node:zlib";
 import { CLEAN } from "./host-gates.ts";
 import { call, CFB, filesBelow, py, withRun, type Doc } from "./pack-base-media-fixture.ts";
 
@@ -213,6 +214,125 @@ test("a decoder that ends and leaves a late child holding its pipe (an abandoned
     assert.match(JSON.stringify(r.doc.partial_reasons), /the decoder ended but something it started kept its output pipe open: the end of the stream was not seen/);
     assert.ok("program_group" in r.doc);
     assert.deepEqual(r.doc.times, { from_the_frames_own_presentation_time: 0, from_frame_over_rate: 3, rate: 25 });
+  });
+});
+
+/** The pixel rows of an 8-bit RGB PNG of one IDAT whose rows all use filter 0 (what the tool writes), read from the format: the bytes, and the size. */
+function pngRgb(b: Buffer): { width: number; height: number; pixels: Buffer } {
+  const [width, height] = pngSize(b);
+  assert.deepEqual([b[24], b[25]], [8, 2], "8-bit RGB");
+  const parts: Buffer[] = [];
+  for (let at = 8; at < b.length; ) {
+    const length = b.readUInt32BE(at);
+    if (b.toString("latin1", at + 4, at + 8) === "IDAT") parts.push(b.subarray(at + 8, at + 8 + length));
+    at += 12 + length;
+  }
+  const raw = inflateSync(Buffer.concat(parts));
+  const rows: Buffer[] = [];
+  for (let y = 0; y < height; y++) {
+    assert.equal(raw[y * (width * 3 + 1)], 0, "filter 0");
+    rows.push(raw.subarray(y * (width * 3 + 1) + 1, (y + 1) * (width * 3 + 1)));
+  }
+  return { width, height, pixels: Buffer.concat(rows) };
+}
+
+/** The clip turned by a display matrix (the container's own; no frame re-encoded), or false when this ffmpeg has no way to say one. */
+function rotated(run: string, from: string, to: string): boolean {
+  for (const args of [["-display_rotation", "90", "-i", join(run, from), "-c", "copy"], ["-i", join(run, from), "-c", "copy", "-metadata:s:v:0", "rotate=90"]]) {
+    const r = spawnSync("ffmpeg", ["-v", "error", "-y", ...args, join(run, to)]);
+    const said = spawnSync("ffprobe", ["-v", "error", "-select_streams", "v", "-show_entries", "stream", "-of", "json", join(run, to)], { encoding: "utf8" });
+    if (r.status === 0 && /"rotat(e|ion)"/.test(said.stdout)) return true;
+  }
+  return false;
+}
+
+test("a video with a display rotation is extracted at the size the decoder gives: every byte where it belongs, and the turn said", { skip: NO_DECODER }, async (t) => {
+  await withRun(async (run, out) => {
+    clip(run, "inputs/case files/clip one.mp4");
+    if (!rotated(run, "inputs/case files/clip one.mp4", "inputs/case files/turned.mp4")) {
+      t.skip("this ffmpeg writes no display rotation (-display_rotation is ffmpeg 6's; the rotate tag an older muxer's): there is no turned video to examine");
+      return;
+    }
+    const r = await call("frame_survey", run, { video: "inputs/case files/turned.mp4", mode: "extract", first: 62, last: 62 }, { out });
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+    assert.equal(r.doc.status, CLEAN, r.doc.status_basis);
+    assert.equal(r.doc.size, "180 x 320 (native)", "the frame as the decoder gives it, turned");
+    assert.match(r.doc.rotation_note, /display rotation of -?90 degrees: the decoder turns each frame as a player shows it .* 180 x 320 \(coded 320 x 180\)/);
+    const png = await readFile(join(out, "frame_survey", "frame-000062.png"));
+    const got = pngRgb(png);
+    assert.deepEqual([got.width, got.height], [180, 320]);
+    // The same frame as ffmpeg itself renders it, as raw RGB: the tool's PNG holds those bytes, row for row.
+    const ref = spawnSync("ffmpeg", ["-v", "error", "-i", join(run, "inputs/case files/turned.mp4"), "-vf", "select=eq(n\\,62)", "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], { maxBuffer: 64 << 20 });
+    assert.equal(ref.status, 0);
+    assert.equal(ref.stdout.length, 180 * 320 * 3);
+    assert.ok(got.pixels.equals(ref.stdout), "the frame is the decoder's own, not its bytes cut at the coded size");
+    // The survey tiles the turned frame, at its own shape.
+    const surveyed = await call("frame_survey", run, { video: "inputs/case files/turned.mp4", max_frames: 10 }, { out });
+    assert.deepEqual([surveyed.doc.tile, surveyed.doc.tile_keeps_shape], ["160 x 284", true]);
+  });
+});
+
+/** Ten frames of a picture 8 pixels wide and 720 high, lossless (FFV1 in Matroska): a frame far taller than wide. */
+function tall(run: string, name: string): void {
+  const frames = spawnSync("python3", ["-I", "-c", "import sys\nfor i in range(10): sys.stdout.buffer.write(bytes((y * 255 // 720, i * 20, 128)[c] for y in range(720) for _ in range(8) for c in range(3)))"], { maxBuffer: 64 << 20 });
+  assert.equal(frames.status, 0);
+  const r = spawnSync("ffmpeg", ["-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "8x720", "-r", "25", "-i", "-", "-c:v", "ffv1", join(run, name)], { input: frames.stdout, maxBuffer: 64 << 20 });
+  assert.equal(r.status, 0, r.stderr.toString());
+}
+
+test("a frame far taller than wide is tiled in a bounded box, and a sheet too large to hold is refused", { skip: NO_DECODER }, async () => {
+  await withRun(async (run, out) => {
+    tall(run, "inputs/case files/tall.mkv");
+    const r = await call("frame_survey", run, { video: "inputs/case files/tall.mkv", max_seconds: 10 }, { out, limitMs: 60_000 });
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+    assert.equal(r.doc.status, CLEAN, r.doc.status_basis);
+    assert.equal(r.doc.frames_decoded, 10);
+    // The tile is at most twice as high as the box is wide (160): 320 high, and narrowed with it; the old tile was 160 x 14400.
+    assert.deepEqual([r.doc.tile, r.doc.tile_keeps_shape], ["4 x 320", false]);
+    assert.match(r.doc.tile_note, /a frame of 8 x 720 does not fit a tile 160 wide and at most 320 high with its shape: its tile is 4 x 320/);
+    assert.deepEqual(pngSize(await readFile(join(out, "frame_survey", "sheet-0001.png"))), [1640, 6 * (320 + 18)]);
+    assert.ok(r.doc.seconds < 5, `the survey took ${r.doc.seconds} s`);
+    // At the largest tile and sheet a call may ask for, a sheet of such tiles would be over 500 MB: refused before anything is decoded.
+    const big = await call("frame_survey", run, { video: "inputs/case files/tall.mkv", tile_width: 480, columns: 20, rows: 20 }, { out });
+    assert.deepEqual([big.code, big.doc.status], [1, "failed"]);
+    assert.match(big.doc.error, /a sheet of 20 x 20 tiles of 10 x 960 pixels is \d+ bytes, over the 201326592 this tool holds at once/);
+  });
+});
+
+test("a decoder that ends while a late child floods its pipe is read for a bounded time and size, and the frames read after it ended are said", async () => {
+  await withRun(async (run, out) => {
+    const bin = join(run, "work", "bin");
+    await mkdir(bin, { recursive: true });
+    await writeFile(join(bin, "ffprobe"), `#!/bin/sh\necho '{"streams": [{"codec_name": "standin", "width": 320, "height": 180, "avg_frame_rate": "25/1"}], "format": {"format_name": "standin"}}'\n`);
+    // Three whole tiles (160 x 90 x 3 bytes each), then a child that writes 50 MB more after the decoder has ended (about 1,150 tiles).
+    await writeFile(join(bin, "ffmpeg"), `#!/bin/sh\ncase "$*" in *-version*) echo "ffmpeg version 9.0"; exit 0;; esac\nhead -c 129600 /dev/zero\n( sleep 0.3; head -c 50000000 /dev/zero ) &\nexit 0\n`);
+    for (const name of ["ffprobe", "ffmpeg"]) await chmod(join(bin, name), 0o755);
+    await writeFile(join(run, "inputs/case files/any.mp4"), "the stand-ins read no byte of it");
+    const r = await call("frame_survey", run, { video: "inputs/case files/any.mp4", max_seconds: 20 }, { out, path: `${bin}:/usr/bin:/bin`, limitMs: 40_000 });
+    assert.equal(r.killed, false);
+    assert.equal(r.doc.status, "partial", r.stdout);
+    assert.ok(r.doc.frames_decoded >= 3 && r.doc.frames_decoded <= 3 + Math.ceil((1 << 20) / 43200), `${r.doc.frames_decoded} frames: at most a mebibyte's worth past the decoder's three`);
+    assert.match(JSON.stringify(r.doc.partial_reasons), /kept its output pipe open: the end of the stream was not seen \(\d+ of the frames counted here were read after the decoder had ended/);
+    assert.ok(r.ms < 10_000, `answered in ${r.ms} ms`);
+  });
+});
+
+test("a name with an error word is not an error, a second video stream is said, and a refused number states its own range", { skip: NO_DECODER }, async () => {
+  await withRun(async (run, out) => {
+    clip(run, "inputs/case files/missing corrupt error.mp4");
+    const named = await call("frame_survey", run, { video: "inputs/case files/missing corrupt error.mp4", max_frames: 30 }, { out });
+    assert.equal(named.doc.decoder_said, undefined, JSON.stringify(named.doc.decoder_said));
+    assert.ok(!JSON.stringify(named.doc.partial_reasons ?? []).includes("about errors"), "the file's own name is not a line about an error");
+    clip(run, "inputs/case files/a.mp4");
+    const two = spawnSync("ffmpeg", ["-v", "error", "-y", "-i", join(run, "inputs/case files/a.mp4"), "-i", join(run, "inputs/case files/a.mp4"), "-map", "0:v", "-map", "1:v", "-c", "copy", join(run, "inputs/case files/two.mkv")]);
+    assert.equal(two.status, 0, two.stderr.toString());
+    const both = await call("frame_survey", run, { video: "inputs/case files/two.mkv", max_frames: 10 }, { out });
+    assert.match(both.doc.streams_note, /the file has 2 video streams and this tool reads the first \(0:v:0\) only/);
+    assert.equal(both.doc.stream.video_streams, 2);
+    for (const [args, range] of [[{ every: 0 }, "every must be a whole number from 1 to 100000"], [{ tile_width: 10 }, "tile_width must be a whole number from 64 to 480"], [{ columns: 50 }, "columns must be a whole number from 1 to 20"]] as const) {
+      const r = await call("frame_survey", run, { video: "inputs/case files/a.mp4", ...args }, { out });
+      assert.equal(r.doc.error, range);
+    }
   });
 });
 

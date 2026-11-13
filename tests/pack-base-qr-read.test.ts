@@ -9,9 +9,11 @@
  * the pictures are named by relative paths with spaces.
  */
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { lstat, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
+import { PYTHON3 } from "./host-gates.ts";
 import { call, CFB, greyPng, py, ROOT, withRun, type Doc } from "./pack-base-media-fixture.ts";
 
 const QRGEN = join(ROOT, "scripts", "lib");
@@ -244,5 +246,357 @@ test("the control alone, the rules in every refusal, and the manifest's word on 
     }
     const missing = await call("qr_read", run, {}, { out });
     assert.match(missing.doc.error, /mode fragments together/, "the refusal of a call with no picture says the argument forms");
+  });
+});
+
+// ---- the fixes of the second verification (version 2) --------------------------------------------------------------------------
+// An encoder for versions 1 to 10 at every level, written here from ISO/IEC 18004's tables (the block table, the alignment centres,
+// the BCH format and version words, the zigzag placement); it shares no line with the tool. Its symbols are drawn pixel by pixel.
+const ENC = String.raw`
+import sys, os, struct, zlib, random, json
+BLOCKS = {
+ 1: {'L':[(1,26,19)],'M':[(1,26,16)],'Q':[(1,26,13)],'H':[(1,26,9)]},
+ 2: {'L':[(1,44,34)],'M':[(1,44,28)],'Q':[(1,44,22)],'H':[(1,44,16)]},
+ 3: {'L':[(1,70,55)],'M':[(1,70,44)],'Q':[(2,35,17)],'H':[(2,35,13)]},
+ 4: {'L':[(1,100,80)],'M':[(2,50,32)],'Q':[(2,50,24)],'H':[(4,25,9)]},
+ 5: {'L':[(1,134,108)],'M':[(2,67,43)],'Q':[(2,33,15),(2,34,16)],'H':[(2,33,11),(2,34,12)]},
+ 6: {'L':[(2,86,68)],'M':[(4,43,27)],'Q':[(4,43,19)],'H':[(4,43,15)]},
+ 7: {'L':[(2,98,78)],'M':[(4,49,31)],'Q':[(2,32,14),(4,33,15)],'H':[(4,39,13),(1,40,14)]},
+ 8: {'L':[(2,121,97)],'M':[(2,60,38),(2,61,39)],'Q':[(4,40,18),(2,41,19)],'H':[(4,40,14),(2,41,15)]},
+ 9: {'L':[(2,146,116)],'M':[(3,58,36),(2,59,37)],'Q':[(4,36,16),(4,37,17)],'H':[(4,36,12),(4,37,13)]},
+ 10:{'L':[(2,86,68),(2,87,69)],'M':[(4,69,43),(1,70,44)],'Q':[(6,43,19),(2,44,20)],'H':[(6,43,15),(2,44,16)]},
+}
+ALIGN = {1:[],2:[6,18],3:[6,22],4:[6,26],5:[6,30],6:[6,34],7:[6,22,38],8:[6,24,42],9:[6,26,46],10:[6,28,50]}
+EXP = [0] * 512; LOG = [0] * 256; x = 1
+for i in range(255):
+    EXP[i] = x; LOG[x] = i; x <<= 1
+    if x & 0x100: x ^= 0x11D
+for i in range(255, 512): EXP[i] = EXP[i - 255]
+def mul(a, b): return 0 if not a or not b else EXP[LOG[a] + LOG[b]]
+def ecc(data, n):
+    g = [1]
+    for i in range(n):
+        g2 = [0] * (len(g) + 1)
+        for j, c in enumerate(g):
+            g2[j] ^= c; g2[j + 1] ^= mul(c, EXP[i])
+        g = g2
+    msg = list(data) + [0] * n
+    for i in range(len(data)):
+        c = msg[i]
+        if c:
+            for j in range(1, len(g)): msg[i + j] ^= mul(g[j], c)
+    return msg[len(data):]
+def put(b, v, n):
+    for i in range(n - 1, -1, -1): b.append((v >> i) & 1)
+def byte_bits(payload, version):
+    b = []; put(b, 4, 4); put(b, len(payload), 8 if version < 10 else 16)
+    for c in payload: put(b, c, 8)
+    return b
+def blocks_of(bits, version, level):
+    groups = BLOCKS[version][level]; ndata = sum(c * d for c, t, d in groups); cap = ndata * 8
+    b = list(bits); assert len(b) <= cap
+    b += [0] * min(4, cap - len(b)); b += [0] * (-len(b) % 8)
+    cw = [int("".join(map(str, b[i:i + 8])), 2) for i in range(0, len(b), 8)]
+    k = 0
+    while len(cw) < ndata: cw.append((0xEC, 0x11)[k % 2]); k += 1
+    blocks, lengths, at = [], [], 0
+    for c, t, d in groups:
+        for _ in range(c):
+            blocks.append(cw[at:at + d] + ecc(cw[at:at + d], t - d)); lengths.append(d); at += d
+    return blocks, lengths
+def interleave(blocks, lengths):
+    out = []
+    for i in range(max(lengths)):
+        for b, d in zip(blocks, lengths):
+            if i < d: out.append(b[i])
+    for i in range(len(blocks[0]) - lengths[0]):
+        for b, d in zip(blocks, lengths): out.append(b[d + i])
+    return out
+def fmt_bits(level, mask):
+    d = ({'L': 1, 'M': 0, 'Q': 3, 'H': 2}[level] << 3) | mask; v = d << 10
+    for i in range(14, 9, -1):
+        if v & (1 << i): v ^= 0x537 << (i - 10)
+    return ((d << 10) | v) ^ 0x5412
+def ver_bits(version):
+    v = version << 12
+    for i in range(17, 11, -1):
+        if v & (1 << i): v ^= 0x1F25 << (i - 12)
+    return (version << 12) | v
+MASK = [lambda r, c: (r + c) % 2 == 0, lambda r, c: r % 2 == 0, lambda r, c: c % 3 == 0, lambda r, c: (r + c) % 3 == 0,
+        lambda r, c: (r // 2 + c // 3) % 2 == 0, lambda r, c: (r * c) % 2 + (r * c) % 3 == 0, lambda r, c: ((r * c) % 2 + (r * c) % 3) % 2 == 0,
+        lambda r, c: ((r * c) % 3 + (r + c) % 2) % 2 == 0]
+def matrix(cw, version, level, mask):
+    n = 17 + 4 * version
+    M = [[None] * n for _ in range(n)]
+    for r0, c0 in ((0, 0), (0, n - 7), (n - 7, 0)):
+        for r in range(-1, 8):
+            for c in range(-1, 8):
+                if 0 <= r0 + r < n and 0 <= c0 + c < n:
+                    M[r0 + r][c0 + c] = 1 if (0 <= r <= 6 and 0 <= c <= 6 and (r in (0, 6) or c in (0, 6) or (2 <= r <= 4 and 2 <= c <= 4))) else 0
+    for i in range(8, n - 8): M[6][i] = M[i][6] = 1 - i % 2
+    for r in ALIGN[version]:
+        for c in ALIGN[version]:
+            if (r < 9 and c < 9) or (r < 9 and c > n - 9) or (r > n - 9 and c < 9): continue
+            for dr in range(-2, 3):
+                for dc in range(-2, 3): M[r + dr][c + dc] = 1 if max(abs(dr), abs(dc)) != 1 else 0
+    M[4 * version + 9][8] = 1
+    f = fmt_bits(level, mask)
+    first = [(0, 8), (1, 8), (2, 8), (3, 8), (4, 8), (5, 8), (7, 8), (8, 8), (8, 7), (8, 5), (8, 4), (8, 3), (8, 2), (8, 1), (8, 0)]
+    for i in range(15):
+        bit = (f >> i) & 1; r, c = first[i]; M[r][c] = bit
+        if i < 8: M[8][n - 1 - i] = bit
+        else: M[n - 7 + (i - 8)][8] = bit
+    if version >= 7:
+        vb = ver_bits(version)
+        for k in range(18):
+            bit = (vb >> k) & 1; M[n - 11 + k % 3][k // 3] = bit; M[k // 3][n - 11 + k % 3] = bit
+    bits = []
+    for w in cw: put(bits, w, 8)
+    bi, d, xx, y = 0, -1, n - 1, n - 1
+    while xx > 0:
+        if xx == 6: xx -= 1
+        while 0 <= y < n:
+            for i in range(2):
+                col = xx - i
+                if M[y][col] is not None: continue
+                bit = bits[bi] if bi < len(bits) else 0; bi += 1
+                if MASK[mask](y, col): bit ^= 1
+                M[y][col] = bit
+            y += d
+        d = -d; y += d; xx -= 2
+    return M
+def symbol(payload, version, level, mask, bits=None):
+    blocks, lengths = blocks_of(bits if bits is not None else byte_bits(payload, version), version, level)
+    return matrix(interleave(blocks, lengths), version, level, mask)
+def draw(M, scale=6, quiet=4, rows=None, cols=None):
+    rows = rows or (0, len(M)); cols = cols or (0, len(M[0]))
+    h, w = rows[1] - rows[0], cols[1] - cols[0]
+    out = []
+    for yy in range((h + 2 * quiet) * scale):
+        r = yy // scale - quiet + rows[0]; line = bytearray()
+        for xp in range((w + 2 * quiet) * scale):
+            c = xp // scale - quiet + cols[0]
+            line.append(0 if rows[0] <= r < rows[1] and cols[0] <= c < cols[1] and M[r][c] else 255)
+        out.append(bytes(line))
+    return out
+def chunk(k, b): return struct.pack(">I", len(b)) + k + b + struct.pack(">I", zlib.crc32(k + b) & 0xFFFFFFFF)
+def png(rows, path, depth=8, cut=None):
+    w, h = len(rows[0]), len(rows)
+    if depth == 16: raw = b"".join(b"\x00" + b"".join(bytes((0, v)) for v in r) for r in rows)
+    else: raw = b"".join(b"\x00" + r for r in rows)
+    if cut: raw = raw[:len(raw) // cut]
+    open(path, "wb").write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, depth, 0, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+`;
+
+const encode = (script: string, args: string[], cwd: string): string => py(ENC + "\n" + script, args, cwd);
+
+test("a clean symbol of every version from 2 to 10 reads with no correction (the alignment pattern's centre is not half a module off)", async () => {
+  await withRun(async (run, out) => {
+    encode(String.raw`
+d = sys.argv[1]
+for v in range(2, 11):
+    level, mask = "LMQH"[v % 4], v % 8
+    rnd = random.Random(v)
+    payload = bytes(rnd.randrange(256) for _ in range((sum(c * dd for c, t, dd in BLOCKS[v][level]) - 3) // 2 + 1))
+    png(draw(symbol(payload, v, level, mask), 6, 4), "%s/v%d.png" % (d, v))
+    open("%s/v%d.expect" % (d, v), "wb").write(payload)
+`, [join(run, "work/s1")], run);
+    const r = await call("qr_read", run, { images: Array.from({ length: 9 }, (_, i) => `work/s1/v${i + 2}.png`) }, { out });
+    assert.equal(r.doc.status, "complete", r.stdout.slice(0, 600));
+    for (const [i, row] of (r.doc.rows as Doc[]).entries()) {
+      const v = i + 2;
+      assert.deepEqual([row.result, row.version, row.level, row.mask], ["decoded", v, "LMQH"[v % 4], v % 8], `version ${v}`);
+      assert.equal(row.errors_corrected, 0, `a clean version ${v} symbol needed ${row.errors_corrected} corrections (${row.located_by})`);
+      assert.deepEqual(await readFile(join(out, row.payload_file.replace("store/jobs/j000001/out/", ""))), await readFile(join(run, `work/s1/v${v}.expect`)));
+    }
+  });
+});
+
+test("the last-resort format search runs Reed-Solomon on a symbol of several blocks whose every block holds errors, and takes the strongest level that decodes", async () => {
+  await withRun(async (run, out) => {
+    // Both format copies overwritten, and in every Reed-Solomon block a quarter of its check codewords' worth of bytes changed.
+    encode(String.raw`
+d = sys.argv[1]
+for v, level, mask in ((4, "H", 2), (5, "H", 6), (6, "M", 3)):
+    rnd = random.Random(v)
+    payload = bytes(rnd.randrange(256) for _ in range(30))
+    blocks, lengths = blocks_of(byte_bits(payload, v), v, level)
+    for b in blocks:
+        for at in rnd.sample(range(len(b)), (len(b) - lengths[0]) // 4):
+            b[at] ^= rnd.randrange(1, 256)
+    M = matrix(interleave(blocks, lengths), v, level, mask)
+    n = len(M)
+    for i in range(9):
+        if i != 6: M[8][i] ^= 1; M[i][8] ^= 1
+    for i in range(8): M[8][n - 1 - i] ^= 1; M[n - 1 - i][8] ^= 1
+    png(draw(M, 6, 4), "%s/v%d.png" % (d, v))
+    open("%s/v%d.expect" % (d, v), "wb").write(payload)
+`, [join(run, "work/s1")], run);
+    const r = await call("qr_read", run, { images: [4, 5, 6].map((v) => `work/s1/v${v}.png`) }, { out });
+    assert.equal(r.doc.status, "complete", r.stdout.slice(0, 600));
+    for (const [i, row] of (r.doc.rows as Doc[]).entries()) {
+      const v = [4, 5, 6][i];
+      assert.equal(row.result, "decoded", `version ${v}: ${JSON.stringify(row.looked_for ?? row).slice(0, 300)}`);
+      assert.ok(row.blocks > 1 && row.blocks_without_error === 0, "every block needed correcting");
+      assert.match(row.format.by, /each of the 32 format words tried/);
+      assert.deepEqual(await readFile(join(out, row.payload_file.replace("store/jobs/j000001/out/", ""))), await readFile(join(run, `work/s1/v${v}.expect`)));
+    }
+    // With no error in the data, a codeword of a stronger level is one of a weaker level whose blocks have the same lengths (version 1 at
+    // every level, version 6 at M, Q and H): the weaker one decodes too, with the wrong split of data and check codewords. The strongest wins.
+    encode(String.raw`
+d = sys.argv[1]
+for v, level, mask in ((1, "Q", 4), (6, "Q", 3), (6, "H", 1)):
+    rnd = random.Random(100 * v + mask)
+    payload = bytes(rnd.randrange(256) for _ in range(sum(c * dd for c, t, dd in BLOCKS[v][level]) - 2))
+    M = symbol(payload, v, level, mask)
+    n = len(M)
+    for i in range(9):
+        if i != 6: M[8][i] ^= 1; M[i][8] ^= 1
+    for i in range(8): M[8][n - 1 - i] ^= 1; M[n - 1 - i][8] ^= 1
+    png(draw(M, 6, 4), "%s/same-%d%s.png" % (d, v, level))
+    open("%s/same-%d%s.expect" % (d, v, level), "wb").write(payload)
+`, [join(run, "work/s1")], run);
+    const same = await call("qr_read", run, { images: ["1Q", "6Q", "6H"].map((k) => `work/s1/same-${k}.png`) }, { out });
+    for (const [i, row] of (same.doc.rows as Doc[]).entries()) {
+      const k = ["1Q", "6Q", "6H"][i];
+      assert.deepEqual([row.result, row.version, row.level], ["decoded", Number(k[0]), k[1]], `${k}: the level whose check codewords all hold`);
+      assert.deepEqual(await readFile(join(out, row.payload_file.replace("store/jobs/j000001/out/", ""))), await readFile(join(run, `work/s1/same-${k}.expect`)));
+    }
+  });
+});
+
+test("fragments: a quarter of another symbol among three of one is named and makes the answer partial; the set's own four pieces contradict nothing", async () => {
+  await withRun(async (run, out) => {
+    encode(String.raw`
+d = sys.argv[1]
+rnd = random.Random(7)
+A, B = bytes(rnd.randrange(256) for _ in range(5)), bytes(rnd.randrange(256) for _ in range(5))
+X, Y = symbol(A, 2, "H", 5), symbol(B, 2, "H", 5)
+n = len(X); h = n // 2 + 1
+quarters = [((0, h), (0, h)), ((0, h), (h, n)), ((h, n), (0, h)), ((h, n), (h, n))]
+for k, (rows, cols) in enumerate(quarters):
+    png(draw(X, 6, 2, rows, cols), "%s/x%d.png" % (d, k))
+    png(draw(Y, 6, 2, rows, cols), "%s/y%d.png" % (d, k))
+open(d + "/x.expect", "wb").write(A)
+`, [join(run, "work/s1")], run);
+    const mixed = await call("qr_read", run, { mode: "fragments", images: ["work/s1/x0.png", "work/s1/x1.png", "work/s1/x2.png", "work/s1/y3.png"] }, { out });
+    const row = mixed.doc.rows[0] as Doc;
+    assert.equal(row.result, "decoded");
+    assert.equal(mixed.doc.status, "partial", "a set with a piece that contradicts the symbol read is not a complete reading");
+    assert.deepEqual(await readFile(join(out, row.payload_file.replace("store/jobs/j000001/out/", ""))), await readFile(join(run, "work/s1/x.expect")));
+    assert.deepEqual(row.pieces_contradicting_the_symbol, [3], "the piece of the other symbol is named");
+    assert.ok((row.placements as Doc[])[3].modules_contradicting_the_decoded_symbol > 0);
+    assert.match(mixed.doc.partial_reasons.join(" "), /piece\(s\) 3 contradict the decoded symbol/);
+    const own = await call("qr_read", run, { mode: "fragments", images: [0, 1, 2, 3].map((k) => `work/s1/x${k}.png`) }, { out });
+    assert.equal(own.doc.status, "complete", own.stdout.slice(0, 600));
+    assert.deepEqual((own.doc.rows[0].placements as Doc[]).map((p) => p.modules_contradicting_the_decoded_symbol), [0, 0, 0, 0]);
+  });
+});
+
+test("fragments: sixteen pieces that place nowhere end with one JSON answer by the tool's clock, never past it", async () => {
+  await withRun(async (run, out) => {
+    encode(String.raw`
+d = sys.argv[1]
+rnd = random.Random(11)
+for k in range(16):
+    M = [[rnd.randrange(2) for _ in range(15)] for _ in range(15)]
+    png(draw(M, 6, 2), "%s/n%d.png" % (d, k))
+`, [join(run, "work/s1")], run);
+    const r = await call("qr_read", run, { mode: "fragments", images: Array.from({ length: 16 }, (_, k) => `work/s1/n${k}.png`), max_seconds: 5 }, { out, limitMs: 40_000 });
+    assert.equal(r.killed, false, "the search reads its clock at every step");
+    assert.ok(r.ms < 20_000, `answered after ${r.ms} ms with max_seconds 5`);
+    assert.equal(r.doc.status, "failed", r.stdout.slice(0, 400));
+    assert.equal(r.doc.rows[0].result, "not finished", "a search that was stopped is not a negative");
+    assert.match(r.doc.rows[0].why, /clock ran out|bound of/);
+  });
+});
+
+test("a PNG cut short is said and partial, and a picture of several frames is searched frame by frame or says which frames it did not read", async () => {
+  await withRun(async (run, out) => {
+    // Pillow as the tool sees it (the tool runs without -I, so a user site counts); the GIF and TIFF fixtures are drawn by it the same way.
+    const hasPillow = spawnSync(PYTHON3, ["-c", "import PIL.Image"], { cwd: run }).status === 0;
+    encode(String.raw`
+d = sys.argv[1]
+payload = b"fixture: frames and cuts 0042"
+M = symbol(payload, 3, "M", 4)
+sym = draw(M, 6, 4)
+side = len(sym)
+white = [b"\xff" * side for _ in range(side)]
+# The symbol in the second half of the rows, and the image data cut after the first half.
+png(white + sym, d + "/cut.png", cut=2)
+# An animated PNG: the default image (frame 1, fcTL before IDAT) is white, frame 2 (fdAT) holds the symbol.
+def idat_of(rows): return zlib.compress(b"".join(b"\x00" + r for r in rows))
+def fctl(seq): return struct.pack(">IIIIIHHBB", seq, side, side, 0, 0, 1, 10, 0, 0)
+apng = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", side, side, 8, 0, 0, 0, 0)) + chunk(b"acTL", struct.pack(">II", 2, 0))
+        + chunk(b"fcTL", fctl(0)) + chunk(b"IDAT", idat_of(white)) + chunk(b"fcTL", fctl(1)) + chunk(b"fdAT", struct.pack(">I", 2) + idat_of(sym)) + chunk(b"IEND", b""))
+open(d + "/animated.png", "wb").write(apng)
+open(d + "/frames.expect", "wb").write(payload)
+open(d + "/white.raw", "wb").write(b"".join(white))
+open(d + "/symbol.raw", "wb").write(b"".join(sym))
+`, [join(run, "work/s1"), String(hasPillow)], run);
+    if (hasPillow) {
+      const made = spawnSync(PYTHON3, ["-c", String.raw`
+import sys
+from PIL import Image
+d, side = sys.argv[1], int(sys.argv[2])
+frames = [Image.frombytes("L", (side, side), open(d + name, "rb").read()) for name in ("/white.raw", "/symbol.raw")]
+frames[0].save(d + "/two.gif", save_all=True, append_images=frames[1:], duration=100)
+frames[0].save(d + "/two.tif", save_all=True, append_images=frames[1:])
+`, join(run, "work/s1"), String(Math.round(Math.sqrt((await readFile(join(run, "work/s1/white.raw"))).length)))], { cwd: run, encoding: "utf8" });
+      assert.equal(made.status, 0, made.stderr);
+    }
+    const cut = await call("qr_read", run, { image: "work/s1/cut.png" }, { out });
+    assert.equal(cut.doc.status, hasPillow ? "partial" : "failed", cut.stdout.slice(0, 600));
+    const cutRow = cut.doc.rows[0] as Doc;
+    if (hasPillow) {
+      assert.match(cutRow.picture_damaged, /image data ends after/);
+      assert.match(cut.doc.partial_reasons.join(" "), /damaged picture/);
+    } else {
+      assert.equal(cutRow.result, "not read");
+    }
+
+    const builtin = await call("qr_read", run, { image: "work/s1/animated.png", reader: "builtin" }, { out });
+    assert.equal(builtin.doc.status, "partial", builtin.stdout.slice(0, 600));
+    assert.deepEqual([builtin.doc.rows[0].frames, builtin.doc.rows[0].frames_searched], [2, 1]);
+    assert.match(builtin.doc.rows[0].frames_not_read, /^frames 2 to 2: an animated PNG/);
+    if (!hasPillow) return;
+    const r = await call("qr_read", run, { images: ["work/s1/animated.png", "work/s1/two.gif", "work/s1/two.tif"] }, { out });
+    assert.equal(r.doc.status, "complete", r.stdout.slice(0, 600));
+    for (const row of r.doc.rows as Doc[]) {
+      assert.deepEqual([row.result, row.frames, row.frames_searched, row.frame], ["decoded", 2, 2, 2], row.input);
+      assert.deepEqual(await readFile(join(out, row.payload_file.replace("store/jobs/j000001/out/", ""))), await readFile(join(run, "work/s1/frames.expect")));
+    }
+  });
+});
+
+test("a structured-append header is noted without its parity byte; a box past the picture, a repainted copy's mode and a 16-bit PNG of low samples", async () => {
+  await withRun(async (run, out) => {
+    encode(String.raw`
+d = sys.argv[1]
+payload = b"fixture: part one 0042"
+bits = []
+put(bits, 3, 4); put(bits, 0x01, 8); put(bits, 0xA7, 8)          # structured append: symbol 1 of 2, parity 167
+bits += byte_bits(payload, 2)
+png(draw(symbol(None, 2, "L", 1, bits=bits), 6, 4), d + "/appended.png")
+M = symbol(b"fixture: sixteen bits 0042", 2, "L", 0)
+png(draw(M, 6, 4), d + "/sixteen.png", depth=16)                  # samples 0 and 255 in 16 bits: every high byte is zero
+`, [join(run, "work/s1")], run);
+    py(BUILD, [QRGEN, join(run, "inputs/case files"), PAYLOAD], run);
+    const r = await call("qr_read", run, { images: ["work/s1/appended.png", "work/s1/sixteen.png"] }, { out });
+    assert.equal(r.doc.status, "complete", r.stdout.slice(0, 600));
+    const [appended, sixteen] = r.doc.rows as Doc[];
+    assert.match(appended.notes.join(" "), /structured append: symbol 1 of 2/);
+    assert.doesNotMatch(r.stdout, /parity \d|167/, "the parity byte, a digest of the whole message, is not printed");
+    assert.equal(sixteen.result, "decoded");
+    assert.match(sixteen.picture_notes.join(" "), /16-bit samples/);
+
+    const boxed = await call("qr_read", run, { image: "work/s1/appended.png", box: [0, 0, 5000, 5000] }, { out });
+    assert.equal(boxed.doc.rows[0].result, "not read");
+    assert.match(boxed.doc.rows[0].why, /reaches past the picture/);
+    assert.doesNotMatch(boxed.stdout, /IndexError/);
+
+    const repaint = await call("qr_read", run, { image: "inputs/case files/finder erased.png", mode: "repaint" }, { out });
+    const file = repaint.doc.rows[0].repainted_file as string;
+    assert.equal((await lstat(join(out, file.replace("store/jobs/j000001/out/", "")))).mode & 0o777, 0o600);
   });
 });

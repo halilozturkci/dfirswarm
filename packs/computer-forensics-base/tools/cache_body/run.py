@@ -434,8 +434,8 @@ def _unexpected_tool(kind, value, _tb):
 sys.excepthook = _unexpected_tool
 
 
-TOOL = {"name": "cache_body", "version": 1}
-PARSER = "cache_body/1"
+TOOL = {"name": "cache_body", "version": 2}
+PARSER = "cache_body/2"
 DEFAULT_SECONDS, MAX_SECONDS = 100, 110         # under the manifest's 120
 DEFAULT_BYTES, MAX_BYTES = 256 << 20, 2 << 30   # the most one body may be when decoded
 MAX_RATIO = 2000                                # decoded bytes for one stored byte, past the first MiB
@@ -755,10 +755,13 @@ def pread(fd, length, offset, what):
     return data
 
 
-def open_file(path, what):
+def open_file(path, what, follow=True):
+    """A regular file opened without waiting on a FIFO or a device; follow=False refuses a link (the files inside a cache directory)."""
     try:
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | (0 if follow else getattr(os, "O_NOFOLLOW", 0)))
     except OSError as exc:
+        if not follow and exc.errno in (errno.ELOOP, getattr(errno, "EMLINK", -1)) and os.path.islink(path):
+            raise Refused("%s is a link, and a link inside the cache is not followed" % what)
         raise Refused("%s cannot be opened (%s)" % (what, describe(exc)))
     st = os.fstat(fd)
     if not stat.S_ISREG(st.st_mode):
@@ -789,79 +792,249 @@ def brotli_module():
 
 
 def zstd_module():
+    """The standard library's zstd (Python 3.14 and later: its output is bounded a call), else the zstandard module."""
+    try:
+        from compression import zstd as module           # noqa: PLC0415 - optional, by the interpreter's version
+        return module, "compression.zstd"
+    except Exception:  # noqa: BLE001
+        pass
     try:
         return __import__("zstandard"), "zstandard"
     except Exception:  # noqa: BLE001
         return None, None
 
 
-def decoded(stored, encoding, most, state):
-    """The stored chunks decoded: gzip and deflate with zlib (bounded output a call), brotli and zstd with a module when one imports.
-    state gets decoded (bytes), stored (bytes), ended (the stream reached its end marker) and error (why it stopped early)."""
-    state.update({"decoded": 0, "stored": 0, "ended": encoding == "identity", "error": None})
+OUT_PIECE = 1 << 20          # the most one call of a decoder returns, where the decoder can be told so
+
+
+class Damaged(Exception):
+    """The decoder refused the bytes it was given: the stream is damaged there (or its own check failed)."""
+
+
+class _Zlib:
+    """gzip and deflate: output bounded a call (max_length), the stream's end and what followed it said by the engine."""
+    piece = 8192
+
+    def __init__(self, wbits):
+        self.engine = zlib.decompressobj(wbits)
+
+    def feed(self, data):
+        while data and not self.engine.eof:
+            try:
+                out = self.engine.decompress(data, OUT_PIECE)
+            except zlib.error:
+                raise Damaged()
+            data = self.engine.unconsumed_tail
+            yield out
+
+    def finished(self):
+        return self.engine.eof
+
+    def left_over(self):
+        return len(self.engine.unused_data) + len(self.engine.unconsumed_tail)
+
+
+class _Brotli:
+    """brotli: with output_buffer_limit (brotli 1.2 and later) a call returns at most about OUT_PIECE and the rest is drained with empty
+    input (can_accept_more_data() can say True while output is still held, so the drain runs until a call returns nothing); without it the input is fed a byte at a time, so that one call returns what one byte of the stream can say (a few MiB at most).
+    A brotli decoder refuses bytes after the end of its stream: that shows as Damaged, and the replay (below) finds where the end was."""
+
+    def __init__(self, module):
+        self.engine = module.Decompressor()
+        self.limited = hasattr(self.engine, "can_accept_more_data")
+        if self.limited:
+            try:
+                self.engine.process(b"", output_buffer_limit=OUT_PIECE)
+            except TypeError:
+                self.limited = False
+            except Exception:  # noqa: BLE001 - an empty input the module dislikes: the slow form
+                self.limited = False
+        self.piece = 16384 if self.limited else 1
+
+    def feed(self, data):
+        try:
+            if not self.limited:
+                yield self.engine.process(data)
+                return
+            yield self.engine.process(data, output_buffer_limit=OUT_PIECE)
+            while True:               # what the piece holds past the limit comes with empty input, until a call returns nothing
+                out = self.engine.process(b"", output_buffer_limit=OUT_PIECE)
+                if not out:
+                    break
+                yield out
+        except Exception:  # noqa: BLE001 - the module's own error class; its message is not repeated
+            raise Damaged()
+
+    def finished(self):
+        return bool(self.engine.is_finished()) if hasattr(self.engine, "is_finished") else False
+
+    def left_over(self):
+        return 0
+
+
+class _ZstdStd:
+    """The standard library's zstd (compression.zstd): output bounded a call, the stream's end and what followed it said by the engine."""
+    piece = 8192
+
+    def __init__(self, module):
+        self.engine = module.ZstdDecompressor()
+
+    def feed(self, data):
+        try:
+            out = self.engine.decompress(data, OUT_PIECE)
+            yield out
+            while not self.engine.eof and not self.engine.needs_input:
+                out = self.engine.decompress(b"", OUT_PIECE)
+                if not out:
+                    break
+                yield out
+        except Exception:  # noqa: BLE001
+            raise Damaged()
+
+    def finished(self):
+        return self.engine.eof
+
+    def left_over(self):
+        return len(self.engine.unused_data)
+
+
+class _Zstandard:
+    """The zstandard module: a call's output is not bounded, so the input goes in 256 bytes at a time. A zstd block decodes to at most
+    128 KiB and takes at least 4 stored bytes, so one call returns at most about 8 MiB."""
+    piece = 256
+
+    def __init__(self, module):
+        self.engine = module.ZstdDecompressor().decompressobj()
+
+    def feed(self, data):
+        try:
+            yield self.engine.decompress(data)
+        except Exception:  # noqa: BLE001
+            raise Damaged()
+
+    def finished(self):
+        return bool(getattr(self.engine, "eof", False))
+
+    def left_over(self):
+        return len(getattr(self.engine, "unused_data", b"") or b"")
+
+
+def decoded(stored, encoding, most, state, again):
+    """The stored chunks decoded: gzip and deflate with zlib, brotli and zstd with a module when one imports; every decoder's output is
+    bounded a call, and what is yielded stops exactly at max_bytes or at MAX_RATIO decoded bytes for one stored byte past the first MiB.
+    again(n) reads the first n stored bytes once more: when a decoder refuses a piece, what that piece held before the damage is found by
+    decoding again up to it and then feeding it a byte at a time (a gzip whose own CRC fails keeps its last output that way).
+    state gets decoded (bytes yielded, which is what the body file holds), stored (stored bytes taken), ended (the stream reached its
+    end marker), stream_end (the stored bytes the stream took, when it ended), error (why it stopped early) and cut (the cap that cut it)."""
+    state.update({"decoded": 0, "stored": 0, "ended": encoding == "identity", "error": None, "stream_end": None, "cut": None})
+    name = {"gzip": "gzip", "deflate": "deflate", "br": "brotli", "zstd": "zstd"}.get(encoding, encoding)
+
+    def take(out):
+        """The part of out that may be written: a cap cuts it exactly, and says which cap."""
+        by_bytes = most - state["decoded"]
+        by_ratio = max(1 << 20, MAX_RATIO * max(1, state["stored"])) - state["decoded"]
+        left = min(by_bytes, by_ratio)
+        if len(out) > left:
+            out = out[:max(0, left)]
+            state["cut"] = "max_bytes (%d)" % most if by_bytes <= by_ratio else "%d times its stored size" % MAX_RATIO
+            state["error"] = "the decoded body reached %s: it was cut there, after %d bytes" % (state["cut"], state["decoded"] + len(out))
+        state["decoded"] += len(out)
+        return out
+
     if encoding == "identity":
         for block in stored:
             state["stored"] += len(block)
-            state["decoded"] += len(block)
-            if state["decoded"] > most:
-                state["error"] = "the body is over max_bytes (%d): it was cut there" % most
+            part = take(block)
+            if part:
+                yield part
+            if state["cut"]:
                 return
-            yield block
         return
     if encoding in ("gzip", "deflate"):
-        engine = zlib.decompressobj(31 if encoding == "gzip" else 15)
-        first = True
-        for block in stored:
-            state["stored"] += len(block)
-            if first and encoding == "deflate" and (len(block) < 2 or (block[0] & 0x0F) != 8 or ((block[0] << 8) | block[1]) % 31):
-                engine = zlib.decompressobj(-15)       # a server that sends raw deflate under the name: no zlib header
-                state["raw_deflate"] = True
-            first = False
-            for at in range(0, len(block), 8192):          # small pieces: a damaged piece loses itself, not what decoded before it
-                data = block[at:at + 8192]
-                while data and not engine.eof:
-                    tick()
-                    try:
-                        out = engine.decompress(data, 1 << 20)
-                    except zlib.error:
-                        state["error"] = "the %s stream is damaged after %d decoded bytes" % (encoding, state["decoded"])
-                        return
-                    data = engine.unconsumed_tail
-                    state["decoded"] += len(out)
-                    if state["decoded"] > most or (state["decoded"] > (1 << 20) and state["decoded"] > MAX_RATIO * max(1, state["stored"])):
-                        state["error"] = "the decoded body passed %s: it was cut there" % ("max_bytes (%d)" % most if state["decoded"] > most else "%d times its stored size" % MAX_RATIO)
-                        return
-                    if out:
-                        yield out
-                if engine.eof:
-                    state["ended"] = True
-                    if data or engine.unused_data or at + 8192 < len(block):
-                        state["trailing"] = True
-                    return
-        state["error"] = "the %s stream has no end marker: the stored body is cut after %d stored bytes" % (encoding, state["stored"])
-        return
-    module, _name = brotli_module() if encoding == "br" else zstd_module()
-    engine = module.Decompressor() if encoding == "br" else module.ZstdDecompressor().decompressobj()
+        wbits = [31 if encoding == "gzip" else 15]
+
+        def make():
+            return _Zlib(wbits[0])
+    elif encoding == "br":
+        module = brotli_module()[0]
+
+        def make():
+            return _Brotli(module)
+    else:
+        module, module_name = zstd_module()
+
+        def make():
+            return _ZstdStd(module) if module_name == "compression.zstd" else _Zstandard(module)
+    engine = None
+    position = 0                       # the stored offset of the next piece fed
     for block in stored:
         state["stored"] += len(block)
-        for at in range(0, len(block), 16384):                     # small pieces: these modules do not bound what one call returns
+        if engine is None:
+            if encoding == "deflate" and (len(block) < 2 or (block[0] & 0x0F) != 8 or ((block[0] << 8) | block[1]) % 31):
+                wbits[0] = -15         # a server that sends raw deflate under the name: no zlib header
+                state["raw_deflate"] = True
+            engine = make()
+        for at in range(0, len(block), engine.piece):
+            piece = block[at:at + engine.piece]
+            try:
+                for out in engine.feed(piece):
+                    tick()
+                    part = take(out)
+                    if part:
+                        yield part
+                    if state["cut"]:
+                        return
+            except Damaged:
+                yield from _replay(make, again, position, piece, state, take, name)
+                return
+            if engine.finished():
+                state["ended"] = True
+                state["stream_end"] = position + len(piece) - engine.left_over()
+                return
+            position += len(piece)
+    if engine is not None and engine.finished():
+        state["ended"] = True
+        state["stream_end"] = position
+        return
+    state["error"] = "the %s stream has no end marker: the stored body is cut after %d stored bytes" % (name, state["stored"])
+
+
+def _replay(make, again, position, piece, state, take, name):
+    """A decoder refused the piece at `position`, and what that piece decoded to was lost with the refusal. Decode the stored bytes before
+    it again (their output was written already, and is dropped here), then the piece a byte at a time: what decodes before the refused
+    byte is yielded, and a stream that ends inside the piece ends there (the bytes after it are what the decoder refused)."""
+    engine = make()
+    done = 0
+    for chunk in again(position):
+        for at in range(0, len(chunk), engine.piece):
             tick()
             try:
-                out = engine.process(block[at:at + 16384]) if encoding == "br" else engine.decompress(block[at:at + 16384])
-            except Exception:  # noqa: BLE001 - the module's own error class; its message is not repeated
-                state["error"] = "the %s stream is damaged after %d decoded bytes" % ("brotli" if encoding == "br" else "zstd", state["decoded"])
+                for _out in engine.feed(chunk[at:at + engine.piece]):
+                    tick()
+            except Damaged:
+                state["error"] = "the %s stream is damaged after %d decoded bytes (at about stored byte %d)" % (name, state["decoded"], position)
                 return
-            state["decoded"] += len(out)
-            if state["decoded"] > most or (state["decoded"] > (1 << 20) and state["decoded"] > MAX_RATIO * max(1, state["stored"])):
-                state["error"] = "the decoded body passed %s: it was cut there" % ("max_bytes (%d)" % most if state["decoded"] > most else "%d times its stored size" % MAX_RATIO)
-                return
-            if out:
-                yield out
-    finished = engine.is_finished() if encoding == "br" and hasattr(engine, "is_finished") else getattr(engine, "eof", True)
-    if finished:
+    for k in range(len(piece)):
+        if engine.finished():
+            state["ended"] = True
+            state["stream_end"] = position + k
+            return
+        try:
+            for out in engine.feed(piece[k:k + 1]):
+                tick()
+                part = take(out)
+                if part:
+                    yield part
+                if state["cut"]:
+                    return
+        except Damaged:
+            state["error"] = "the %s stream is damaged after %d decoded bytes (at stored byte %d)" % (name, state["decoded"], position + k)
+            return
+    if engine.finished():
         state["ended"] = True
-    else:
-        state["error"] = "the %s stream has no end: the stored body is cut after %d stored bytes" % ("brotli" if encoding == "br" else "zstd", state["stored"])
+        state["stream_end"] = position + len(piece) - engine.left_over()
+        return
+    state["error"] = "the %s stream is damaged after %d decoded bytes (in the stored bytes from %d)" % (name, state["decoded"], position)
 
 
 def response_headers(stream0):
@@ -952,7 +1125,7 @@ class BlockCache:
     def __init__(self, directory):
         self.directory = directory
         self.files = {}
-        fd, size = open_file(os.path.join(directory, "index"), "the cache's index file")
+        fd, size = open_file(os.path.join(directory, "index"), "the cache's index file", follow=False)
         self.files["index"] = (fd, size)
         if size < INDEX_HEADER:
             raise Unreadable("the index is %d bytes, shorter than its header" % size)
@@ -975,7 +1148,10 @@ class BlockCache:
         if name not in self.files:
             if len(self.files) > 300:
                 raise Unreadable("more than 300 files of the cache would be open")
-            self.files[name] = open_file(os.path.join(self.directory, name), "the cache file %s" % name)
+            try:
+                self.files[name] = open_file(os.path.join(self.directory, name), "the cache file %s" % name, follow=False)
+            except Refused as exc:      # a file that is missing, a link or not a regular file: what points into it does not read
+                raise Unreadable(str(exc))
         return self.files[name]
 
     def locate(self, address):
@@ -1032,8 +1208,9 @@ class BlockCache:
                     hops += 1
                     try:
                         entry = self.entry(address)
-                    except Unreadable:
+                    except Unreadable as exc:
                         problems["entries_unreadable"] += 1
+                        problems.setdefault("first_unreadable", "an entry at address 0x%08x: %s" % (address, exc))
                         break
                     number += 1
                     yield number, entry
@@ -1190,6 +1367,9 @@ def main():
             source = {"body_offset": entry["body_offset"]}
             if "key_sha256_matches" in entry:
                 source["key_sha256_matches"] = entry["key_sha256_matches"]
+                if not entry["key_sha256_matches"]:
+                    reasons.append("the entry's key does not match the SHA-256 the entry records: the key or its length in the header is damaged, so where "
+                                   "the body begins is not certain and the body file may not be the stored body")
             key, stream0 = entry["key"], entry["stream0"]
             body_fd, body_offset, body_length, expected_crc = fd, entry["body_offset"], entry["body_stored_bytes"], entry["body_crc32"]
         else:
@@ -1260,11 +1440,12 @@ def main():
         body_info["said"] = "the entry has no body bytes (a redirect, a 304, or headers only)"
     else:
         digest = hashlib.sha256()
-        crc = [0]
+        crc = [0, 0]                    # the CRC-32 of the stored bytes read, and how many were read
 
         def stored():
             for block in chunks_of(body_fd, body_offset, body_length):
                 crc[0] = zlib.crc32(block, crc[0])
+                crc[1] += len(block)
                 yield block
 
         def kept(source_chunks):
@@ -1272,30 +1453,28 @@ def main():
                 digest.update(block)
                 yield block
 
-        stream = decoded(stored(), "identity" if undecodable else encoding, most, state)
+        source_chunks = stored()
+        stream = decoded(source_chunks, "identity" if undecodable else encoding, most, state, lambda n: chunks_of(body_fd, body_offset, n))
         try:
             first = next(stream, b"")
             what, suffix = detect_type(first) if not undecodable else ("%s-compressed bytes, not decoded" % ("brotli" if encoding == "br" else "zstd"), "br" if encoding == "br" else "zst")
             files["body"] = place.write("body.%s" % suffix, kept(itertools.chain([first], stream)), 0o600)
-            body_info.update({"decoded_bytes": state["decoded"], "sha256": digest.hexdigest(), "sha256_of": "the body file as written", "detected_type": what,
+            body_info.update({"decoded_bytes": state["decoded"], "sha256": digest.hexdigest(), "sha256_of": "the body file as written",
+                              "decoded_bytes_are": "the bytes the body file holds", "detected_type": what,
                               "detected_by": "the first bytes of the body (a reading, not a validation)"})
             if state.get("raw_deflate"):
                 body_info["deflate_form"] = "raw (no zlib header)"
-            if state.get("trailing"):
-                body_info["bytes_after_the_stream_end"] = True
-                reasons.append("stored bytes follow the end of the compressed stream and were not decoded")
+            if state["cut"]:
+                body_info.update({"truncated": True, "cap": state["cut"],
+                                  "whole_kept_in": "the stored entry itself: its %d stored bytes from offset %d of the source (the body file holds the first %d decoded bytes)" % (body_length, body_offset, state["decoded"])})
             if state["error"]:
                 body_info["decode_error"] = state["error"]
                 reasons.append(state["error"])
                 if state["decoded"] == 0 and place.remove("body.%s" % suffix):
                     del files["body"]                 # nothing decoded: an empty file would read as an empty body
                     body_info["said"] = "not written: not one byte of the body decoded"
-                    for key in ("sha256", "sha256_of", "detected_type", "detected_by"):
+                    for key in ("sha256", "sha256_of", "decoded_bytes_are", "detected_type", "detected_by"):
                         body_info.pop(key, None)
-            if expected_crc is not None and state["stored"] == body_length:
-                body_info["stored_crc32_matches"] = (crc[0] & 0xFFFFFFFF) == expected_crc
-                if not body_info["stored_crc32_matches"]:
-                    reasons.append("the stored body does not match the CRC-32 its entry records")
         except Clock:
             reasons.append("the clock (max_seconds %d) ran out while the body was written: the body file was removed" % seconds)
             body_info["said"] = "not written: the clock ran out"
@@ -1304,8 +1483,31 @@ def main():
             reasons.append(str(exc))
             body_info["said"] = "not written whole: %s" % exc
         except OSError as exc:
-            files["write_error"] = "the body could not be written (%s)" % describe(exc)
+            files["write_error"] = "the body file could not be written (%s)" % describe(exc)
             reasons.append("the body file could not be written")
+        # The rest of the stored body is read whatever stopped the decoder (its end marker, a cap, damage): what follows the end of a
+        # stream is counted from it, and the entry's own CRC-32 covers every stored byte.
+        if "body" in files or state.get("error"):
+            try:
+                for _block in source_chunks:
+                    pass
+            except Clock:
+                reasons.append("the clock (max_seconds %d) ran out before the rest of the stored body was read: what follows the stream and the entry's CRC-32 were not checked" % seconds)
+            except Unreadable as exc:
+                reasons.append(str(exc))
+        if state.get("ended") and state.get("stream_end") is not None and encoding != "identity" and not undecodable and crc[1] == body_length:
+            after = body_length - state["stream_end"]
+            if after > 0:
+                body_info.update({"stream_ends_at": state["stream_end"], "bytes_after_the_stream_end": after})
+                reasons.append("the %s stream ends at stored byte %d and %d stored byte(s) follow it, not decoded" % (
+                    {"br": "brotli"}.get(encoding, encoding), state["stream_end"], after))
+        if expected_crc is not None and crc[1] == body_length:
+            body_info["stored_crc32_matches"] = (crc[0] & 0xFFFFFFFF) == expected_crc
+            if not body_info["stored_crc32_matches"]:
+                reasons.append("the stored body does not match the CRC-32 its entry records")
+        elif expected_crc is not None:
+            body_info["stored_crc32_matches"] = None
+            body_info["stored_crc32_said"] = "not checked: the stored body was not read to its end"
     answer["body"] = body_info
     answer["files"] = files
     for fd in opened:

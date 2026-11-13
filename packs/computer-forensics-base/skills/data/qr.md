@@ -13,9 +13,9 @@ Use when a picture, a screenshot or a video frame shows a QR symbol whose conten
     job_run tool=qr_read args={"image": "work/<you>/shot.png"}
     job_run tool=qr_read args={"mode": "fragments", "images": ["work/<you>/p1.png", "work/<you>/p2.png"]}
 
-1. **Whole symbol:** the default call. Read `rows`: `decoded` with version, level, mask and `errors_corrected`, or `not a symbol`.
+1. **Whole symbol:** the default call. Read `rows`: `decoded` with version, level, mask and `errors_corrected`, or `not a symbol`. Every frame of an animated picture or page of a TIFF is searched (`frame` says which decoded); `frames_not_read` or `picture_damaged` makes the answer partial: say which frames or rows were not read.
 2. **A finder erased or overdrawn:** the default call tries the repaint reading too; `mode: repaint` forces it and writes a repainted copy. The grid then comes from the two finders left or from the box of the dark pixels (`box` when other content is in the picture), and `located_by` says which.
-3. **Pieces:** give every piece in one call with `mode: fragments`. `placements` says where each went, and `modules_not_covered` how much was missing. Pieces must be rectangular, upright to each other and of one scale.
+3. **Pieces:** give every piece in one call with `mode: fragments`. `placements` says where each went, and `modules_not_covered` how much was missing. Pieces must be rectangular, upright to each other and of one scale. A piece in `pieces_contradicting_the_symbol` is damaged or from another symbol: the payload is not shown to be the whole set's; say so.
 4. **A negative is bounded.** `not a symbol` holds for the methods in `looked_for`, after the planted control was read; `not_read` lists what they do not reach (perspective, versions 11 and above, other symbologies). Say that, not "the picture holds no code".
 5. **A high `errors_corrected`,** or a format word read with corrected bits, means a damaged symbol was repaired: say so beside the payload.
 

@@ -464,8 +464,32 @@ def _write_json_whole(path, doc, **dumps_kwargs):
     tmp = path + ".tmp"
     temp_hold(tmp)
     try:
-        with open(tmp, "w") as fh:
+        with os.fdopen(_create_new(tmp), "w") as fh:
             json.dump(doc, fh, **dumps_kwargs)
+        temp_replace(tmp, path)
+    except BaseException:
+        temp_drop(tmp)
+        raise
+
+
+def _create_new(path):
+    """A descriptor of a file made new at path, never written through a link: a name already there (a file or a link left in the output
+    directory) is removed first, and the file is then created exclusively, without following a link."""
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+    return os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
+
+
+def _write_text_whole(path, text):
+    """A text file whole or not at all, never through a link: written beside, then renamed over the name (a link at the name is replaced,
+    not followed)."""
+    tmp = path + ".tmp"
+    temp_hold(tmp)
+    try:
+        with os.fdopen(_create_new(tmp), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
         temp_replace(tmp, path)
     except BaseException:
         temp_drop(tmp)
@@ -486,7 +510,7 @@ def open_regular(path):
 
 
 RECIPE = "first-stage-candidates"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 HERE = os.path.dirname(os.path.abspath(__file__))
 COLUMNS = ["rank", "score", "path", "kind", "size", "profile", "signals"]
 MACRO_NAMES = {".docm": "word", ".dotm": "word", ".xlsm": "excel", ".xltm": "excel", ".xlam": "excel", ".xlsb": "excel", ".pptm": "powerpoint", ".potm": "powerpoint",
@@ -507,6 +531,8 @@ MAX_MEMBERS = 5_000_000
 MAX_CANDIDATES = 20000
 SCAN_BYTES = 512 << 20            # the most of one hive or log file that is searched for names
 OLE_BYTES = 64 << 20
+COVERAGE_MAX_BYTES = 4 << 20      # the list's own coverage record, read up to this size
+WHY_MAX, WHY_CHARS = 5, 400
 
 
 def limits():
@@ -585,7 +611,7 @@ def listing_rows(path, deadline, max_members, cov):
             if not text:
                 continue
             if column is None:
-                yield text, None
+                yield text, None, False
                 continue
             cells = text.split("\t")
             if column >= len(cells):
@@ -597,11 +623,65 @@ def listing_rows(path, deadline, max_members, cov):
             size = None
             if size_column is not None and size_column < len(cells) and cells[size_column].isdigit():
                 size = int(cells[size_column])
-            yield cells[column], size
+            yield cells[column], size, False
+
+
+def list_coverage(path):
+    """What the member list's own coverage record (coverage.json beside it, as a recipe that wrote the list leaves it) says of the list:
+    {status, read_from, why, recipe}. status is the record's (complete, partial, failed), "unknown" when the record gives none or cannot be
+    read, and "not recorded" when there is no record: only "complete" says the list is the whole of its object. The record is opened
+    without waiting and without following a link, and read only when it is a regular file of at most COVERAGE_MAX_BYTES."""
+    where = os.path.join(os.path.dirname(path) or ".", "coverage.json")
+    out = {"status": "not recorded", "read_from": where}
+    if not os.path.lexists(where):
+        out["why"] = ["no coverage.json beside the list: nothing records whether the list is the whole of its object"]
+        return out
+    fd = None
+    try:
+        fd = os.open(where, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0))
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise ValueError("it is not a regular file")
+        if st.st_size > COVERAGE_MAX_BYTES:
+            raise ValueError("it is %d bytes, more than the %d this recipe reads" % (st.st_size, COVERAGE_MAX_BYTES))
+        with os.fdopen(fd, "rb") as fh:
+            fd = None
+            record = json.loads(fh.read(COVERAGE_MAX_BYTES + 1).decode("utf-8", "replace"))
+        if not isinstance(record, dict):
+            raise ValueError("it is not a JSON object")
+    except (OSError, ValueError, RecursionError) as exc:
+        out.update({"status": "unknown", "why": ["the list's coverage record could not be read (%s)" % (getattr(exc, "strerror", None) or str(exc) or exc.__class__.__name__)]})
+        return out
+    finally:
+        if fd is not None:
+            os.close(fd)
+    status = record.get("status")
+    out["status"] = status if status in ("complete", "partial", "failed") else "unknown"
+    if isinstance(record.get("recipe"), str):
+        out["recipe"] = esc(record["recipe"])[:100]
+    if out["status"] != "complete":
+        why = []
+        for key in ("limits_hit", "errors", "segments_missing"):
+            if isinstance(record.get(key), list):
+                why += ["%s: %s" % (key, v) if key != "errors" else str(v) for v in record[key]]
+        if isinstance(record.get("status_basis"), str) and record["status_basis"]:
+            why.append(record["status_basis"])
+        if out["status"] == "unknown":
+            why.append("the record gives no status that can be read")
+        seen = []
+        for text in why:
+            text = esc(text)
+            text = text if len(text) <= WHY_CHARS else text[:WHY_CHARS] + "..."
+            if text not in seen:
+                seen.append(text)
+        out["why"] = seen[:WHY_MAX]
+        if len(seen) > WHY_MAX:
+            out["why_total"] = len(seen)
+    return out
 
 
 def tree_rows(root, deadline, max_members, cov):
-    """Every file below a directory, links never followed: (path relative to it, size)."""
+    """Every file below a directory, links never followed: (path relative to it, size, False), and a link by its own name: (path, None, True)."""
     stack = [""]
     while stack:
         rel = stack.pop()
@@ -619,13 +699,17 @@ def tree_rows(root, deadline, max_members, cov):
             try:
                 if entry.is_symlink():
                     cov["links_not_followed"] = cov.get("links_not_followed", 0) + 1
+                    if cov["members"] >= max_members:
+                        cov["limits_hit"].append("members: the tree has more than %d files" % max_members)
+                        return
+                    yield name, None, True
                 elif entry.is_dir(follow_symlinks=False):
                     stack.append(name)
                 elif entry.is_file(follow_symlinks=False):
                     if cov["members"] >= max_members:
                         cov["limits_hit"].append("members: the tree has more than %d files" % max_members)
                         return
-                    yield name, entry.stat(follow_symlinks=False).st_size
+                    yield name, entry.stat(follow_symlinks=False).st_size, False
             except OSError:
                 cov["errors"].append("an entry could not be read: %s" % esc(name)[:200])
 
@@ -757,7 +841,8 @@ def run(path, out_dir):
     is_tree = os.path.isdir(path)
     cov = {"recipe": RECIPE, "recipe_version": VERSION, "target": path, "mode": "tree" if is_tree else "member list", "members": 0, "candidates": 0,
            "covered": "", "not_covered": "", "limits_hit": [], "errors": [],
-           "rule": "To answer \"cannot be determined\" to a \"which file\" question the whole member list must have been searched: whole_list_read says whether it was. "
+           "rule": "To answer \"cannot be determined\" to a \"which file\" question the whole member list must have been searched: whole_list_read says whether it was "
+                   "(the recipe read the whole tree or list, and a member list's own coverage record says the list is complete). "
                    "A ranking is a list of candidates with the signals each one has, not a finding: the first row is where to look first."}
     _write_json_whole(os.path.join(out_dir, "coverage.json"), dict(cov, status="partial", whole_list_read=False, status_basis="the run had started and had read nothing yet"), indent=2)
 
@@ -767,10 +852,12 @@ def run(path, out_dir):
         print(json.dumps({"ok": False, "status": "partial", "interrupted": True, "signal": signum, "members": cov["members"]}), flush=True)
     install_signal_handlers(_stopped)
 
-    documents, recent, hives, antivirus, prefetch = [], collections.defaultdict(set), {}, [], set()
+    documents, recent, hives, antivirus, prefetch, linked = [], collections.defaultdict(set), {}, [], set(), set()
     rows = tree_rows(path, deadline, max_members, cov) if is_tree else listing_rows(path, deadline, max_members, cov)
     try:
-        for raw, size in rows:
+        for raw, size, link in rows:
+            if link:
+                linked.add(raw)
             cov["members"] += 1
             plain = raw.replace("\\", "/")
             lower = "/" + plain.lower().lstrip("/")
@@ -789,15 +876,19 @@ def run(path, out_dir):
                     break
             elif suffix == ".lnk" and ("/microsoft/windows/recent/" in lower or "/microsoft/office/recent/" in lower):
                 recent[base[:-4]].add(owner)
-            elif base == "ntuser.dat" and owner and lower.endswith("/%s/ntuser.dat" % owner):
+            elif base == "ntuser.dat" and owner and lower.endswith("/%s/ntuser.dat" % owner) and not link:
                 hives[owner] = raw
             elif suffix == ".pf" and "/prefetch/" in lower:
                 prefetch.add(base.split("-")[0])
-            if ANTIVIRUS.search(lower) and len(antivirus) < 400:
+            if ANTIVIRUS.search(lower) and len(antivirus) < 400 and not link:
                 antivirus.append(raw)
     except (OSError, ValueError) as exc:
         cov["errors"].append("the %s could not be read to its end: %s" % ("tree" if is_tree else "list", getattr(exc, "strerror", None) or exc.__class__.__name__))
-    whole = not cov["limits_hit"] and not cov["errors"]
+    read_to_the_end = not cov["limits_hit"] and not cov["errors"]
+    # A member list is the whole of its object only when its own coverage record says so: a list cut by the recipe that wrote it (a
+    # missing segment, a limit) is read to its end here and is still not the whole member list.
+    list_cov = None if is_tree else list_coverage(path)
+    whole = read_to_the_end and (list_cov is None or list_cov["status"] == "complete")
 
     # What the files themselves say, in a tree: a VBA project inside, the name in the profile's hive, the name in an antivirus log.
     vba = {}
@@ -808,6 +899,9 @@ def run(path, out_dir):
             if time.monotonic() > deadline:
                 cov["limits_hit"].append("seconds: the clock ran out before every document was looked into for a VBA project")
                 break
+            if raw in linked:
+                vba[raw] = (None, "it is a link, which is not followed: only its name was read")
+                continue
             vba[raw] = vba_in_file(os.path.join(path, raw), MACRO_NAMES.get(suffix) or LEGACY_NAMES.get(suffix) or PLAIN_OOXML.get(suffix), deadline)
         documents = [d for d in documents if d[3] not in PLAIN_OOXML or vba.get(d[0], (None,))[0]]
         names = sorted({d[2] for d in documents})
@@ -817,7 +911,7 @@ def run(path, out_dir):
             if not all_read:
                 read_notes.append("the registry hive of %s was not searched to its end" % esc(owner))
         for log in antivirus:
-            if os.path.isfile(os.path.join(path, log)):
+            if os.path.isfile(os.path.join(path, log)) and not os.path.islink(os.path.join(path, log)):
                 found, all_read = names_in_file(os.path.join(path, log), names, deadline)
                 antivirus_names |= found
                 if not all_read:
@@ -846,6 +940,8 @@ def run(path, out_dir):
                 signals.append("-1 no VBA project inside, by %s" % how)
             elif has is None:
                 signals.append("+0 not told whether it holds a VBA project: %s" % how)
+        if raw in linked:
+            signals.append("+0 a link in the tree: not followed, so only its own name was read")
         if any(mark in lower for mark in USUAL):
             signals.append("+0 in a usual document folder")
         else:
@@ -881,15 +977,19 @@ def run(path, out_dir):
         scored.append((score, raw, kind, size, owner, signals))
     scored.sort(key=lambda s: (-s[0], s[1].lower()))
     kept = scored[:MAX_CANDIDATES]
-    tmp = os.path.join(out_dir, "candidates.tsv.tmp")
-    temp_hold(tmp)
-    with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write("\t".join(COLUMNS) + "\n")
-        for rank, (score, raw, kind, size, owner, signals) in enumerate(kept, 1):
-            fh.write("%d\t%d\t%s\t%s\t%s\t%s\t%s\n" % (rank, score, esc(raw), kind, "" if size is None else size, esc(owner), "; ".join(signals)))
-    temp_replace(tmp, os.path.join(out_dir, "candidates.tsv"))
+    _write_text_whole(os.path.join(out_dir, "candidates.tsv"), "".join(
+        ["\t".join(COLUMNS) + "\n"] + ["%d\t%d\t%s\t%s\t%s\t%s\t%s\n" % (rank, score, esc(raw), kind, "" if size is None else size, esc(owner), "; ".join(signals))
+                                       for rank, (score, raw, kind, size, owner, signals) in enumerate(kept, 1)]))
     cov["candidates"] = len(scored)
     cov["whole_list_read"] = whole
+    cov["list_read_to_its_end"] = read_to_the_end
+    if list_cov is not None:
+        cov["list_coverage"] = list_cov
+        if list_cov["status"] != "complete":
+            read_notes.insert(0, "the member list itself is not known to be whole: its coverage record (%s) says %s%s" % (
+                esc(os.path.basename(list_cov["read_from"])), list_cov["status"], ": %s" % list_cov["why"][0] if list_cov.get("why") else ""))
+    if linked:
+        read_notes.append("%d link(s) in the tree were not followed: each is ranked by its own name only, and what it points at was not read" % len(linked))
     cov["sources"] = {"recent_shortcuts": sum(len(v) for v in recent.values()), "registry_hives": len(hives), "antivirus_files": len(antivirus), "prefetch_applications": sorted(prefetch & {a.lower() for a in APPLICATION.values()})}
     if read_notes:
         cov["not_read_to_the_end"] = read_notes[:20]
@@ -901,13 +1001,16 @@ def run(path, out_dir):
                           + "other first stages (a shortcut, a script, an installer, a disc image, a OneNote file) are not ranked; a name that occurs in a hive or a log is a lead to the record, not the record")
     status = "complete" if whole and not read_notes else "partial"
     cov["status"] = status
-    cov["status_basis"] = ("the whole %s was read (%d members) and every macro-capable document in it is ranked (%d)" % ("tree" if is_tree else "member list", cov["members"], len(scored)) if status == "complete" else
+    cov["status_basis"] = ("the whole %s was read (%d members)%s and every macro-capable document in it is ranked (%d)" % (
+                               "tree" if is_tree else "member list", cov["members"], "" if is_tree else ", its own coverage record says the list is complete,", len(scored))
+                           if status == "complete" else
                            "the ranking is of part of what was asked: %s" % "; ".join((cov["limits_hit"] + cov["errors"] + read_notes)[:5]))
     cov["seconds"] = round(time.monotonic() - started, 2)
     _write_json_whole(os.path.join(out_dir, "coverage.json"), cov, indent=2)
-    with open(os.path.join(out_dir, "index.tsv"), "w", encoding="utf-8") as fh:
-        fh.write("candidates.tsv\tfirst-stage candidates (%d), ranked: rank, score, path, kind, size, profile, signals; each signal says what it adds and what was not read\n" % len(kept))
-    print_answer({"ok": True, "status": status, "members": cov["members"], "candidates": len(scored), "whole_list_read": whole, "rule": cov["rule"],
+    _write_text_whole(os.path.join(out_dir, "index.tsv"),
+                      "candidates.tsv\tfirst-stage candidates (%d), ranked: rank, score, path, kind, size, profile, signals; each signal says what it adds and what was not read\n" % len(kept))
+    print_answer({"ok": True, "status": status, "members": cov["members"], "candidates": len(scored), "whole_list_read": whole,
+                  **({"list_coverage": list_cov["status"]} if list_cov is not None else {}), "rule": cov["rule"],
                   "first": [{"rank": i + 1, "score": s[0], "path": esc(s[1])[:300], "signals": len(s[5])} for i, s in enumerate(kept[:5])], "status_basis": cov["status_basis"]})
     return 0
 

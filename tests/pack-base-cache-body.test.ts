@@ -27,10 +27,10 @@ out = sys.argv[1]
 INITIAL, FINAL = 0xFCFB6D1BA7725C30, 0xF4FA6F45970D41D8
 def headers(coding, media):
     return b"HTTP/1.1 200 OK\x00" + (b"Content-Encoding: " + coding + b"\x00" if coding else b"") + b"Content-Type: " + media + b"; charset=utf-8\x00Set-Cookie: sid=COOKIE-77aa\x00\x00"
-def simple(key, stored, head, version=5, sha=True):
+def simple(key, stored, head, version=5, sha=True, crc=True):
     stream0 = struct.pack("<II", len(head) + 4, 0x10003) + head
     return (struct.pack("<QIII", INITIAL, version, len(key), 0x5EED) + b"\x00" * 4 + key + stored
-            + struct.pack("<QIII", FINAL, 1, zlib.crc32(stored) & 0xFFFFFFFF, 0) + b"\x00" * 4 + stream0
+            + struct.pack("<QIII", FINAL, 1 if crc else 0, zlib.crc32(stored) & 0xFFFFFFFF if crc else 0, 0) + b"\x00" * 4 + stream0
             + (hashlib.sha256(key).digest() if sha else b"")
             + struct.pack("<QIII", FINAL, 1 | (2 if sha else 0), zlib.crc32(stream0) & 0xFFFFFFFF, len(stream0)) + b"\x00" * 4)
 page = b"<!doctype html><html><body>" + b"A line of the cached page. " * 300 + b"</body></html>"
@@ -51,6 +51,27 @@ bad[24 + len(key) + len(stored) - 2] ^= 0xFF          # a byte of the gzip trail
 w("7123456789abcdef_0", bytes(bad))
 w("plain page.gz", gzip.compress(b'{"answer": 42}'))
 w("plain.bin", b"plain text with no coding\n")
+# A gzip member that ends exactly at 1 MiB, written from RFC 1952 and RFC 1951 (stored blocks), with 38,000 bytes after it.
+import random
+rnd = random.Random(7)
+data = rnd.randbytes(1048478)
+blocks = []
+for i in range(0, len(data), 65535):
+    part = data[i:i + 65535]
+    blocks.append(bytes([1 if i + 65535 >= len(data) else 0]) + struct.pack("<HH", len(part), len(part) ^ 0xFFFF) + part)
+member = b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff" + b"".join(blocks) + struct.pack("<II", zlib.crc32(data) & 0xFFFFFFFF, len(data))
+assert len(member) == 1 << 20
+w("aligned.gz", member + rnd.randbytes(38000))
+w("9123456789abcdef_0", simple(key, member + rnd.randbytes(38000), headers(b"gzip", b"application/octet-stream")))
+bad = bytearray(simple(key, member + rnd.randbytes(38000), headers(b"gzip", b"application/octet-stream")))
+bad[24 + len(key) + (1 << 20) + 5] ^= 0xFF               # a stored byte after the stream's end, changed after the entry's CRC-32 was taken
+w("a123456789abcdef_0", bytes(bad))
+# An entry with no body CRC whose header says a key 10 bytes longer than the key: the key's SHA-256 does not hold.
+lying = bytearray(simple(key, b"plain body bytes. " * 30, headers(b"", b"text/plain"), crc=False))
+struct.pack_into("<I", lying, 12, len(key) + 10)
+w("b123456789abcdef_0", bytes(lying))
+w("plain 5000.bin", (b"0123456789" * 500))
+w("plain 3m.bin", b"<html>" + bytes(rnd.randbytes(3 << 20)))
 try:
     import brotli
     w("8123456789abcdef_0", simple(key, brotli.compress(page), headers(b"br", b"text/html")))
@@ -109,6 +130,20 @@ struct.pack_into("<I", d1b, 8192 + (addresses[1][0] & 0xFFFF) * 256 + 4, address
 for name, data in (("index", index), ("data_0", block_header(0, 36)), ("data_1", d1b), ("data_2", d2), ("data_3", d3)):
     open(os.path.join(looped, name), "wb").write(bytes(data))
 open(os.path.join(looped, "f_000002"), "wb").write(entries[1][2])
+linked = os.path.join(out, "Linked Cache")
+os.makedirs(linked)
+for name, data in (("index", index), ("data_0", block_header(0, 36)), ("data_1", d1), ("data_2", d2), ("data_3", d3)):
+    open(os.path.join(linked, name), "wb").write(bytes(data))
+open(os.path.join(out, "outside body.bin"), "wb").write(b"a file outside the cache directory\n")
+os.symlink(os.path.join("..", "outside body.bin"), os.path.join(linked, "f_000002"))
+holed = os.path.join(out, "Holed Cache")
+os.makedirs(holed)
+table2 = list(table)
+table2[50000] = 0x80000000 | (2 << 28) | (4 << 16)        # an entry address in data_4, a file the cache does not have
+index2 = struct.pack("<IIiiIiIi", 0xC103CAC3, 0x20000, 4, 0, 0, 1, 0, 0x10000).ljust(368, b"\x00") + struct.pack("<%dI" % 0x10000, *table2)
+for name, data in (("index", index2), ("data_0", block_header(0, 36)), ("data_1", d1), ("data_2", d2), ("data_3", d3)):
+    open(os.path.join(holed, name), "wb").write(bytes(data))
+open(os.path.join(holed, "f_000002"), "wb").write(entries[1][2])
 old = os.path.join(out, "Old Cache")
 os.makedirs(old)
 open(os.path.join(old, "index"), "wb").write(struct.pack("<II", 0xC103CAC3, 0x30000).ljust(368 + 4 * 0x10000, b"\x00"))
@@ -208,7 +243,103 @@ test("a cut stream, a body that fails its CRC, a cut entry and a plain file: eac
     assert.equal(wrong.doc.files.body, undefined, "no empty file stands in for a body");
     const capped = await call("cache_body", run, { path: `${dir}/0123456789abcdef_0`, max_bytes: 1000 }, { out });
     assert.equal(capped.doc.status, "partial");
-    assert.match(capped.doc.body.decode_error, /passed max_bytes \(1000\)/);
+    assert.match(capped.doc.body.decode_error, /reached max_bytes \(1000\): it was cut there, after 1000 bytes/);
+    assert.equal(capped.doc.body.decoded_bytes, 1000);
+  });
+});
+
+test("a stream that ends on a 1 MiB boundary with bytes after it is partial and says where; the entry's CRC-32 is still checked", async () => {
+  await withRun(async (run, out) => {
+    const dir = "inputs/case files";
+    py(BUILD, [join(run, dir), KEY], run);
+    const plain = await call("cache_body", run, { path: `${dir}/aligned.gz` }, { out });
+    assert.equal(plain.code, 0, plain.stdout + plain.stderr);
+    assert.deepEqual([plain.doc.status, plain.doc.complete, plain.doc.body.decoded_bytes, plain.doc.body.stream_ends_at, plain.doc.body.bytes_after_the_stream_end],
+      ["partial", false, 1048478, 1 << 20, 38000]);
+    assert.deepEqual(plain.doc.partial_reasons, ["the gzip stream ends at stored byte 1048576 and 38000 stored byte(s) follow it, not decoded"]);
+    const entry = await call("cache_body", run, { path: `${dir}/9123456789abcdef_0` }, { out });
+    assert.deepEqual([entry.doc.status, entry.doc.body.stream_ends_at, entry.doc.body.bytes_after_the_stream_end, entry.doc.body.stored_crc32_matches], ["partial", 1 << 20, 38000, true]);
+    const changed = await call("cache_body", run, { path: `${dir}/a123456789abcdef_0` }, { out });
+    assert.equal(changed.doc.body.stored_crc32_matches, false, "a stored byte after the stream's end is covered by the entry's CRC-32");
+    assert.ok(changed.doc.partial_reasons.includes("the stored body does not match the CRC-32 its entry records"));
+  });
+});
+
+test("an entry whose key fails its own SHA-256 is partial and says so; a gzip whose own CRC fails keeps every byte it decoded", async () => {
+  await withRun(async (run, out) => {
+    const dir = "inputs/case files";
+    py(BUILD, [join(run, dir), KEY], run);
+    const lying = await call("cache_body", run, { path: `${dir}/b123456789abcdef_0` }, { out });
+    assert.equal(lying.code, 0, lying.stdout + lying.stderr);
+    assert.deepEqual([lying.doc.status, lying.doc.complete, lying.doc.key_sha256_matches], ["partial", false, false]);
+    assert.match(lying.doc.partial_reasons[0], /^the entry's key does not match the SHA-256 the entry records: .*where the body begins is not certain/);
+    assert.match(lying.doc.status_basis, /^not everything asked for was done: the entry's key does not match/);
+    const crc = await call("cache_body", run, { path: `${dir}/7123456789abcdef_0` }, { out });
+    assert.equal(crc.doc.body.decoded_bytes, PAGE.length + 600 * 32, "the output before the failed trailer check is written whole");
+    assert.match(crc.doc.body.decode_error, /^the gzip stream is damaged after \d+ decoded bytes \(at stored byte \d+\)$/);
+  });
+});
+
+test("max_bytes cuts the body file exactly there: the file, its sha256 and decoded_bytes agree, and the answer is partial with the cap", async () => {
+  await withRun(async (run, out) => {
+    const dir = "inputs/case files";
+    py(BUILD, [join(run, dir), KEY], run);
+    for (const [name, cap] of [["plain 5000.bin", 1000], ["plain 3m.bin", 2_500_000]] as const) {
+      const whole = await readFile(join(run, dir, name));
+      const r = await call("cache_body", run, { path: `${dir}/${name}`, max_bytes: cap }, { out });
+      assert.equal(r.code, 0, r.stdout + r.stderr);
+      const written = await readFile(join(run, r.doc.files.body.replace(/^store\/jobs\/j000001\/out/, out.slice(run.length + 1))));
+      assert.equal(written.length, cap, name);
+      assert.ok(written.equals(whole.subarray(0, cap)), name);
+      assert.deepEqual([r.doc.status, r.doc.complete, r.doc.body.decoded_bytes, r.doc.body.sha256, r.doc.body.truncated, r.doc.body.cap], ["partial", false, cap, sha(written), true, `max_bytes (${cap})`], name);
+      assert.match(r.doc.body.whole_kept_in, new RegExp(`^the stored entry itself: its ${whole.length} stored bytes from offset 0`), name);
+      assert.deepEqual(r.doc.partial_reasons, [`the decoded body reached max_bytes (${cap}): it was cut there, after ${cap} bytes`], name);
+    }
+  });
+});
+
+/** Runs the tool once as a child and prints its answer and the child's peak resident memory in bytes; argv: tool, args JSON, OUT, PYTHONPATH. */
+const PEAK = String.raw`
+import json, os, resource, subprocess, sys
+env = dict(os.environ, JOB_ID="j000001", OUT=sys.argv[3], AGENT_ID="t1")
+if sys.argv[4]:
+    env["PYTHONPATH"] = sys.argv[4]
+r = subprocess.run([sys.executable, sys.argv[1]], input=sys.argv[2].encode(), capture_output=True, env=env, timeout=120)
+peak = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss * (1 if sys.platform == "darwin" else 1024)
+print(json.dumps({"peak": peak, "answer": json.loads(r.stdout)}))
+`;
+
+test("a brotli stream is expanded a bounded piece at a time: a 512 MiB bomb with max_bytes 1,000,000 stays small in memory, with and without output_buffer_limit", async (t) => {
+  await withRun(async (run, out) => {
+    const made = py(String.raw`
+import os, sys
+try:
+    import brotli
+except Exception:
+    print("no brotli"); sys.exit(0)
+c = brotli.Compressor(quality=5, lgwin=24)
+open(sys.argv[1], "wb").write(b"".join([c.process(bytes(1 << 24)) for _ in range(32)] + [c.finish()]))
+# An older module, without output_buffer_limit: brotli refuses to import and brotlicffi wraps the real one with process(data) alone.
+older = sys.argv[2]
+os.makedirs(older)
+open(os.path.join(older, "brotli.py"), "w").write("raise ImportError('hidden')\n")
+open(os.path.join(older, "brotlicffi.py"), "w").write(
+    "import sys\nhere = sys.path.pop(sys.path.index(__file__.rsplit('/', 1)[0]))\nsys.modules.pop('brotli', None)\nimport brotli as real\n"
+    "sys.modules.pop('brotli', None)\nsys.path.insert(0, here)\n"
+    "class Decompressor:\n    def __init__(self):\n        self.d = real.Decompressor()\n    def process(self, data):\n        return self.d.process(data)\n"
+    "    def is_finished(self):\n        return self.d.is_finished()\n")
+print("made")
+`, [join(run, "bomb.br"), join(run, "older")], run).trim();
+    if (made !== "made") {
+      t.diagnostic("not run: this host's python3 has no brotli module to build the fixture with");
+      return;
+    }
+    for (const [older, decoder] of [["", /^brotli /], [join(run, "older"), /^brotlicffi /]] as const) {
+      const r = JSON.parse(py(PEAK, [join(CFB, "tools", "cache_body", "run.py"), JSON.stringify({ path: "bomb.br", encoding: "br", max_bytes: 1_000_000 }), join(out, older ? "b" : "a"), older], run)) as Doc;
+      assert.ok(r.peak < 200 * 1024 * 1024, `peak resident memory ${r.peak} bytes for 512 MiB of output`);
+      assert.match(r.answer.encoding.decoder, decoder);
+      assert.deepEqual([r.answer.status, r.answer.body.decoded_bytes, r.answer.body.cap], ["partial", 1_000_000, "max_bytes (1000000)"]);
+    }
   });
 });
 
@@ -251,6 +382,15 @@ test("a block-file cache is listed first, then one entry is taken by row or addr
     }
     const looped = await call("cache_body", run, { path: `${dir}/Looped Cache`, list: true }, { out });
     assert.deepEqual([looped.doc.status, looped.doc.complete, looped.doc.problems.chains_cut], ["partial", false, 1]);
+    // A link inside the cache is not followed; an address into a data file the cache does not have is counted, not fatal.
+    const linked = await call("cache_body", run, { path: `${dir}/Linked Cache`, entry: 2 }, { out });
+    assert.equal(linked.doc.status, "failed");
+    assert.match(linked.doc.error, /the cache file f_000002 is a link, and a link inside the cache is not followed/);
+    assert.equal(linked.doc.files, undefined);
+    const holed = await call("cache_body", run, { path: `${dir}/Holed Cache`, list: true }, { out });
+    assert.equal(holed.code, 0, holed.stdout + holed.stderr);
+    assert.deepEqual([holed.doc.status, holed.doc.entries, holed.doc.problems.entries_unreadable], ["partial", 3, 1]);
+    assert.match(holed.doc.problems.first_unreadable, /^an entry at address 0xa0040000: the cache file data_4 cannot be opened/);
     const old = await call("cache_body", run, { path: `${dir}/Old Cache`, list: true }, { out });
     assert.equal(old.doc.status, "failed");
     assert.match(old.doc.error, /block-file index version 0x30000: this tool reads 2\.0 and 2\.1/);

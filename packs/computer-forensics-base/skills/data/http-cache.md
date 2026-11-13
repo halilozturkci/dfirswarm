@@ -15,7 +15,7 @@ Use when the content a Chromium browser or an Electron app cached (a page, a scr
 
 1. **Which cache.** A simple cache is a folder of `<16 hex>_0` files: each is one entry, read directly. A block-file cache is a folder with `index`, `data_0` to `data_3` and `f_` files: give the folder, list it (`entries.tsv`: `n`, `address`, sizes, `created_utc`, `key`), then take one entry by `entry` or `address`. A lone `f_` file or a carved response is a plain file.
 2. **Read `status` and `encoding`.** The stored response's `Content-Encoding` says how the body is kept. gzip and deflate are always decoded; brotli and zstd only where a Python module imports. `partial` with "brotli: not decodable here" means the body file is still compressed: a search of it finds nothing, and that is no negative. A plain file has no header: brotli needs `encoding: "br"`.
-3. **Check the entry's own checks:** `stored_crc32_matches`, `key_sha256_matches` and `decode_error` say whether the stored bytes are whole.
+3. **Check the entry's own checks:** `stored_crc32_matches`, `key_sha256_matches` and `decode_error` say whether the stored bytes are whole; either check false, a `decode_error`, `bytes_after_the_stream_end` or `truncated` (cut at `max_bytes`: the file holds `decoded_bytes`) makes the answer `partial`.
 4. **The type is a reading of the first bytes** (`detected_type`), not a validation; compare it with the response's `content_type`, and say when they disagree.
 5. **Time.** `created_utc` (block-file) is the browser's clock when the entry was made, in UTC; a simple-cache entry file carries no time of its own (`timeline/clocks`).
 

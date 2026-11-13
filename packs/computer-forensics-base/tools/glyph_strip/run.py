@@ -8,7 +8,7 @@ touch count as one and a character drawn as two strokes side by side as two, and
 
 Given a reading and the positions that are uncertain (each with the characters it could be, or, without them, the confusable class
 of its character: ' and `, l I 1 |, O 0 o, and so on), the candidate set is the product of the alternatives; positions whose glyphs
-are the same drawing are tied. The answer carries the set's size; the set itself, the reading and any OCR text go to files, never
+are the same drawing and that the reading gives the same character are tied. The answer carries the set's size; the set itself, the reading and any OCR text go to files, never
 into the answer. When tesseract is on PATH it is run on the crop as a second reader and the answer says which reader read what;
 when it is not, the answer says so.
 """
@@ -1445,12 +1445,15 @@ def _unexpected_tool(kind, value, _tb):
 sys.excepthook = _unexpected_tool
 
 
-TOOL = {"name": "glyph_strip", "version": 1}
-PARSER = "glyph_strip/1"
+TOOL = {"name": "glyph_strip", "version": 2}
+PARSER = "glyph_strip/2"
 DEFAULT_SECONDS, MAX_SECONDS = 50, 55           # under the manifest's 60
 OCR_SECONDS = 20
 MAX_GLYPHS = 400
 MAX_CROP_PIXELS = 6_000_000        # a crop of one line; a whole photograph is cropped first
+MAX_CROP_HEIGHT, MAX_CROP_WIDTH = 2000, 50000      # its shape: a line is neither a column of pixels nor a thread (the rows held, the strip built)
+MAX_CROP_SCALE_PIXELS = 4_000_000  # a glyph's crop is enlarged four times, or less when that would pass this many pixels
+MAX_OCR_BYTES = 1 << 16            # what the OCR engine may write for one line (and for its version); more is not read
 MAX_READING = 400
 DEFAULT_CANDIDATES, MAX_CANDIDATES = 4096, 200000
 KNOWN_PARAMS = {"image", "reading", "uncertain", "classes", "max_candidates", "ocr", "reader", "max_seconds"}
@@ -1732,6 +1735,15 @@ class NotAPicture(Exception):
     """The file is not a picture this tool can read; the text says what was found and what would read it."""
 
 
+def check_crop(width, height):
+    """Refuse a picture that is not a crop of one line, by its header, before a row of it is decoded: more than MAX_CROP_PIXELS, or a shape
+    no line has (taller than MAX_CROP_HEIGHT, wider than MAX_CROP_WIDTH). The rows of a picture are held one object a row, and the strip
+    is built at the line's height: the shape bounds both, not the pixel count alone."""
+    if width * height > MAX_CROP_PIXELS or height > MAX_CROP_HEIGHT or width > MAX_CROP_WIDTH:
+        raise Refused("the picture is %d x %d pixels: this tool takes a crop of one line (up to %d pixels, at most %d high and %d wide). Crop the line "
+                      "first. %s" % (width, height, MAX_CROP_PIXELS, MAX_CROP_HEIGHT, MAX_CROP_WIDTH, RULES[1]))
+
+
 class Picture:
     """A picture as rows of bytes: `gray` (one byte a pixel, 0 black to 255 white) always, `rgb` (three bytes a pixel) when it was asked for."""
 
@@ -1799,6 +1811,7 @@ def read_png(data, want_rgb=False, tick=None):
     width, height, depth, colour, _compression, _filter, interlace = header
     if width == 0 or height == 0 or width * height > MAX_PIXELS:
         raise NotAPicture("a PNG of %d x %d pixels (this tool reads up to %d pixels)" % (width, height, MAX_PIXELS))
+    check_crop(width, height)
     channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}.get(colour)
     if channels is None or depth not in (1, 2, 4, 8, 16) or (depth < 8 and colour not in (0, 3)) or (depth == 16 and colour == 3):
         raise NotAPicture("a PNG of colour type %d at %d bits, which the format does not define" % (colour, depth))
@@ -1903,6 +1916,7 @@ def read_picture(data, want_rgb=False, reader="auto", tick=None):
             image = image_module.open(io.BytesIO(data))
             if image.width * image.height > MAX_PIXELS:
                 raise NotAPicture("a picture of %d x %d pixels (this tool reads up to %d pixels)" % (image.width, image.height, MAX_PIXELS))
+            check_crop(image.width, image.height)
             image.load()
             if image.mode in ("RGBA", "LA", "PA") or "transparency" in image.info:
                 image = image.convert("RGBA")
@@ -1917,7 +1931,7 @@ def read_picture(data, want_rgb=False, reader="auto", tick=None):
             if want_rgb:
                 flat_rgb = image.convert("RGB").tobytes()
                 rgb = [flat_rgb[y * width * 3:(y + 1) * width * 3] for y in range(height)]
-    except NotAPicture:
+    except (NotAPicture, Refused):
         raise
     except Exception as exc:  # noqa: BLE001 - Pillow's own errors, a decompression-bomb warning included: the class is said, never the message
         raise NotAPicture("%sPillow does not read it as a picture (%s)" % ("the built-in reader: %s; " % first if first else "", type(exc).__name__))
@@ -1925,14 +1939,23 @@ def read_picture(data, want_rgb=False, reader="auto", tick=None):
 
 
 def png_bytes(width, height, rows, channels=1):
-    """A PNG (8-bit grey, or RGB with channels 3) from rows of bytes."""
-    raw = b"".join(b"\x00" + bytes(row) for row in rows)
+    """A PNG (8-bit grey, or RGB with channels 3) from rows of bytes (any iterable), compressed row by row: the rows are never joined into
+    one copy, and the clock is read every 64 rows (Clock)."""
+    packer = zlib.compressobj(6)
+    parts = []
+    for y, row in enumerate(rows):
+        if y % 64 == 0:
+            tick()
+        parts.append(packer.compress(b"\x00"))
+        parts.append(packer.compress(row))
+    parts.append(packer.flush())
+    body = b"".join(parts)
 
-    def chunk(kind, body):
-        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
 
     return (PNG_MAGIC + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 0 if channels == 1 else 2, 0, 0, 0))
-            + chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b""))
+            + chunk(b"IDAT", body) + chunk(b"IEND", b""))
 
 
 def otsu(gray_rows, tick=None):
@@ -2042,12 +2065,13 @@ def segment(picture):
         if has and not inside:
             bands += 1
         inside = has
-    flat = b"".join(binary)
-    ink = bytearray(width)
-    for x in range(left, right):
-        if x % 512 == 0 and out_of_time():
-            raise Clock()
-        ink[x] = 1 if 1 in flat[x::width][top:bottom] else 0
+    # A column holds ink when any row has ink in it: the rows (bytes of 0 and 1) OR-ed together as whole numbers, a byte a column.
+    union = 0
+    for y in range(top, bottom):
+        if y % 256 == 0:
+            tick()
+        union |= int.from_bytes(binary[y], "big")
+    ink = union.to_bytes(width, "big")
     glyphs, specks, x = [], 0, left
     while x < right:
         if not ink[x]:
@@ -2063,7 +2087,9 @@ def segment(picture):
         if pixels < 2:
             specks += 1
             continue
-        glyphs.append({"x": start, "y": top + first, "width": x - start, "height": last - first + 1, "ink": pixels, "rows": rows[first:last + 1]})
+        kept = rows[first:last + 1]
+        glyphs.append({"x": start, "y": top + first, "width": x - start, "height": last - first + 1, "ink": pixels, "rows": kept,
+                       "bits": int.from_bytes(b"".join(kept), "big")})
         if len(glyphs) > MAX_GLYPHS:
             raise Refused("more than %d ink runs along the line: this is not a crop of one line of text" % MAX_GLYPHS)
     return {"polarity": polarity, "threshold": threshold, "glyphs": glyphs, "binary": binary, "box": box, "bands": bands, "specks": specks}
@@ -2073,11 +2099,11 @@ FLIP = bytes((1, 0)) + bytes(254)
 
 
 def same_shape(a, b):
-    """Whether two glyphs are the same drawing: the same size and at most one pixel in sixteen different."""
+    """Whether two glyphs are the same drawing: the same size and at most one pixel in sixteen different. The pixels are bytes of 0 and 1,
+    so the pixels that differ are the bits set in the XOR of the two glyphs taken as whole numbers."""
     if a["width"] != b["width"] or a["height"] != b["height"] or abs((a["y"]) - (b["y"])) > 1:
         return False
-    different = sum(1 for ra, rb in zip(a["rows"], b["rows"]) for pa, pb in zip(ra, rb) if pa != pb)
-    return different * 16 <= a["width"] * a["height"]
+    return bin(a["bits"] ^ b["bits"]).count("1") * 16 <= a["width"] * a["height"]
 
 
 def strip_picture(glyphs, top, bottom):
@@ -2095,10 +2121,13 @@ def strip_picture(glyphs, top, bottom):
         rows = []
         pad_top = (glyph["y"] - top) * scale + 3
         pad_left = (cell_width - glyph["width"] * scale) // 2
+        drawn = [widen(row, scale) for row in glyph["rows"]]
         for y in range(cell_height):
+            if y % 256 == 0:
+                tick()
             source = (y - pad_top) // scale if y >= pad_top else -1
             if 0 <= source < glyph["height"]:
-                line = b"".join((b"\x00" if p else b"\xff") * scale for p in glyph["rows"][source])
+                line = drawn[source]
                 rows.append(b"\xff" * pad_left + line + b"\xff" * (cell_width - pad_left - len(line)))
             else:
                 rows.append(b"\xff" * cell_width)
@@ -2119,12 +2148,29 @@ def strip_picture(glyphs, top, bottom):
 INK = bytes((255, 0)) + bytes(254)
 
 
+def widen(row, scale):
+    """A row of 0 (paper) and 1 (ink) as grey bytes, ink black, each pixel repeated `scale` times."""
+    grey = row.translate(INK)
+    return grey if scale == 1 else bytes(itertools.chain.from_iterable(zip(*([grey] * scale))))
+
+
+def crop_scale(glyph):
+    """How many times a glyph's crop is enlarged: four, or two or one when four would pass MAX_CROP_SCALE_PIXELS."""
+    for scale in (4, 2):
+        if glyph["width"] * glyph["height"] * scale * scale <= MAX_CROP_SCALE_PIXELS:
+            return scale
+    return 1
+
+
 def glyph_png(glyph, scale=4):
-    rows = []
-    for line in glyph["rows"]:
-        tick()
-        rows += [b"".join((b"\x00" if p else b"\xff") * scale for p in line)] * scale
-    return png_bytes(glyph["width"] * scale, glyph["height"] * scale, rows)
+    def rows():
+        for i, line in enumerate(glyph["rows"]):
+            if i % 64 == 0:
+                tick()
+            drawn = widen(line, scale)
+            for _ in range(scale):
+                yield drawn
+    return png_bytes(glyph["width"] * scale, glyph["height"] * scale, rows())
 
 
 def class_of(ch, classes):
@@ -2165,19 +2211,75 @@ def parse_uncertain(value, reading, classes):
     return chosen, "the positions named in uncertain"
 
 
+def read_program(argv, seconds, most, merge=False):
+    """Run a program and read its standard output, bounded: (exit code or None, the bytes, why the reading was cut or None). Past `most`
+    bytes, or at `seconds`, the program is ended with what it started and the output is not used (cut says why). Once it has ended, its
+    pipe is given PIPE_GRACE seconds and POST_EXIT_BYTES bytes: a process it left that holds the pipe, silent or writing, does not hold the
+    tool, and what such a process writes is kept only within those bounds. Standard error is read with it when `merge`, else not at all."""
+    try:
+        proc = spawn(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT if merge else subprocess.DEVNULL)
+    except OSError as exc:
+        return None, b"", "it could not be started (%s)" % describe(exc)
+    ACTIVE.append(proc)
+    out, cut, ended, extra, at_end, sampled = bytearray(), None, None, 0, False, 0.0
+    deadline = time.monotonic() + max(1.0, seconds)
+    fd = proc.stdout.fileno()
+    try:
+        while True:
+            now = time.monotonic()
+            if ended is None:
+                if proc.poll() is not None:
+                    ended = now
+                elif now >= deadline:
+                    cut = "it was ended at its clock"
+                    break
+                elif now - sampled >= 0.2:
+                    sampled = now
+                    _sample(proc.pid)
+            if ended is not None and (now - ended >= PIPE_GRACE or extra >= POST_EXIT_BYTES):
+                break
+            if not _select.select([fd], [], [], 0.1)[0]:
+                continue
+            data = os.read(fd, 65536)
+            if not data:
+                at_end = True
+                break
+            if ended is not None:
+                extra += len(data)
+            out += data
+            if len(out) > most:
+                cut = "it wrote more than %d bytes" % most
+                break
+        if cut:
+            kill_tree(proc)
+        try:
+            proc.wait(timeout=PIPE_GRACE)
+        except subprocess.TimeoutExpired:
+            kill_tree(proc)
+            proc.wait()
+        if not at_end:
+            reap_orphans(_pipe_inodes(proc))
+    finally:
+        _close_pipe(proc.stdout)
+        ACTIVE.remove(proc)
+    settle()
+    return (None if cut else proc.returncode), bytes(out[:most]), cut
+
+
 def run_ocr(image_path, place):
-    """A second reader, when the image holds one: tesseract on the crop as one line (--psm 7). {engine, ...}; the text goes to a file."""
+    """A second reader, when the image holds one: tesseract on the crop as one line (--psm 7). {engine, ...}; the text goes to a file. What
+    the engine writes is read up to MAX_OCR_BYTES: a line of text is far less, and more is not read."""
     program = find_program("tesseract")
     if program is None:
         return {"available": False, "said": "no OCR engine is in this image (tesseract is not on PATH): the count and the strip are this tool's own, and no second reading was made"}, None
     target = image_path if os.path.isabs(image_path) else os.path.join(".", image_path)
-    code, out, err, timed_out = preflight([program, "--version"], seconds_left(10))
-    version = (out or err).decode("utf-8", "replace").splitlines()[0].strip()[:60] if (out or err) else "tesseract, version not printed"
+    _code, out, cut = read_program([program, "--version"], seconds_left(10), MAX_OCR_BYTES, merge=True)     # an older tesseract prints it on stderr
+    version = out.decode("utf-8", "replace").splitlines()[0].strip()[:60] if out.strip() and not cut else "tesseract, version not printed"
     version = "".join(ch if " " <= ch < "\x7f" else "?" for ch in version)
-    code, out, err, timed_out = preflight([program, target, "stdout", "--psm", "7"], seconds_left(OCR_SECONDS))
-    if timed_out or code != 0:
+    code, out, cut = read_program([program, target, "stdout", "--psm", "7"], seconds_left(OCR_SECONDS), MAX_OCR_BYTES)
+    if cut or code != 0:
         return {"available": True, "engine": version, "read": False,
-                "said": "the OCR engine did not read the crop (%s)" % ("it was ended at its clock" if timed_out else "exit code %s" % code)}, None
+                "said": "the OCR engine did not read the crop (%s)" % (cut or "exit code %s" % code)}, None
     try:
         text = out.decode("utf-8").split("\n")[0].rstrip("\r")
     except UnicodeDecodeError:
@@ -2221,8 +2323,7 @@ def main():
         raise Refused("the picture was not read: %s" % exc)
     except Clock:
         raise Refused("the tool's clock (max_seconds %d) ran out while the picture was being read: nothing was counted" % seconds)
-    if picture.width * picture.height > MAX_CROP_PIXELS:
-        raise Refused("the picture is %d x %d pixels: this tool takes a crop of one line (up to %d pixels). Crop the line first. %s" % (picture.width, picture.height, MAX_CROP_PIXELS, RULES[1]))
+    check_crop(picture.width, picture.height)
     common = {"tool": TOOL, "parser": PARSER, "image": printable(image), "sha256": hashlib.sha256(data).hexdigest(), "pixels": "%d x %d" % (picture.width, picture.height),
               "picture_reader": picture.reader, "rules": RULES, **({"unrecognised_parameters": unknown} if unknown else {})}
     try:
@@ -2232,47 +2333,54 @@ def main():
                       "status_basis": "the clock (max_seconds %d) ran out before the glyphs were cut: nothing was counted" % seconds})
         raise SystemExit(1)
     glyphs = found["glyphs"]
-    if not glyphs:
+    if not glyphs and reading is None:
         print_answer({**common, "status": "complete", "count": 0, "polarity": found["polarity"],
                       "status_basis": "the whole picture was read and it holds no ink against its background at the threshold %d: no glyph, and nothing was written" % found["threshold"]})
         return
     place = Place("glyph_strip")
     reasons, files = [], {}
-    widths = sorted(g["width"] for g in glyphs)
-    heights = sorted(g["height"] for g in glyphs)
-    median_width, median_height = widths[len(widths) // 2], heights[len(heights) // 2]
-    gaps = [glyphs[i + 1]["x"] - (glyphs[i]["x"] + glyphs[i]["width"]) for i in range(len(glyphs) - 1)]
-    median_gap = sorted(gaps)[len(gaps) // 2] if gaps else 0
-    space_at = max(median_height * 0.35, median_gap * 2.5, 2)
-    spaces = [i + 1 for i, gap in enumerate(gaps) if gap > space_at]
-    wide = [i + 1 for i, g in enumerate(glyphs) if g["width"] > 1.8 * median_width and g["width"] > g["height"] * 1.3]
-    narrow_pairs = [[i + 1, i + 2] for i, gap in enumerate(gaps) if gap <= max(1, median_gap // 3) and glyphs[i]["width"] + glyphs[i + 1]["width"] < median_width * 1.2 and len(gaps) > 2]
-    groups, placed = [], set()
-    for i in range(len(glyphs)):
-        if i in placed:
-            continue
-        if out_of_time():
-            reasons.append("the clock ran out while the glyphs were compared: same_shape_groups is not whole")
-            break
-        group = [i] + [j for j in range(i + 1, len(glyphs)) if j not in placed and same_shape(glyphs[i], glyphs[j])]
-        if len(group) > 1:
-            groups.append([g + 1 for g in group])
-            placed.update(group)
-    left, top, right, bottom = found["box"]
-    rows = [{"index": i + 1, "x": g["x"], "y": g["y"], "width": g["width"], "height": g["height"], "ink_pixels": g["ink"],
-             "above_line_bottom": bottom - (g["y"] + g["height"]), "below_line_top": g["y"] - top} for i, g in enumerate(glyphs)]
-    try:
-        width, height, strip = strip_picture(glyphs, top, bottom)
-        files["strip"] = place.write("strip.png", png_bytes(width, height, strip))
-        for i, g in enumerate(glyphs, 1):
-            rows[i - 1]["crop"] = place.write("glyph-%03d.png" % i, glyph_png(g))
-    except Clock:
-        reasons.append("the clock ran out while the strip and the crops were being written: %d of %d crops are there" % (sum(1 for r in rows if "crop" in r), len(glyphs)))
-    except OSError as exc:
-        files["write_error"] = "a crop could not be written (%s)" % describe(exc)
-        reasons.append("the strip or a crop could not be written")
+    spaces, wide, narrow_pairs, groups, rows = [], [], [], [], []
+    if glyphs:
+        widths = sorted(g["width"] for g in glyphs)
+        heights = sorted(g["height"] for g in glyphs)
+        median_width, median_height = widths[len(widths) // 2], heights[len(heights) // 2]
+        gaps = [glyphs[i + 1]["x"] - (glyphs[i]["x"] + glyphs[i]["width"]) for i in range(len(glyphs) - 1)]
+        median_gap = sorted(gaps)[len(gaps) // 2] if gaps else 0
+        space_at = max(median_height * 0.35, median_gap * 2.5, 2)
+        spaces = [i + 1 for i, gap in enumerate(gaps) if gap > space_at]
+        # A run that may be two touching characters is wide against the line's usual glyph: the median width, or the median height where
+        # that is smaller (a line whose runs are mostly touching pairs has a median width that is itself a pair).
+        usual = min(median_width, median_height)
+        wide = [i + 1 for i, g in enumerate(glyphs) if g["width"] > 1.8 * usual and g["width"] > g["height"] * 1.3]
+        narrow_pairs = [[i + 1, i + 2] for i, gap in enumerate(gaps) if gap <= max(1, median_gap // 3) and glyphs[i]["width"] + glyphs[i + 1]["width"] < median_width * 1.2 and len(gaps) > 2]
+        placed = set()
+        for i in range(len(glyphs)):
+            if i in placed:
+                continue
+            if out_of_time():
+                reasons.append("the clock ran out while the glyphs were compared: same_shape_groups is not whole")
+                break
+            group = [i] + [j for j in range(i + 1, len(glyphs)) if j not in placed and same_shape(glyphs[i], glyphs[j])]
+            if len(group) > 1:
+                groups.append([g + 1 for g in group])
+                placed.update(group)
+        left, top, right, bottom = found["box"]
+        rows = [{"index": i + 1, "x": g["x"], "y": g["y"], "width": g["width"], "height": g["height"], "ink_pixels": g["ink"],
+                 "above_line_bottom": bottom - (g["y"] + g["height"]), "below_line_top": g["y"] - top} for i, g in enumerate(glyphs)]
+        try:
+            width, height, strip = strip_picture(glyphs, top, bottom)
+            files["strip"] = place.write("strip.png", png_bytes(width, height, strip))
+            for i, g in enumerate(glyphs, 1):
+                scale = crop_scale(g)
+                rows[i - 1]["crop"] = place.write("glyph-%03d.png" % i, glyph_png(g, scale))
+                rows[i - 1]["crop_scale"] = scale
+        except Clock:
+            reasons.append("the clock ran out while the strip and the crops were being written: %d of %d crops are there" % (sum(1 for r in rows if "crop" in r), len(glyphs)))
+        except OSError as exc:
+            files["write_error"] = "a crop could not be written (%s)" % describe(exc)
+            reasons.append("the strip or a crop could not be written")
     answer = {**common, "count": len(glyphs), "count_is": "separate ink runs along the line, specks of one pixel left out",
-              "polarity": found["polarity"], "threshold": found["threshold"], "line_box": [left, top, right, bottom], "ink_bands": found["bands"],
+              "polarity": found["polarity"], "threshold": found["threshold"], "line_box": list(found["box"]) if found["box"] else None, "ink_bands": found["bands"],
               "specks_ignored": found["specks"], "spaces_after": spaces, "wide": wide, "narrow_pairs": narrow_pairs, "same_shape_groups": groups,
               "glyphs": rows, "files": files, "output_directory": place.shown}
     if found["bands"] > 2:
@@ -2295,48 +2403,71 @@ def main():
         bare = len(reading.replace(" ", ""))
         readers.append({"reader": "the caller", "read": "the reading given", "characters": len(reading), "characters_without_spaces": bare, "agrees_with_count": bare == len(glyphs)})
         if ocr_text is not None:
-            differ = [i for i in range(max(len(reading), len(ocr_text))) if i >= len(reading) or i >= len(ocr_text) or reading[i] != ocr_text[i]]
-            answer["reading_against_ocr"] = {"same_length": len(reading) == len(ocr_text), "positions_that_differ": differ[:100], "differ": len(differ),
-                                             "of_them_uncertain": sum(1 for i in differ if i in uncertain)}
+            # Where the two texts differ follows the OCR text, which the answer does not show: the positions go to a file beside it, a row a
+            # position of the longer text, so that the file's size follows the two lengths (which the answer shows) and not the differences.
+            span = max(len(reading), len(ocr_text))
+            against = {"same_length": len(reading) == len(ocr_text),
+                       "what": "the positions where the reading and the OCR text differ, and which of them are uncertain, are in the file, not here: they follow the OCR text, which the answer does not show"}
+            try:
+                against["file"] = place.write("reading_against_ocr.tsv", (b"at\tdiffers\tuncertain\n",
+                                                                         *(("%d\t%d\t%d\n" % (i, int(i >= len(reading) or i >= len(ocr_text) or reading[i] != ocr_text[i]),
+                                                                                              int(i in uncertain))).encode("ascii") for i in range(span))), 0o600)
+            except OSError as exc:
+                against["write_error"] = "the comparison could not be written (%s)" % describe(exc)
+                reasons.append("the comparison with the OCR text could not be written")
+            answer["reading_against_ocr"] = against
         # The glyph of a position: by order, when the reading has as many characters besides spaces as there are ink runs.
         glyph_of = {}
-        if bare == len(glyphs):
+        if glyphs and bare == len(glyphs):
             k = 0
             for at, ch in enumerate(reading):
                 if ch != " ":
                     glyph_of[at] = k
                     k += 1
-        ties, parent = [], {at: at for at in uncertain}
-        if glyph_of:
-            order = sorted(uncertain)
-            for i, a in enumerate(order):
-                for b in order[i + 1:]:
-                    if set(uncertain[a]) == set(uncertain[b]) and a in glyph_of and b in glyph_of and same_shape(glyphs[glyph_of[a]], glyphs[glyph_of[b]]):
-                        root_a, root_b = a, b
-                        while parent[root_a] != root_a:
-                            root_a = parent[root_a]
-                        while parent[root_b] != root_b:
-                            root_b = parent[root_b]
-                        if root_a != root_b:
-                            parent[root_b] = root_a
-                            ties.append([a, b])
-        roots = sorted(at for at in uncertain if parent[at] == at)
+        # Two uncertain positions are tied when their glyphs are the same drawing, they have the same alternatives AND the reading gives
+        # them the same character: the set then takes them as one choice. A pair that is the same drawing and that the reading gives two
+        # characters is not tied (the reading stays in the set) and is named, because one of the two readings, or the drawing, says
+        # otherwise. A tie that the clock leaves unsought only makes the set larger, never drops a member of it.
+        ties, parent, read_apart = [], {at: at for at in uncertain}, []
 
         def root_of(at):
             while parent[at] != at:
                 at = parent[at]
             return at
 
+        if glyph_of:
+            order = [at for at in sorted(uncertain) if at in glyph_of]
+            for i, a in enumerate(order):
+                if out_of_time():
+                    reasons.append("the clock ran out while ties were sought: the positions from %d on were not tied, so the set is counted with fewer ties (larger, never smaller)" % a)
+                    break
+                for b in order[i + 1:]:
+                    if set(uncertain[a]) != set(uncertain[b]) or not same_shape(glyphs[glyph_of[a]], glyphs[glyph_of[b]]):
+                        continue
+                    if reading[a] != reading[b]:
+                        read_apart.append([a, b])
+                        continue
+                    root_a, root_b = root_of(a), root_of(b)
+                    if root_a != root_b:
+                        parent[root_b] = root_a
+                        ties.append([a, b])
+        roots = sorted(at for at in uncertain if parent[at] == at)
         size = 1
         for at in roots:
             size *= len(uncertain[at])
         written = 0
+        first_line = []
         candidates = {"candidate_set_size": size, "uncertain_positions": [{"at": at, "alternatives": len(uncertain[at]), **({"glyph": glyph_of[at] + 1} if at in glyph_of else {})} for at in sorted(uncertain)],
                       "uncertain_from": uncertain_from, "confidence": "medium" if size > 1 else "as the reading itself: no position is uncertain",
                       "record_as": ("a candidate set of %d, at medium confidence, with the candidates file: not one string" % size) if size > 1 else "the reading, with the strip"}
         if ties:
             candidates["positions_tied"] = ties
-            candidates["tied_because"] = "their glyphs are the same drawing and have the same alternatives, so they are the same character: the set is counted with them tied"
+            candidates["tied_because"] = ("their glyphs are the same drawing, they have the same alternatives and the reading gives them the same character: the set "
+                                          "takes them as one choice (an assumption where a font draws two of the alternatives alike)")
+        if read_apart:
+            candidates["same_drawing_read_apart"] = read_apart[:50]
+            candidates["read_apart_means"] = ("the glyphs at these positions are the same drawing but the reading gives them different characters: they were not "
+                                              "tied and the reading is in the set; one of the two readings is likely wrong, unless the font draws the two alike")
         if not glyph_of:
             candidates["glyphs_not_matched"] = "the reading has %d characters besides spaces and the line has %d ink runs: positions were not matched to glyphs, and nothing was tied" % (bare, len(glyphs))
 
@@ -2344,8 +2475,9 @@ def main():
             nonlocal written
             for combo in itertools.islice(itertools.product(*[uncertain[at] for at in roots]), most):
                 pick = dict(zip(roots, combo))
-                text = "".join(pick[root_of(at)] if at in uncertain and len(uncertain[at]) == len(uncertain[root_of(at)]) and set(uncertain[at]) == set(uncertain[root_of(at)]) else ch
-                               for at, ch in enumerate(reading))
+                text = "".join(pick[root_of(at)] if at in uncertain else ch for at, ch in enumerate(reading))
+                if not written:
+                    first_line.append(text)
                 written += 1
                 yield (text + "\n").encode("utf-8")
                 if written % 256 == 0 and out_of_time():
@@ -2354,7 +2486,7 @@ def main():
         try:
             candidates["candidates_file"] = place.write("candidates.txt", lines(), 0o600)
             candidates["candidates_written"] = written
-            candidates["first_line_is_the_reading"] = True
+            candidates["first_line_is_the_reading"] = first_line == [reading]
             if written < size:
                 candidates["truncated"] = True
                 reasons.append("the candidate set has %d members and %d were written (max_candidates %d, or the clock)" % (size, written, most))
@@ -2366,7 +2498,8 @@ def main():
     status = "partial" if reasons else "complete"
     answer["status"] = status
     answer["complete"] = status == "complete"
-    answer["status_basis"] = (("the whole picture was read: %d ink runs along the line, each written as a crop and in the strip" % len(glyphs))
+    answer["status_basis"] = (("the whole picture was read: %d ink runs along the line, each written as a crop and in the strip" % len(glyphs) if glyphs else
+                               "the whole picture was read and it holds no ink against its background at the threshold %d: no glyph, and the reading has none to match" % found["threshold"])
                               + ("; the candidate set of %d was written whole" % answer["candidates"]["candidate_set_size"] if reading is not None and not reasons else "")
                               + ("; but %s" % "; ".join(reasons) if reasons else "")
                               + ". The count is of ink runs, a character only where glyphs neither touch nor split (wide, narrow_pairs)")

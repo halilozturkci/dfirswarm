@@ -441,8 +441,8 @@ def _unexpected_tool(kind, value, _tb):
 sys.excepthook = _unexpected_tool
 
 
-TOOL = {"name": "qr_read", "version": 1}
-PARSER = "qr_read/1"
+TOOL = {"name": "qr_read", "version": 2}
+PARSER = "qr_read/2"
 DEFAULT_SECONDS, MAX_SECONDS = 90, 100          # under the manifest's 120
 MAX_INPUTS = 64
 KNOWN_PARAMS = {"image", "images", "mode", "box", "version", "module_pixels", "reader", "max_seconds", "self_test"}
@@ -462,7 +462,8 @@ RULES = [
 NOT_READ = ("versions 11 to 40; Micro QR, rMQR and every other symbology; a symbol photographed at a strong angle or on a curved surface "
             "(one alignment pattern is used, from version 2); pieces that are turned against each other, scaled differently or not "
             "rectangular; a piece set with a hole is read only while Reed-Solomon can still correct what is missing (missing modules "
-            "count as light, there is no erasure decoding)")
+            "count as light, there is no erasure decoding); frames past the %dth of a picture, and by the built-in reader (reader builtin, or "
+            "no Pillow) the frames of an animated PNG other than its default image (frames_not_read names them, and the answer is partial)" % 64)
 
 
 # ---- what every answer and every file of this tool goes through ---------------------------------------------------------------------
@@ -693,14 +694,23 @@ MAX_PNG_ROWS = 256 << 20           # the inflated rows of a PNG the built-in rea
 
 
 class NotAPicture(Exception):
-    """The file is not a picture this tool can read; the text says what was found and what would read it."""
+    """The file is not a picture this tool can read; the text says what was found and what would read it. `damaged` is True when the
+    file is a picture of its kind that is cut or corrupt (not one of a form the reader does not take)."""
+
+    def __init__(self, text, damaged=False):
+        super().__init__(text)
+        self.damaged = damaged
 
 
 class Picture:
-    """A picture as rows of bytes: `gray` (one byte a pixel, 0 black to 255 white) always, `rgb` (three bytes a pixel) when it was asked for."""
+    """A picture as rows of bytes: `gray` (one byte a pixel, 0 black to 255 white) always, `rgb` (three bytes a pixel) when it was asked for.
+    `frames` is how many frames or pages the file holds (this is the first); frame_at(k) reads frame k (0-based) or raises NotAPicture,
+    and is None when the reader cannot reach the others (frames_why says why). `damage` is what the built-in reader found wrong with a
+    PNG that Pillow then read (Pillow fills what is missing), or None."""
 
     def __init__(self, width, height, gray, rgb=None, reader=""):
         self.width, self.height, self.gray, self.rgb, self.reader = width, height, gray, rgb, reader
+        self.frames, self.frame_at, self.frames_why, self.damage, self.notes = 1, None, None, None, []
 
 
 def _unfilter(kind, line, previous, bpp):
@@ -736,16 +746,21 @@ def read_png(data, want_rgb=False, tick=None):
     forms, not interlaced. Transparency is put on white. NotAPicture for anything else; tick() is called once a row (the clock)."""
     if data[:8] != PNG_MAGIC:
         raise NotAPicture("not a PNG (no PNG signature)")
-    at, header, palette, alpha, parts = 8, None, None, None, []
+    at, header, palette, alpha, parts, animation, default_in_animation = 8, None, None, None, [], None, False
     while at + 12 <= len(data):
         length = int.from_bytes(data[at:at + 4], "big")
         kind = data[at + 4:at + 8]
         body = data[at + 8:at + 8 + length]
-        if len(body) != length:
-            raise NotAPicture("a PNG cut inside its %s chunk" % kind.decode("ascii", "replace"))
+        name = "".join(ch if ch.isalpha() else "?" for ch in kind.decode("latin-1"))
+        if len(body) != length or at + 12 + length > len(data):
+            raise NotAPicture("a PNG cut inside its %s chunk" % name, damaged=True)
         if zlib.crc32(kind + body) != int.from_bytes(data[at + 8 + length:at + 12 + length], "big"):
-            raise NotAPicture("a PNG whose %s chunk fails its CRC" % "".join(ch if ch.isalpha() else "?" for ch in kind.decode("latin-1")))
+            raise NotAPicture("a PNG whose %s chunk fails its CRC" % name, damaged=True)
         at += 12 + length
+        if kind == b"acTL" and length == 8:
+            animation = int.from_bytes(body[:4], "big")
+        elif kind == b"fcTL" and not parts:
+            default_in_animation = True
         if kind == b"IHDR":
             if length != 13:
                 raise NotAPicture("a PNG with a header of the wrong length")
@@ -759,32 +774,35 @@ def read_png(data, want_rgb=False, tick=None):
         elif kind == b"IEND":
             break
     if header is None or not parts:
-        raise NotAPicture("a PNG with no header or no image data")
+        raise NotAPicture("a PNG with no header or no image data", damaged=True)
     width, height, depth, colour, _compression, _filter, interlace = header
     if width == 0 or height == 0 or width * height > MAX_PIXELS:
         raise NotAPicture("a PNG of %d x %d pixels (this tool reads up to %d pixels)" % (width, height, MAX_PIXELS))
     channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}.get(colour)
     if channels is None or depth not in (1, 2, 4, 8, 16) or (depth < 8 and colour not in (0, 3)) or (depth == 16 and colour == 3):
         raise NotAPicture("a PNG of colour type %d at %d bits, which the format does not define" % (colour, depth))
-    if interlace:
-        raise NotAPicture("an interlaced PNG: the built-in reader does not read Adam7 (Pillow does, when it is installed)")
     if colour == 3 and palette is None:
-        raise NotAPicture("a palette PNG with no palette")
+        raise NotAPicture("a palette PNG with no palette", damaged=True)
+    if interlace:
+        # Not read here, but its image data is measured, so that a cut file is not handed to Pillow as a whole one.
+        want = 0
+        for x0, y0, dx, dy in ((0, 0, 8, 8), (4, 0, 8, 8), (0, 4, 4, 8), (2, 0, 4, 4), (0, 2, 2, 4), (1, 0, 2, 2), (0, 1, 1, 2)):
+            pass_width, pass_height = (width - x0 + dx - 1) // dx, (height - y0 + dy - 1) // dy
+            if pass_width > 0 and pass_height > 0:
+                want += pass_height * (1 + (pass_width * channels * depth + 7) // 8)
+        if want <= MAX_PNG_ROWS:
+            got = len(_inflate(parts, want, tick))
+            if got < want:
+                raise NotAPicture("an interlaced PNG whose image data ends after %d of %d bytes" % (got, want), damaged=True)
+        raise NotAPicture("an interlaced PNG: the built-in reader does not read Adam7 (Pillow does, when it is installed)")
     stride = (width * channels * depth + 7) // 8
     bpp = max(1, channels * depth // 8)
     if height * (stride + 1) > MAX_PNG_ROWS:
         raise NotAPicture("a PNG whose rows are %d bytes when inflated (the built-in reader takes up to %d; Pillow, when it is installed, reads it)" % (height * (stride + 1), MAX_PNG_ROWS))
-    inflater = zlib.decompressobj()
-    raw = bytearray()
     want = height * (stride + 1)
-    for part in parts:
-        raw += inflater.decompress(part, want - len(raw) + 1)
-        if len(raw) > want:
-            break
-        if tick:
-            tick()
+    raw = _inflate(parts, want, tick)
     if len(raw) < want:
-        raise NotAPicture("a PNG whose image data ends after %d of %d bytes" % (len(raw), want))
+        raise NotAPicture("a PNG whose image data ends after %d of %d bytes" % (len(raw), want), damaged=True)
     if palette is not None:
         entries = len(palette) // 3
         pal_gray = bytearray(256)
@@ -795,6 +813,19 @@ def read_png(data, want_rgb=False, tick=None):
             r, g, b = ((v * a + 255 * (255 - a)) // 255 for v in (r, g, b))
             pal_gray[i] = (r * 299 + g * 587 + b * 114) // 1000
             pal_rgb[i] = bytes((r, g, b))
+    shift = 8
+    if depth == 16:
+        # A 16-bit sample is brought to 8 bits by the picture's own largest sample, not by its high byte alone: a picture whose samples
+        # run 0 to 255 (a converted 8-bit one) would be all black by its high bytes. One pass over the rows finds the largest.
+        high, previous = 0, None
+        for y in range(height):
+            if tick:
+                tick()
+            start = y * (stride + 1)
+            line = _unfilter(raw[start], bytes(raw[start + 1:start + 1 + stride]), previous, bpp)
+            previous = line
+            high = max(high, max(line[0::2]))
+        shift = high.bit_length()
     gray, rgb, previous = [], [] if want_rgb else None, None
     for y in range(height):
         if tick:
@@ -803,7 +834,7 @@ def read_png(data, want_rgb=False, tick=None):
         line = _unfilter(raw[start], bytes(raw[start + 1:start + 1 + stride]), previous, bpp)
         previous = line
         if depth == 16:
-            line = line[0::2]
+            line = bytes(min(255, ((line[i] << 8) | line[i + 1]) >> shift) for i in range(0, len(line), 2))
         elif depth < 8:
             mask, scale = (1 << depth) - 1, 255 // ((1 << depth) - 1) if colour == 0 else 1
             line = bytes(((line[(x * depth) >> 3] >> (8 - depth - (x * depth) % 8)) & mask) * scale for x in range(width))
@@ -827,7 +858,29 @@ def read_png(data, want_rgb=False, tick=None):
                 rgb.append(bytes((line[i + k] * line[i + 3] + 255 * (255 - line[i + 3])) // 255 for i in range(0, 4 * width, 4) for k in range(3)))
             else:
                 rgb.append(bytes(v for v in g for _ in range(3)))
-    return Picture(width, height, gray, rgb, "the built-in PNG reader")
+    picture = Picture(width, height, gray, rgb, "the built-in PNG reader")
+    if depth == 16:
+        picture.notes.append("16-bit samples, brought to 8 bits by the picture's own largest sample (shifted right by %d bits)" % shift)
+    if animation is not None and animation + (0 if default_in_animation else 1) > 1:
+        picture.frames = animation + (0 if default_in_animation else 1)
+        picture.frames_why = "an animated PNG: the built-in reader reads its default image, not its other frames (Pillow does, when it is installed)"
+    return picture
+
+
+def _inflate(parts, want, tick=None):
+    """The zlib stream of the IDAT chunks, inflated to at most want + 1 bytes. NotAPicture (damaged) for a stream that is not zlib."""
+    inflater = zlib.decompressobj()
+    raw = bytearray()
+    try:
+        for part in parts:
+            raw += inflater.decompress(part, want - len(raw) + 1)
+            if len(raw) > want:
+                break
+            if tick:
+                tick()
+    except zlib.error:
+        raise NotAPicture("a PNG whose image data is not a zlib stream that inflates (after %d bytes)" % len(raw), damaged=True)
+    return raw
 
 
 def pillow():
@@ -847,14 +900,18 @@ _PILLOW = {}
 
 
 def read_picture(data, want_rgb=False, reader="auto", tick=None):
-    """The picture in `data`: a PNG by the built-in reader when it reads it (or when reader is "builtin"), anything else, and a PNG the
-    built-in reader refuses, by Pillow when it imports. NotAPicture says which reader said what."""
-    first = None
+    """The picture in `data`: a PNG by the built-in reader when it reads it (or when reader is "builtin"), anything else, a PNG the
+    built-in reader refuses and an animated PNG, by Pillow when it imports. NotAPicture says which reader said what. A PNG the built-in
+    reader found cut or corrupt and Pillow read all the same carries that finding in `damage`: Pillow fills what is missing."""
+    first = damage = builtin = None
     if data[:8] == PNG_MAGIC or reader == "builtin":
         try:
-            return read_png(data, want_rgb, tick)
+            builtin = read_png(data, want_rgb, tick)
+            if builtin.frames == 1 or reader == "builtin" or pillow() is None:
+                return builtin
         except NotAPicture as exc:
             first = str(exc)
+            damage = first if exc.damaged else None
             if reader == "builtin":
                 raise
     image_module = pillow() if reader != "builtin" else None
@@ -867,24 +924,53 @@ def read_picture(data, want_rgb=False, reader="auto", tick=None):
             image = image_module.open(io.BytesIO(data))
             if image.width * image.height > MAX_PIXELS:
                 raise NotAPicture("a picture of %d x %d pixels (this tool reads up to %d pixels)" % (image.width, image.height, MAX_PIXELS))
-            image.load()
-            if image.mode in ("RGBA", "LA", "PA") or "transparency" in image.info:
-                image = image.convert("RGBA")
-                flat = image_module.new("RGB", image.size, (255, 255, 255))
-                flat.paste(image, mask=image.split()[3])
-                image = flat
-            grey = image.convert("L")
-            width, height = grey.size
-            flat_gray = grey.tobytes()
-            gray = [flat_gray[y * width:(y + 1) * width] for y in range(height)]
-            rgb = None
-            if want_rgb:
-                flat_rgb = image.convert("RGB").tobytes()
-                rgb = [flat_rgb[y * width * 3:(y + 1) * width * 3] for y in range(height)]
+            picture = _pillow_frame(image_module, image, want_rgb)
+            frames = getattr(image, "n_frames", 1)
     except NotAPicture:
+        if builtin is not None:
+            return builtin
         raise
     except Exception as exc:  # noqa: BLE001 - Pillow's own errors, a decompression-bomb warning included: the class is said, never the message
-        raise NotAPicture("%sPillow does not read it as a picture (%s)" % ("the built-in reader: %s; " % first if first else "", type(exc).__name__))
+        if builtin is not None:
+            return builtin                  # an animated PNG Pillow does not read: its default image, and frames_why says the rest
+        raise NotAPicture("%sPillow does not read it as a picture (%s)" % ("the built-in reader: %s; " % first if first else "", type(exc).__name__),
+                          damaged=damage is not None)
+    picture.damage = damage
+    if isinstance(frames, int) and frames > 1:
+        picture.frames = frames
+
+        def frame_at(k):
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("error")
+                    image.seek(k)
+                    if image.width * image.height > MAX_PIXELS:
+                        raise NotAPicture("frame %d is %d x %d pixels (this tool reads up to %d pixels)" % (k + 1, image.width, image.height, MAX_PIXELS))
+                    return _pillow_frame(image_module, image, want_rgb)
+            except NotAPicture:
+                raise
+            except Exception as exc:  # noqa: BLE001 - the class is said, never the message
+                raise NotAPicture("Pillow does not read frame %d (%s)" % (k + 1, type(exc).__name__))
+        picture.frame_at = frame_at
+    return picture
+
+
+def _pillow_frame(image_module, image, want_rgb):
+    """The frame Pillow has open, as a Picture: transparency put on white, grey always, RGB when asked for."""
+    image.load()
+    if image.mode in ("RGBA", "LA", "PA") or "transparency" in image.info:
+        image = image.convert("RGBA")
+        flat = image_module.new("RGB", image.size, (255, 255, 255))
+        flat.paste(image, mask=image.split()[3])
+        image = flat
+    grey = image.convert("L")
+    width, height = grey.size
+    flat_gray = grey.tobytes()
+    gray = [flat_gray[y * width:(y + 1) * width] for y in range(height)]
+    rgb = None
+    if want_rgb:
+        flat_rgb = image.convert("RGB").tobytes()
+        rgb = [flat_rgb[y * width * 3:(y + 1) * width * 3] for y in range(height)]
     return Picture(width, height, gray, rgb, "Pillow %s" % _PILLOW.get("version", "?"))
 
 
@@ -1239,6 +1325,13 @@ def encode_symbol(payload, version, level, mask):
         stream += [b[0][i] for b in blocks if i < len(b[0])]
     for i in range(layout[0][1]):
         stream += [b[1][i] for b in blocks]
+    return place_symbol(stream, version, level, mask)
+
+
+def place_symbol(stream, version, level, mask, remainder=0):
+    """The modules of a symbol from its interleaved codewords: the fixed patterns, the codewords masked in their order, the format word
+    and (version 7 and above) the version word. The remainder bits after the last codeword take `remainder` (None: not known)."""
+    n = 17 + 4 * version
     known, _reserved = function_modules(version)
     grid = [[0] * n for _ in range(n)]
     for (r, c), value in known.items():
@@ -1246,8 +1339,10 @@ def encode_symbol(payload, version, level, mask):
     order = data_order(version)
     test = MASKS[mask]
     for index, (r, c) in enumerate(order):
-        bit = (stream[index >> 3] >> (7 - (index & 7))) & 1 if index >> 3 < len(stream) else 0
-        grid[r][c] = bit ^ (1 if test(r, c) else 0)
+        if index >> 3 < len(stream):
+            grid[r][c] = ((stream[index >> 3] >> (7 - (index & 7))) & 1) ^ (1 if test(r, c) else 0)
+        else:
+            grid[r][c] = None if remainder is None else remainder ^ (1 if test(r, c) else 0)
     word = FORMAT_WORDS[(LEVEL_BITS[level] << 3) | mask]
     for cells in format_cells(n):
         for bit, (r, c) in enumerate(cells):
@@ -1304,8 +1399,9 @@ def read_segments(data, version):
             notes.append("FNC1 in %s position: a GS1 or an application-identifier symbol" % ("first" if mode == 5 else "second"))
             continue
         if mode == 3:
-            position, parity = reader.take(8), reader.take(8)
-            notes.append("structured append: symbol %d of %d (parity %d): the message goes on in other symbols" % ((position >> 4) + 1, (position & 15) + 1, parity))
+            position, _parity = reader.take(8), reader.take(8)
+            notes.append("structured append: symbol %d of %d: the message goes on in other symbols (its parity byte, a digest of the whole "
+                         "message, is not printed)" % ((position >> 4) + 1, (position & 15) + 1))
             continue
         if mode == 1:
             count = reader.take(count_bits("numeric", version))
@@ -1391,7 +1487,7 @@ def decode_modules(grid, version, level, mask):
         for b in range(len(layout)):
             blocks[b].append(stream[at])
             at += 1
-    data, corrected, clean = [], 0, 0
+    data, corrected, clean, whole = [], 0, 0, []
     for b, (d, e) in enumerate(layout):
         fixed, errors = rs_correct(blocks[b], e)
         if fixed is None:
@@ -1399,11 +1495,23 @@ def decode_modules(grid, version, level, mask):
         corrected += errors
         clean += 1 if errors == 0 else 0
         data += fixed[:d]
+        whole.append(fixed)
     try:
         payload, segments, notes = read_segments(data, version)
     except ValueError as exc:
         return None, "the corrected codewords are not a data stream (%s)" % exc
-    return {"payload": payload, "segments": segments, "notes": notes, "errors_corrected": corrected, "blocks": len(layout), "blocks_clean": clean}, None
+    stream = []                                   # the corrected codewords, interleaved again as they are placed
+    for i in range(max(d for d, _e in layout)):
+        stream += [whole[b][i] for b, (d, _e) in enumerate(layout) if i < d]
+    for i in range(layout[0][1]):
+        stream += [whole[b][d + i] for b, (d, _e) in enumerate(layout)]
+    return {"payload": payload, "segments": segments, "notes": notes, "errors_corrected": corrected, "blocks": len(layout), "blocks_clean": clean,
+            "codewords": stream}, None
+
+
+def expected_modules(result):
+    """The modules the decoded symbol has: its corrected codewords placed again under its format (remainder bits None: not known)."""
+    return place_symbol(result["codewords"], result["version"], result["level"], result["mask"], remainder=None)
 
 
 def clean_blocks(grid, version, level, mask):
@@ -1489,21 +1597,29 @@ def decode_matrix(grid, tries, all_formats=False, stats=None):
                                "function_modules_agreeing": agree, "function_modules": known})
                 return result
         if all_formats:
+            # Every one of the 32 is tried, and the strongest level that decodes is taken: where two levels of a version have blocks of the
+            # same lengths (version 1 at every level, version 6 at M, Q and H, ...), a codeword of the stronger level is a codeword of the
+            # weaker one too, which then decodes with no error and the wrong split between data and check codewords.
+            decoded = []
             for data5 in range(32):
                 level, mask = LEVEL_OF_BITS[data5 >> 3], data5 & 7
                 if (level, mask) in seen:
                     continue
-                if clean_blocks(turned, version, level, mask)[0] == 0 and EC_TABLE[version][level][1] > 1:
-                    continue
+                tick()
                 stats["reed_solomon_attempts"] = stats.get("reed_solomon_attempts", 0) + 1
                 result, _why = decode_modules(turned, version, level, mask)
-                if result is not None and (result["errors_corrected"] * 4 <= sum(e for _d, e in block_layout(version, level))):
-                    agree, known = function_agreement(turned, version)
-                    result.update({"version": version, "level": level, "mask": mask, "orientation": name, "modules": turned,
-                                   "format": {"read_from": "neither copy (both were more than 3 bits from every format word)", "bits_corrected": None,
-                                              "by": "each of the 32 format words tried, Reed-Solomon deciding"},
-                                   "function_modules_agreeing": agree, "function_modules": known})
-                    return result
+                check = sum(e for _d, e in block_layout(version, level))
+                if result is not None and result["errors_corrected"] * 4 <= check:
+                    decoded.append((check, -result["errors_corrected"], -data5, level, mask, result))
+            if decoded:
+                _check, _errors, _order, level, mask, result = max(decoded, key=lambda d: d[:3])
+                agree, known = function_agreement(turned, version)
+                result.update({"version": version, "level": level, "mask": mask, "orientation": name, "modules": turned,
+                               "format": {"read_from": "neither copy (both were more than 3 bits from every format word)", "bits_corrected": None,
+                                          "by": "each of the 32 format words tried, Reed-Solomon deciding (the strongest level that decodes)",
+                                          "formats_that_decoded": len(decoded)},
+                               "function_modules_agreeing": agree, "function_modules": known})
+                return result
     return None
 
 
@@ -1682,24 +1798,59 @@ def sample(binary, width, height, mapping, n, unit):
 
 def find_alignment(binary, width, height, mapping, n, unit):
     """The pixel centre of the bottom-right alignment pattern near where the mapping puts it, or None: the place within two modules
-    whose 5 x 5 neighbourhood agrees best with the pattern (at least 23 of 25)."""
+    whose 5 x 5 neighbourhood agrees best with the pattern (at least 23 of 25). On a clean picture every offset within half a module
+    of the true centre agrees fully, so the centre is the middle of the offsets that agree best, not the first of them (which lies
+    half a module off and turns a clean symbol into one that needs correcting)."""
     centre = n - 6.5
-    best = (22, None)
     steps = [i * 0.25 for i in range(-8, 9)]
     ax, ay = mapping(centre, centre)
-    for dy in steps:
-        for dx in steps:
-            x0, y0 = ax + dx * unit, ay + dy * unit
-            agree = 0
-            for r in range(-2, 3):
-                for c in range(-2, 3):
-                    px, py = int(x0 + c * unit), int(y0 + r * unit)
-                    want = 1 if max(abs(r), abs(c)) != 1 else 0
-                    if 0 <= px < width and 0 <= py < height and binary[py][px] == want:
-                        agree += 1
-            if agree > best[0]:
-                best = (agree, (x0, y0))
-    return best[1]
+
+    def agreement(x0, y0):
+        agree = 0
+        for r in range(-2, 3):
+            for c in range(-2, 3):
+                px, py = int(x0 + c * unit), int(y0 + r * unit)
+                want = 1 if max(abs(r), abs(c)) != 1 else 0
+                if 0 <= px < width and 0 <= py < height and binary[py][px] == want:
+                    agree += 1
+        return agree
+
+    scored = [(agreement(ax + dx * unit, ay + dy * unit), ax + dx * unit, ay + dy * unit) for dy in steps for dx in steps]
+    best = max(s[0] for s in scored)
+    if best < 23:
+        return None
+    plateau = [(x, y) for agree, x, y in scored if agree == best]
+    mx, my = sum(p[0] for p in plateau) / len(plateau), sum(p[1] for p in plateau) / len(plateau)
+    if agreement(mx, my) != best:
+        return plateau[0]           # two separate plateaus (something like the pattern nearby): the middle is neither, keep the first
+    # The plateau is sampled in quarter modules, so its middle can still be a fraction of a module off; the pattern's dark centre module
+    # gives the centre to the pixel, as the finders' centres are taken (the middle of the run, its end exclusive).
+
+    def run_middle(line, at):
+        if not 0 <= at < len(line) or line[at] != 1:
+            return None
+        start, end = at, at + 1
+        while start > 0 and line[start - 1] == 1:
+            start -= 1
+        while end < len(line) and line[end] == 1:
+            end += 1
+        return (start + end) / 2.0 if 0.5 * unit <= end - start <= 1.6 * unit else None
+
+    reach = 3 * int(unit + 1)
+    for _round in range(2):
+        x, y = int(mx), int(my)
+        if not (0 <= x < width and 0 <= y < height):
+            break
+        across = run_middle(binary[y], x)
+        nx = across if across is not None else mx
+        top = max(0, y - reach)
+        column = bytes(binary[yy][int(nx)] for yy in range(top, min(height, y + reach))) if 0 <= int(nx) < width else b""
+        down = run_middle(column, y - top) if column else None
+        ny = down + top if down is not None else my
+        if agreement(nx, ny) != best:
+            break
+        mx, my = nx, ny
+    return (mx, my)
 
 
 def _sizes(distance_modules):
@@ -1927,7 +2078,9 @@ def read_symbol(binary, width, height, mode, stats, box=None, version=None):
 
 # ---- pieces of one symbol -----------------------------------------------------------------------------------------------------------
 MAX_PIECES = 16
+MAX_FRAMES = 64                    # frames or pages of one picture that are searched
 MAX_LEAVES = 4000                  # whole placements whose format word and syndromes are computed
+MAX_NODES = 20000                  # steps of the placement search (a piece put in a place, or a whole placement scored)
 
 
 def piece_modules(binary, width, height, unit_given=None):
@@ -1971,6 +2124,7 @@ def _placements(piece, version):
     rows, columns = len(piece), len(piece[0])
     out = []
     for r0 in range(n - rows + 1):
+        tick()
         for c0 in range(n - columns + 1):
             agree = disagree = 0
             for r in range(rows):
@@ -1993,10 +2147,11 @@ def assemble(pieces, stats, version_given=None):
     """Place the pieces of one symbol. For each turn of the set and each version they could fill, every piece's candidate places are
     ranked on the fixed modules; whole placements are then walked (the most constrained piece first, a piece never contradicting one
     already placed), and each is scored on the format word (BCH distance) and on how many Reed-Solomon blocks have zero syndromes; the
-    first that decodes is the answer. Returns (result, tried) with tried the best placements that did not decode."""
+    first that decodes is the answer. The walk reads the clock at every step and stops at MAX_NODES steps or MAX_LEAVES whole placements.
+    Returns (result, tried, cut): tried the best placements that did not decode, cut None or why the search stopped before its end."""
     area = sum(len(p) * len(p[0]) for p in pieces)
     tried = []
-    leaves = [0]
+    budget = {"leaves": 0, "nodes": 0, "cut": None}
     for turn in range(4):
         turned = [_turn(p, turn) for p in pieces]
         tallest, widest = max(len(p) for p in turned), max(len(p[0]) for p in turned)
@@ -2020,12 +2175,20 @@ def assemble(pieces, stats, version_given=None):
             chosen = {}
 
             def walk(depth):
-                if leaves[0] >= MAX_LEAVES:
+                if budget["cut"] is not None:
                     return None
+                budget["nodes"] += 1
+                stats["search_steps"] = budget["nodes"]
+                if budget["nodes"] > MAX_NODES:
+                    budget["cut"] = "the placement search stopped at its bound of %d steps (%d whole placements scored)" % (MAX_NODES, budget["leaves"])
+                    return None
+                tick()
                 if depth == len(options):
-                    leaves[0] += 1
-                    stats["placements_scored"] = leaves[0]
-                    tick()
+                    if budget["leaves"] >= MAX_LEAVES:
+                        budget["cut"] = "the placement search stopped at its bound of %d whole placements scored" % MAX_LEAVES
+                        return None
+                    budget["leaves"] += 1
+                    stats["placements_scored"] = budget["leaves"]
                     full = [[1 if v == 1 else 0 for v in row] for row in grid]
                     missing = sum(1 for row in grid for v in row if v < 0)
                     formats = read_format(full, n)
@@ -2040,6 +2203,7 @@ def assemble(pieces, stats, version_given=None):
                     result.update({"placements": [{"piece": i, "row": chosen[i][0], "column": chosen[i][1], "fixed_modules_agreeing": chosen[i][2],
                                                    "fixed_modules_contradicted": chosen[i][3]} for i in sorted(chosen)],
                                    "pieces_turned_quarter_turns": turn, "modules_not_covered": missing, "blocks_with_zero_syndromes": clean})
+                    check_pieces(result, turned)
                     return result
                 index, places = options[depth]
                 piece = turned[index]
@@ -2074,14 +2238,46 @@ def assemble(pieces, stats, version_given=None):
                     del chosen[index]
                     for r, c in written:
                         grid[r][c] = -1
+                    if budget["cut"] is not None:
+                        return None
                 return None
 
             result = walk(0)
             if result is not None:
                 result["located_by"] = "placement of %d pieces by fixed modules, format word and Reed-Solomon syndromes" % len(pieces)
-                return result, tried
+                return result, tried, None
+            if budget["cut"] is not None:
+                break
+        if budget["cut"] is not None:
+            break
     tried.sort(key=lambda t: (t["format_bits_wrong"], -t["blocks_with_zero_syndromes"], t["modules_not_covered"]))
-    return None, tried[:5]
+    return None, tried[:5], budget["cut"]
+
+
+def check_pieces(result, turned):
+    """Each placed piece held against the symbol that was decoded (its corrected codewords placed again, with the fixed modules and the
+    format word): the modules where the piece says otherwise. A piece of another symbol of the same version and mask agrees on the fixed
+    modules and is outvoted by Reed-Solomon in the data, so it is told only here: a piece that contradicts any module is named in
+    pieces_contradicting_the_symbol (it is damaged there, or it is not a piece of this symbol), and the answer is partial."""
+    expected = expected_modules(result)
+    foreign = []
+    for placement in result["placements"]:
+        piece = turned[placement["piece"]]
+        r0, c0 = placement["row"], placement["column"]
+        compared = contradicted = 0
+        for r, line in enumerate(piece):
+            for c, value in enumerate(line):
+                want = expected[r0 + r][c0 + c]
+                if want is None:
+                    continue
+                compared += 1
+                if want != value:
+                    contradicted += 1
+        placement["modules_contradicting_the_decoded_symbol"] = contradicted
+        placement["modules_compared"] = compared
+        if contradicted:
+            foreign.append(placement["piece"])
+    result["pieces_contradicting_the_symbol"] = foreign
 
 
 def payload_shape(payload):
@@ -2133,8 +2329,11 @@ def control(mode):
     if mode in ("fragments", "all"):
         n, half = len(grid), len(grid) // 2 + 1
         pieces = [[row[:half] for row in grid[:half]], [row[half:] for row in grid[:half]], [row[:half] for row in grid[half:]], [row[half:] for row in grid[half:]]]
-        result, _tried = assemble([pieces[2], pieces[0], pieces[3], pieces[1]], {})
-        checks.append({"check": "the same symbol cut into four pieces, given out of order, is placed and read", "passed": result is not None and result["payload"] == planted})
+        result, _tried, _cut = assemble([pieces[2], pieces[0], pieces[3], pieces[1]], {})
+        checks.append({"check": "the same symbol cut into four pieces, given out of order, is placed and read, and the pieces contradict the symbol read in "
+                                "exactly the %d flipped modules" % flipped,
+                       "passed": result is not None and result["payload"] == planted
+                       and sum(p["modules_contradicting_the_decoded_symbol"] for p in result["placements"]) == flipped})
     return {"passed": all(c["passed"] for c in checks), "checks": checks}
 
 
@@ -2156,15 +2355,15 @@ def describe_result(result):
     return row
 
 
-def keep(place, row, result, number, want_repaint):
-    """Write the payload (and the repainted symbol) of one result; the row says where, or why not."""
+def keep(place, row, result, stem, want_repaint):
+    """Write the payload (and the repainted symbol) of one result, both mode 0600; the row says where, or why not."""
     try:
-        row["payload_file"] = place.write("qr-%02d.payload.bin" % number, result["payload"], 0o600)
+        row["payload_file"] = place.write("%s.payload.bin" % stem, result["payload"], 0o600)
         row["payload_in_answer"] = False
         if want_repaint:
             grid, changed = repainted(result)
             side, rows = render(grid, 8, 4)
-            row["repainted_file"] = place.write("qr-%02d.repainted.png" % number, png_bytes(side, side, rows))
+            row["repainted_file"] = place.write("%s.repainted.png" % stem, png_bytes(side, side, rows), 0o600)
             row["fixed_modules_repainted"] = changed
     except OSError as exc:
         row["write_error"] = "the payload could not be written under the output directory (%s)" % describe(exc)
@@ -2229,6 +2428,21 @@ def main():
     place = Place("qr_read")
     rows, reasons = [], []
 
+    def search(picture, stats):
+        """One frame, both polarities: (result or None, the threshold of the last polarity tried)."""
+        if box is not None and (box[2] > picture.width or box[3] > picture.height):
+            raise Refused("box %s reaches past the picture's %d x %d pixels: give the symbol's extent inside it" % (box, picture.width, picture.height))
+        result = threshold = None
+        for polarity, threshold_rows in (("dark on light", picture.gray), ("light on dark", None)):
+            if threshold_rows is None:
+                threshold_rows = [r.translate(INVERT) for r in picture.gray]
+            binary, threshold = binarise(threshold_rows, None, tick)
+            result = read_symbol(binary, picture.width, picture.height, mode, stats, box=box, version=version)
+            if result is not None:
+                result["polarity"] = polarity
+                break
+        return result, threshold
+
     def one(path, number):
         row = {"input": printable(path)}
         try:
@@ -2238,23 +2452,82 @@ def main():
             reasons.append("%s was not read as a picture" % row["input"])
             return row
         row.update({"sha256": digest, "bytes": size, "pixels": "%d x %d" % (picture.width, picture.height), "picture_reader": picture.reader})
-        stats = {}
-        result = None
-        for polarity, threshold_rows in (("dark on light", picture.gray), ("light on dark", None)):
-            if threshold_rows is None:
-                threshold_rows = [r.translate(INVERT) for r in picture.gray]
-            binary, threshold = binarise(threshold_rows, None, tick)
-            result = read_symbol(binary, picture.width, picture.height, mode, stats, box=box, version=version)
+        if picture.notes:
+            row["picture_notes"] = picture.notes
+        if picture.damage:
+            row["picture_damaged"] = ("the built-in reader found it cut or corrupt (%s); Pillow read it all the same, and what it filled in for "
+                                      "the missing part is not the picture's" % picture.damage)
+            reasons.append("%s is a damaged picture, read only in part (see picture_damaged)" % row["input"])
+        stats, found, searched, frames_not_read = {}, [], 0, None
+        for k in range(min(picture.frames, MAX_FRAMES)):
+            if k:
+                if picture.frame_at is None:
+                    frames_not_read = "frames 2 to %d: %s" % (picture.frames, picture.frames_why)
+                    break
+                try:
+                    frame = picture.frame_at(k)
+                    result, _threshold = search(frame, stats)
+                except (NotAPicture, Refused) as exc:
+                    frames_not_read = "frames %d to %d: %s" % (k + 1, picture.frames, exc)
+                    break
+                except Clock:
+                    frames_not_read = "frames %d to %d: the tool's clock (max_seconds %d) ran out" % (k + 1, picture.frames, seconds)
+                    break
+            else:
+                try:
+                    result, row["threshold"] = search(picture, stats)
+                except Refused as exc:
+                    row.update({"result": "not read", "why": str(exc)})
+                    reasons.append("%s was not read: %s" % (row["input"], exc))
+                    return row
+            searched += 1
             if result is not None:
-                result["polarity"] = polarity
-                break
-        row["threshold"] = threshold
-        if result is None:
+                found.append((k + 1, result))
+        if frames_not_read is None and picture.frames > MAX_FRAMES:
+            frames_not_read = "frames %d to %d: past the bound of %d frames a picture" % (MAX_FRAMES + 1, picture.frames, MAX_FRAMES)
+        if picture.frames > 1:
+            row.update({"frames": picture.frames, "frames_searched": searched})
+        if frames_not_read:
+            row["frames_not_read"] = frames_not_read
+            reasons.append("%s: %s" % (row["input"], frames_not_read))
+        if not found:
             row.update({"result": "not a symbol", "looked_for": looked_for(stats, mode),
-                        "meaning": "no QR symbol of version 1 to %d was read from this picture by these methods; see not_read for what they do not reach" % MAX_VERSION})
+                        "meaning": "no QR symbol of version 1 to %d was read from this picture%s by these methods; see not_read for what they do not reach"
+                        % (MAX_VERSION, "" if picture.frames == 1 else " (in the %d frames searched; frames_not_read names any that were not)" % searched)})
             return row
+        frame_number, result = found[0]
         row.update(describe_result(result))
-        keep(place, row, result, number, mode == "repaint" or "function_patterns" in result)
+        if picture.frames > 1:
+            row["frame"] = frame_number
+        keep(place, row, result, "qr-%02d" % number, mode == "repaint" or "function_patterns" in result)
+        others, same = [], []
+        for k, other in found[1:]:
+            if other["payload"] == result["payload"]:
+                same.append(k)
+                continue
+            if any(other["payload"] == o["payload"] for _k, o in others):
+                same_as = next(kk for kk, o in others if o["payload"] == other["payload"])
+                others.append((k, other, same_as))
+                continue
+            others.append((k, other, None))
+        if same:
+            row["frames_with_the_same_payload"] = same
+        if others:
+            listed = []
+            for k, other, same_as in others:
+                entry = {"frame": k, "version": other["version"], "level": other["level"], "mask": other["mask"], "errors_corrected": other["errors_corrected"],
+                         "payload_bytes": len(other["payload"]), "located_by": other["located_by"]}
+                entry["payload_shape"], secret = payload_shape(other["payload"])
+                if secret:
+                    entry["payload_holds_a_secret_shape"] = True
+                if same_as is None:
+                    keep(place, entry, other, "qr-%02d-frame%d" % (number, k), False)
+                else:
+                    entry["same_payload_as_frame"] = same_as
+                listed.append(entry)
+            row["other_frames_decoded"] = listed
+            if any("write_error" in e for e in listed):
+                row["write_error"] = "the payload of another frame could not be written (see other_frames_decoded)"
         return row
 
     stopped = None
@@ -2267,6 +2540,15 @@ def main():
                 binary, _threshold = binarise(picture.gray, None, tick)
                 grid, unit = piece_modules(binary, picture.width, picture.height, module_pixels)
                 row.update({"sha256": digest, "bytes": size, "pixels": "%d x %d" % (picture.width, picture.height), "picture_reader": picture.reader})
+                if picture.notes:
+                    row["picture_notes"] = picture.notes
+                if picture.damage:
+                    row["picture_damaged"] = ("the built-in reader found it cut or corrupt (%s); Pillow read it all the same, and what it filled in "
+                                              "for the missing part is not the picture's" % picture.damage)
+                    reasons.append("piece %d is a damaged picture, read only in part (see picture_damaged)" % index)
+                if picture.frames > 1:
+                    row.update({"frames": picture.frames, "frames_not_read": "frames 2 to %d: a piece is read from its first frame" % picture.frames})
+                    reasons.append("piece %d: frames 2 to %d were not read (a piece is read from its first frame)" % (index, picture.frames))
                 if grid is None:
                     row.update({"result": "not a piece", "why": unit})
                     unread += 1
@@ -2289,12 +2571,22 @@ def main():
                 raise Refused("at most %d pieces are placed" % MAX_PIECES)
             stats = {}
             try:
-                result, tried = assemble(pieces, stats, version)
+                result, tried, cut = assemble(pieces, stats, version)
             except Clock:
-                result, tried, stopped = None, [], "the clock ran out while the pieces were being placed (%d placements scored)" % stats.get("placements_scored", 0)
+                result, tried, cut = None, [], None
+                stopped = "the clock ran out while the pieces were being placed (%d steps, %d placements scored)" % (stats.get("search_steps", 0), stats.get("placements_scored", 0))
+                row.update({"result": "not finished", "why": stopped + ": no placement decoded before it, and that is not a negative", "search": stats})
             if result is not None:
                 row.update(describe_result(result))
-                keep(place, row, result, 1, True)
+                keep(place, row, result, "qr-01", True)
+                if result["pieces_contradicting_the_symbol"]:
+                    row["pieces_contradicting_the_symbol"] = result["pieces_contradicting_the_symbol"]
+                    reasons.append("piece(s) %s contradict the decoded symbol (modules_contradicting_the_decoded_symbol in placements): each is damaged "
+                                   "there or is a piece of another symbol whose modules Reed-Solomon outvoted, so the payload is not shown to be the whole set's"
+                                   % ", ".join(str(i) for i in result["pieces_contradicting_the_symbol"]))
+            elif cut is not None:
+                stopped = cut + ": no placement decoded before it, and that is not a negative"
+                row.update({"result": "not finished", "why": stopped, "best_placements_that_did_not_decode": tried, "search": stats})
             elif stopped is None:
                 row.update({"result": "not a symbol", "looked_for": {"methods": ["each piece cut into modules at the module size its runs give", "every place of each piece in the grids of the versions the pieces could fill, in all four turns of the set, ranked on the fixed modules",
                                                                                  "whole placements scored on the format word (BCH distance) and the Reed-Solomon syndromes, the most constrained piece first"],
@@ -2308,6 +2600,9 @@ def main():
             except Clock:
                 stopped = "the clock ran out while picture %d of %d was being read" % (number, len(paths))
                 rows.append({"input": printable(path), "result": "not finished", "why": "the tool's clock (max_seconds %d) ran out in this picture" % seconds})
+                break
+            if out_of_time() and number < len(paths):
+                stopped = "the clock ran out after picture %d of %d" % (number, len(paths))
                 break
     if stopped:
         reasons.append(stopped)

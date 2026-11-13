@@ -1442,14 +1442,20 @@ def _unexpected_tool(kind, value, _tb):
 sys.excepthook = _unexpected_tool
 
 
-TOOL = {"name": "frame_survey", "version": 1}
-PARSER = "frame_survey/1"
+TOOL = {"name": "frame_survey", "version": 2}
+PARSER = "frame_survey/2"
 DEFAULT_SECONDS, MAX_SECONDS = 540, 570         # under the manifest's 600
 PROBE_SECONDS = 30
 DEFAULT_FRAMES, MAX_FRAMES = 20000, 200000      # frames decoded a call
 MAX_EXTRACT = 300                               # frames written at native size a call
 MAX_EXTRACT_BYTES = 2 << 30
 MAX_NATIVE_PIXELS = 8192 * 4320
+TILE_BOX_HEIGHT = 2                             # a tile is at most this many tile widths high: a tall frame is fitted into the box
+MAX_SHEET_BYTES = 192 << 20                     # the pixels of one contact sheet held at once (RGB)
+FINISH_SECONDS = 20                             # past the clock, the time an encoder that has begun a picture is given (under the manifest's timeout)
+# The whole numbers a call takes, each with its own range: the refusal of one says that range.
+RANGES = {"every": (1, 100000), "start_frame": (0, 10 ** 9), "max_frames": (1, MAX_FRAMES), "tile_width": (64, 480), "columns": (1, 20),
+          "rows": (1, 20), "window": (2, 1000), "first": (0, 10 ** 9), "last": (0, 10 ** 9)}
 GRID_COLUMNS, GRID_ROWS = 32, 18                # the blocks a frame is compared in
 BLOCK_STEP = 8                                  # a block has changed when its mean moved by more than this (of 255)
 KNOWN_PARAMS = {"video", "mode", "every", "start_frame", "max_frames", "tile_width", "columns", "rows", "window", "first", "last", "max_seconds"}
@@ -1716,6 +1722,11 @@ def seconds_left(most):
     return max(0.5, min(most, left))
 
 
+def past_finish():
+    """Past the clock and the FINISH_SECONDS an encoder that has begun a picture is given: the picture is given up."""
+    return STOP_CLOCK["deadline"] is not None and time.monotonic() > STOP_CLOCK["deadline"] + FINISH_SECONDS
+
+
 def find_program(name):
     """The program's path on PATH, or None."""
     return shutil.which(name)
@@ -1725,14 +1736,23 @@ PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 
 def png_bytes(width, height, rows, channels=1):
-    """A PNG (8-bit grey, or RGB with channels 3) from rows of bytes."""
-    raw = b"".join(b"\x00" + bytes(row) for row in rows)
+    """A PNG (8-bit grey, or RGB with channels 3) from rows of bytes (any iterable), compressed row by row: the rows are never joined into
+    one copy. Every 64 rows the clock is read: past the clock and FINISH_SECONDS the picture is given up (Clock)."""
+    packer = zlib.compressobj(6)
+    parts = []
+    for y, row in enumerate(rows):
+        if y % 64 == 0 and past_finish():
+            raise Clock()
+        parts.append(packer.compress(b"\x00"))
+        parts.append(packer.compress(row))
+    parts.append(packer.flush())
+    body = b"".join(parts)
 
-    def chunk(kind, body):
-        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
 
     return (PNG_MAGIC + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 0 if channels == 1 else 2, 0, 0, 0))
-            + chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b""))
+            + chunk(b"IDAT", body) + chunk(b"IEND", b""))
 
 
 # ---- index numbers on a picture: a 3 x 5 font of the tool's own (digits and the marks a frame label needs) ----------------------------
@@ -1793,24 +1813,45 @@ def target_of(path):
     return path if os.path.isabs(path) else os.path.join(".", path)
 
 
+def rotation_of(stream):
+    """The display rotation a stream carries, in degrees as ffprobe prints it (its display matrix, or an older demuxer's rotate tag), or None."""
+    for side in stream.get("side_data_list") or []:
+        if isinstance(side, dict) and isinstance(side.get("rotation"), (int, float)) and not isinstance(side.get("rotation"), bool):
+            return float(side["rotation"])
+    tags = stream.get("tags") if isinstance(stream.get("tags"), dict) else {}
+    try:
+        return float(tags["rotate"]) if "rotate" in tags else None
+    except (TypeError, ValueError):
+        return None
+
+
 def probe(ffprobe, path):
-    """The first video stream as ffprobe reads it: {codec, width, height, rate, frames_said, duration_said, container}, or (None, why)."""
-    code, out, err, timed_out = preflight([ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries",
-                                           "stream=codec_name,width,height,avg_frame_rate,r_frame_rate,nb_frames,duration:format=format_name,duration",
+    """The first video stream as ffprobe reads it: {codec, width, height (of the frame as the decoder gives it), coded, rotation, autorotate,
+    rate, frames_said, duration_said, container, video_streams}, or (None, why). A rotation by a quarter or half turn is let through to the
+    decoder, which turns each frame without resampling it (width and height are then of the turned frame); any other angle is not applied
+    (-noautorotate), because turning by it resamples the frame."""
+    code, out, err, timed_out = preflight([ffprobe, "-v", "error", "-select_streams", "v", "-show_entries", "stream:format=format_name,duration",
                                            "-of", "json", "-i", "file:" + target_of(path)], seconds_left(PROBE_SECONDS))
     if timed_out:
         return None, "ffprobe did not finish in %d seconds" % PROBE_SECONDS
     try:
         doc = json.loads(out.decode("utf-8", "replace"))
-    except ValueError:
+    except (ValueError, RecursionError):
         doc = {}
     streams = doc.get("streams") if isinstance(doc, dict) else None
-    if code != 0 or not streams or not isinstance(streams[0], dict):
+    if code != 0 or not isinstance(streams, list) or not streams or not isinstance(streams[0], dict):
         return None, "ffprobe found no video stream it can read (exit %s): %s" % (code, clean(err) or "it said nothing")
     stream = streams[0]
     width, height = stream.get("width"), stream.get("height")
     if not isinstance(width, int) or not isinstance(height, int) or width < 2 or height < 2 or width * height > MAX_NATIVE_PIXELS:
         return None, "the video stream's frame size is not one this tool takes (%s x %s)" % (clean(str(width), 12), clean(str(height), 12))
+    turn = rotation_of(stream)
+    quarter = turn is not None and abs(turn - round(turn / 90.0) * 90) < 1.0
+    autorotate = turn is None or quarter
+    coded = (width, height)
+    if quarter and int(round(turn / 90.0)) % 2:
+        width, height = height, width
+    disposition = stream.get("disposition") if isinstance(stream.get("disposition"), dict) else {}
 
     def rate(text):
         try:
@@ -1827,45 +1868,76 @@ def probe(ffprobe, path):
             return None
 
     form = doc.get("format") if isinstance(doc.get("format"), dict) else {}
-    return {"codec": clean(str(stream.get("codec_name")), 40), "width": width, "height": height,
+    return {"codec": clean(str(stream.get("codec_name")), 40), "width": width, "height": height, "coded": "%d x %d" % coded,
+            "rotation": turn, "autorotate": autorotate, "attached_picture": disposition.get("attached_pic") == 1,
             "rate": rate(stream.get("avg_frame_rate")) or rate(stream.get("r_frame_rate")), "frames_said": number(stream.get("nb_frames"), int),
-            "duration_said": number(stream.get("duration"), float) or number(form.get("duration"), float), "container": clean(str(form.get("format_name")), 60)}, None
+            "duration_said": number(stream.get("duration"), float) or number(form.get("duration"), float), "container": clean(str(form.get("format_name")), 60),
+            "video_streams": len(streams)}, None
+
+
+def turned(info):
+    """What the answer says about the stream's display rotation and its other video streams: {field: sentence}, empty when there is nothing."""
+    said = {}
+    if info["rotation"] is not None and info["autorotate"] and round(info["rotation"]) % 360:
+        said["rotation_note"] = ("the stream carries a display rotation of %g degrees: the decoder turns each frame as a player shows it (a quarter or half "
+                                 "turn moves pixels without resampling them), and every size, frame and region here is of the turned frame, %d x %d (coded %s)"
+                                 % (info["rotation"], info["width"], info["height"], info["coded"]))
+    elif info["rotation"] is not None and not info["autorotate"]:
+        said["rotation_note"] = ("the stream carries a display rotation of %g degrees, which is not a quarter or half turn: it was NOT applied (turning by it "
+                                 "resamples the frame), and every size, frame and region here is of the frame as coded, %s" % (info["rotation"], info["coded"]))
+    if info["video_streams"] > 1:
+        said["streams_note"] = ("the file has %d video streams and this tool reads the first (0:v:0) only: the others were not decoded, and a negative here "
+                                "says nothing about them" % info["video_streams"])
+    if info["attached_picture"]:
+        said["attached_picture_note"] = "the first video stream is an attached picture (cover art), not a recording: it holds one frame"
+    return said
 
 
 def stream_frames(argv, frame_bytes, on_frame, stderr_file):
     """Run a decoder that writes raw frames on its standard output and hand each to on_frame (False from it ends the run). Bounded all
-    the way: the tool's clock, and a program that has ended while something else holds its pipe is not waited on past PIPE_GRACE.
-    Returns {frames, exit, stopped: None | "clock" | "enough" | "pipe held"}."""
+    the way: the tool's clock, read before every frame; and from the moment the decoder has ended, its pipe is given PIPE_GRACE seconds
+    and POST_EXIT_BYTES bytes (what it wrote before it ended is at most a pipe's buffer), so a process it left behind that holds the pipe,
+    silent or writing, does not hold the tool. Returns {frames, exit, stopped: None | "clock" | "enough" | "pipe held", after_exit (the
+    frames whose last byte was read after the decoder had ended), left (bytes of a frame not whole)}."""
     proc = spawn(argv, stdout=subprocess.PIPE, stderr=stderr_file)
     ACTIVE.append(proc)
-    state = {"frames": 0, "exit": None, "stopped": None, "left": 0}
+    state = {"frames": 0, "exit": None, "stopped": None, "left": 0, "after_exit": 0}
     buffer = bytearray()
     fd = proc.stdout.fileno()
-    ended = None
+    ended, extra = None, 0
     try:
         while True:
             if out_of_time():
                 state["stopped"] = "clock"
                 break
+            if ended is None and proc.poll() is not None:
+                ended = time.monotonic()
+            if ended is not None and (time.monotonic() - ended >= PIPE_GRACE or extra >= POST_EXIT_BYTES):
+                state["stopped"] = "pipe held"
+                break
             ready = _select.select([fd], [], [], 0.25)[0]
             if not ready:
-                if proc.poll() is not None:
-                    ended = ended or time.monotonic()
-                    if time.monotonic() - ended >= PIPE_GRACE:
-                        state["stopped"] = "pipe held"
-                        break
                 continue
-            data = os.read(fd, 1 << 20)
+            data = os.read(fd, 1 << 20 if ended is None else min(1 << 20, POST_EXIT_BYTES - extra))
             if not data:
                 break
+            if ended is not None:
+                extra += len(data)
             buffer += data
-            while len(buffer) >= frame_bytes:
-                frame = bytes(buffer[:frame_bytes])
-                del buffer[:frame_bytes]
+            at = 0
+            while len(buffer) - at >= frame_bytes:
+                if out_of_time():
+                    state["stopped"] = "clock"
+                    break
+                frame = bytes(buffer[at:at + frame_bytes])
+                at += frame_bytes
                 state["frames"] += 1
+                if ended is not None:
+                    state["after_exit"] += 1
                 if on_frame(frame) is False:
                     state["stopped"] = "enough"
                     break
+            del buffer[:at]
             if state["stopped"]:
                 break
         if state["stopped"]:
@@ -1883,12 +1955,20 @@ def stream_frames(argv, frame_bytes, on_frame, stderr_file):
     return state
 
 
-class LogTimes:
-    """The presentation time of each output frame, from the showinfo lines the decoder writes to its log: {output index: seconds}. The log
-    is read on from where the last reading stopped, a line that is not whole yet waits for the next."""
+FRAME_SIZE = re.compile(rb" s:(\d+)x(\d+) ")
 
-    def __init__(self, path):
+
+class LogTimes:
+    """The presentation time and the size of each output frame, from the showinfo lines the decoder writes to its log: {output index:
+    seconds}, and the indexes whose line was read. The log is read on from where the last reading stopped, a line that is not whole yet
+    waits for the next. A line about an error is counted with the input's own name taken out of it first (a file named "missing" is no
+    error), and showinfo's own lines are never counted as one."""
+
+    def __init__(self, path, size, quiet=(), keep=20):
         self.path, self.at, self.times = path, 0, {}
+        self.size, self.quiet, self.keep = size, [q for q in quiet if q], keep
+        self.seen = set()                          # the output indexes whose showinfo line was read
+        self.other_size, self.other_first = 0, {}  # frames decoded at another size than the stream's: how many, and the first (index: "w x h")
         self.trouble, self.said = 0, []            # the decoder's own lines about errors: how many, and the first three
 
     def read(self):
@@ -1902,15 +1982,41 @@ class LogTimes:
                     self.at += len(line)
                     found = SHOWINFO.search(line)
                     if found:
+                        index = int(found.group(1))
+                        self.seen.add(index)
                         if found.group(3) != b"N/A":
-                            self.times[int(found.group(1))] = float(found.group(3))
-                    elif TROUBLE.search(line):
+                            self.times[index] = float(found.group(3))
+                        size = FRAME_SIZE.search(line)
+                        if size and (int(size.group(1)), int(size.group(2))) != self.size:
+                            self.other_size += 1
+                            if len(self.other_first) < self.keep:
+                                self.other_first[index] = "%s x %s" % (size.group(1).decode(), size.group(2).decode())
+                        continue
+                    if b"Parsed_showinfo" in line:
+                        continue
+                    for name in self.quiet:
+                        line = line.replace(name, b"")
+                    if TROUBLE.search(line):
                         self.trouble += 1
                         if len(self.said) < 3:
                             self.said.append(clean(line))
         except (OSError, ValueError):
             pass
         return self.times
+
+
+def quiet_names(video):
+    """The input's own names as the decoder prints them: taken out of a log line before it is judged as one about an error."""
+    target = target_of(video)
+    return [os.fsencode("file:" + target), os.fsencode(target), os.fsencode(video)]
+
+
+def held_after(state):
+    """The words on the frames read after the decoder had ended, while a process it left held its pipe."""
+    if not state["after_exit"]:
+        return ""
+    return (" (%d of the frames counted here were read after the decoder had ended, from a pipe a process it left behind still held: up to a pipe's "
+            "buffer of them are the decoder's last frames, the rest may not be the decoder's at all)" % state["after_exit"])
 
 
 def passthrough(ffmpeg):
@@ -1946,13 +2052,27 @@ def block_means(frame, width, height):
     return means
 
 
-class Sheets:
-    """Contact sheets: tiles left to right, top to bottom, the frame number and its time under each."""
+def tile_size(width, height, tile_width):
+    """The tile of a frame: (tile width, tile height, whether it keeps the frame's shape). It fits a box tile_width wide and TILE_BOX_HEIGHT
+    tile widths high, each side even and at least 2 pixels: a frame taller than the box is reduced to the box's height and narrowed with
+    it, and a side that would come out under 2 pixels is held at 2 (the tile then does not keep the shape)."""
+    box_h = TILE_BOX_HEIGHT * tile_width
+    tw, th = tile_width, max(2, int(round(height * tile_width / float(width) / 2.0)) * 2)
+    if th > box_h:
+        th = box_h
+        tw = max(2, int(round(width * box_h / float(height) / 2.0)) * 2)
+    exact = height * tw / float(width)            # the tile's height had it kept the shape at its width
+    return tw, th, abs(th - exact) <= max(1.0, 0.1 * exact)
 
-    def __init__(self, place, tile_width, tile_height, columns, rows):
-        self.place, self.tw, self.th, self.columns, self.rows = place, tile_width, tile_height, columns, rows
-        self.scale = 2 if tile_width >= 150 else 1
-        self.cell_w, self.cell_h = tile_width + 4, tile_height + 5 * self.scale + 8
+
+class Sheets:
+    """Contact sheets: tiles left to right, top to bottom, the frame number and its time under each. A cell is the box a tile fits in
+    (box_width wide); a tile narrower than its box sits at the box's left."""
+
+    def __init__(self, place, tile_width, tile_height, box_width, columns, rows):
+        self.place, self.tw, self.th, self.box, self.columns, self.rows = place, tile_width, tile_height, box_width, columns, rows
+        self.scale = 2 if box_width >= 150 else 1
+        self.cell_w, self.cell_h = box_width + 4, tile_height + 5 * self.scale + 8
         self.width, self.height = self.cell_w * columns, self.cell_h * rows
         self.names, self.count, self.first = [], 0, None
         self.canvas = None
@@ -1967,7 +2087,7 @@ class Sheets:
         stride = self.tw * 3
         for y in range(self.th):
             self.canvas[y0 + y][x0 * 3:(x0 + self.tw) * 3] = frame[y * stride:(y + 1) * stride]
-        label_width, label = label_rows(("%06d %s" % (number, stamp(seconds)))[:self.tw // (4 * self.scale)], self.scale)
+        label_width, label = label_rows(("%06d %s" % (number, stamp(seconds)))[:self.box // (4 * self.scale)], self.scale)
         for i, line in enumerate(label):
             self.canvas[y0 + self.th + 3 + i][x0 * 3:(x0 + label_width) * 3] = b"".join(b"\xff\xff\xff" if p else b"\x20\x20\x20" for p in line)
         self.count += 1
@@ -1984,28 +2104,35 @@ class Sheets:
             self.names.append({"sheet": shown, "first_frame": self.first, "last_frame": self.last})
         except OSError as exc:
             self.error = "a contact sheet could not be written (%s)" % describe(exc)
+        except Clock:
+            self.error = "%s was not written: the clock and the %d seconds an encoder is given past it ran out while it was encoded" % (name, FINISH_SECONDS)
         self.canvas = None
 
 
 def survey(args, video, info, ffmpeg, common, started):
-    every = int_param(args, "every", 1, 1, 100000)
-    start = int_param(args, "start_frame", 0, 0, 10 ** 9)
-    most = int_param(args, "max_frames", DEFAULT_FRAMES, 1, MAX_FRAMES)
-    tile_width = int_param(args, "tile_width", 160, 64, 480)
-    columns = int_param(args, "columns", 10, 1, 20)
-    rows = int_param(args, "rows", 6, 1, 20)
-    window = int_param(args, "window", 10, 2, 1000)
-    tile_width -= tile_width % 2
-    tile_height = max(2, int(round(info["height"] * tile_width / float(info["width"]) / 2.0)) * 2)
+    every = int_param(args, "every", 1, *RANGES["every"])
+    start = int_param(args, "start_frame", 0, *RANGES["start_frame"])
+    most = int_param(args, "max_frames", DEFAULT_FRAMES, *RANGES["max_frames"])
+    box_width = int_param(args, "tile_width", 160, *RANGES["tile_width"])
+    columns = int_param(args, "columns", 10, *RANGES["columns"])
+    rows = int_param(args, "rows", 6, *RANGES["rows"])
+    window = int_param(args, "window", 10, *RANGES["window"])
+    box_width -= box_width % 2
+    tile_width, tile_height, keeps_shape = tile_size(info["width"], info["height"], box_width)
+    sheet_bytes = (box_width + 4) * columns * (tile_height + 18) * rows * 3
+    if sheet_bytes > MAX_SHEET_BYTES:
+        raise Refused("a sheet of %d x %d tiles of %d x %d pixels is %d bytes, over the %d this tool holds at once: ask fewer columns or rows, or a smaller tile_width"
+                      % (columns, rows, tile_width, tile_height, sheet_bytes, MAX_SHEET_BYTES))
     place = Place("frame_survey")
     stderr_path = os.path.join(place.path, ".decoder.log")
     temp_hold(stderr_path)
     select = "select='gte(n\\,%d)*not(mod(n-%d\\,%d))'" % (start, start, every)
     keep_every_frame, decoder_version = passthrough(ffmpeg)
     common["decoder"]["version"] = decoder_version
-    argv = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "info", "-i", "file:" + target_of(video), "-map", "0:v:0", "-an", "-sn",
-            "-vf", "%s,showinfo,scale=%d:%d:flags=area" % (select, tile_width, tile_height), *keep_every_frame, "-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1"]
-    sheets = Sheets(place, tile_width, tile_height, columns, rows)
+    argv = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "info", *([] if info["autorotate"] else ["-noautorotate"]), "-i", "file:" + target_of(video),
+            "-map", "0:v:0", "-an", "-sn", "-vf", "%s,showinfo,scale=%d:%d:flags=area,setsar=1" % (select, tile_width, tile_height), *keep_every_frame,
+            "-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1"]
+    sheets = Sheets(place, tile_width, tile_height, box_width, columns, rows)
     blocks = GRID_COLUMNS * GRID_ROWS
     rate = info["rate"]
     pending = []                      # frames waiting for their time (the showinfo line is written a moment before the frame)
@@ -2032,7 +2159,7 @@ def survey(args, video, info, ffmpeg, common, started):
             drain()
         return kept_frames[0] < most
 
-    log_times = LogTimes(stderr_path)
+    log_times = LogTimes(stderr_path, (info["width"], info["height"]), quiet_names(video))
     times = log_times.times
 
     def drain():
@@ -2064,7 +2191,7 @@ def survey(args, video, info, ffmpeg, common, started):
     if state["stopped"] == "clock":
         skipped.append("every frame after frame %d (the tool's clock ran out): go on with start_frame %d" % (start + (decoded - 1) * every if decoded else start, start + decoded * every))
     if state["stopped"] == "pipe held":
-        reasons.append("the decoder ended but something it started kept its output pipe open: the end of the stream was not seen")
+        reasons.append("the decoder ended but something it started kept its output pipe open: the end of the stream was not seen%s" % held_after(state))
     if state["stopped"] is None and state["exit"] != 0:
         reasons.append("the decoder ended with exit code %s after %d frames: the stream is damaged or cut there, and what follows was not decoded" % (state["exit"], decoded))
     if log_times.trouble:
@@ -2073,6 +2200,10 @@ def survey(args, video, info, ffmpeg, common, started):
         reasons.append("the decoder's output ended inside a frame (%d bytes over)" % state["left"])
     if sheets.error:
         reasons.append(sheets.error)
+    whole_call = start == 0 and every == 1 and state["stopped"] is None and state["exit"] == 0
+    if whole_call and info["frames_said"] and decoded < info["frames_said"]:
+        reasons.append("the container lists %d frames and the decoder gave %d with no error: %d were not decoded (dropped by the decoder, or outside an "
+                       "edit list), so the frames here are not every frame the file holds" % (info["frames_said"], decoded, info["frames_said"] - decoded))
     reasons += ["not decoded: " + s for s in skipped]
     # The change scores. A frame's score is the share of blocks that changed from the frame before it. A cut changes most of the picture;
     # a local change (a caption, an overlay) changes a few blocks and, when it ends, changes the same blocks again.
@@ -2143,7 +2274,7 @@ def survey(args, video, info, ffmpeg, common, started):
     status = "failed" if decoded == 0 else "partial" if reasons else "complete"
     answer = {**common, "mode": "survey", "status": status, "complete": status == "complete",
               "frames_decoded": decoded, "frames_the_container_says": info["frames_said"], "first_frame": start, "last_frame": start + (decoded - 1) * every if decoded else None,
-              "every": every, "tile": "%d x %d" % (tile_width, tile_height), "sheets": len(sheets.names), "sheet_files": sheets.names[:40], "tiles_a_sheet": columns * rows,
+              "every": every, "tile": "%d x %d" % (tile_width, tile_height), "tile_keeps_shape": keeps_shape, "sheets": len(sheets.names), "sheet_files": sheets.names[:40], "tiles_a_sheet": columns * rows,
               "times": {"from_the_frames_own_presentation_time": timed, "from_frame_over_rate": decoded - timed, "rate": rate},
               "scores": {"what": "a frame's score is the share of %d x %d blocks whose mean moved by more than %d of 255 from the frame decoded before it" % (GRID_COLUMNS, GRID_ROWS, BLOCK_STEP),
                          "median": round(median, 4), "stands_out_from": round(floor, 4), "window_frames": window, "windows": len(windows)},
@@ -2151,7 +2282,14 @@ def survey(args, video, info, ffmpeg, common, started):
               "runs": runs[:50], "runs_total": len(runs),
               "local_changes_without_a_partner": {"count": len(unpaired), "frames": unpaired[:50], "what": "a local change with no matching change among the next 400 local changes, within 2000 decoded frames and before the next cut"},
               "windows_that_stand_out": [{"first_frame": w[0], "last_frame": w[1], "max_share_of_blocks_changed": round(w[2], 4)} for w in stand_out],
-              "files": files, "output_directory": place.shown, **({"decoder_said": errors} if errors else {})}
+              "files": files, "output_directory": place.shown, **({"decoder_said": errors} if errors else {}), **turned(info)}
+    if not keeps_shape:
+        answer["tile_note"] = ("a frame of %d x %d does not fit a tile %d wide and at most %d high with its shape: its tile is %d x %d, stretched, and a "
+                               "region read off it is of that stretched copy (region_native_pixels is of the frame)" % (info["width"], info["height"], box_width,
+                                                                                                                       TILE_BOX_HEIGHT * box_width, tile_width, tile_height))
+    if log_times.other_size:
+        answer["frames_of_another_size"] = {"count": log_times.other_size, "first": [{"frame": start + i * every, "size": v} for i, v in sorted(log_times.other_first.items())],
+                                            "what": "frames the decoder gave at another size than the stream's %d x %d (the stream changes size there): their tiles are scaled to the same tile, and a region in native pixels is of the stream's size" % (info["width"], info["height"])}
     if len(sheets.names) > 40:
         answer["sheet_files_more"] = "%d sheets in all, sheet-0001.png to sheet-%04d.png, %d tiles each in frame order" % (len(sheets.names), len(sheets.names), columns * rows)
     if skipped:
@@ -2168,8 +2306,8 @@ def survey(args, video, info, ffmpeg, common, started):
 
 
 def extract(args, video, info, ffmpeg, common):
-    first = int_param(args, "first", None, 0, 10 ** 9)
-    last = int_param(args, "last", None, 0, 10 ** 9)
+    first = int_param(args, "first", None, *RANGES["first"])
+    last = int_param(args, "last", None, *RANGES["last"])
     if first is None:
         raise Refused("mode extract takes first (and last): frame numbers as the survey prints them. " + RULES[2])
     last = first if last is None else last
@@ -2181,19 +2319,27 @@ def extract(args, video, info, ffmpeg, common):
     temp_hold(stderr_path)
     keep_every_frame, decoder_version = passthrough(ffmpeg)
     common["decoder"]["version"] = decoder_version
-    argv = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "info", "-i", "file:" + target_of(video), "-map", "0:v:0", "-an", "-sn",
-            "-vf", "select='between(n\\,%d\\,%d)',showinfo" % (first, last), *keep_every_frame, "-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1"]
+    # The frame's own size is read from showinfo, before the scale: a frame of the stream's size passes the scale untouched (the same bytes
+    # as without it), and one of another size (a stream that changes size, a turn the probe did not foresee) comes out at the size the
+    # frames are cut at, never misaligned, and is named. setsar only sets the aspect the raw output does not carry, so that the encoder
+    # writes no line about it.
+    argv = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "info", *([] if info["autorotate"] else ["-noautorotate"]), "-i", "file:" + target_of(video),
+            "-map", "0:v:0", "-an", "-sn", "-vf", "select='between(n\\,%d\\,%d)',showinfo,scale=%d:%d,setsar=1" % (first, last, width, height), *keep_every_frame,
+            "-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1"]
     written, total, problem = [], [0], [None]
     stride = width * 3
 
     def on_frame(frame):
         number = first + len(written)
         try:
-            data = png_bytes(width, height, [frame[y * stride:(y + 1) * stride] for y in range(height)], 3)
+            data = png_bytes(width, height, (frame[y * stride:(y + 1) * stride] for y in range(height)), 3)
             written.append({"frame": number, "file": place.write("frame-%06d.png" % number, data), "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()})
             total[0] += len(data)
         except OSError as exc:
             problem[0] = "a frame could not be written (%s)" % describe(exc)
+            return False
+        except Clock:
+            problem[0] = "frame %d was not written: the clock and the %d seconds an encoder is given past it ran out while it was encoded" % (number, FINISH_SECONDS)
             return False
         if total[0] > MAX_EXTRACT_BYTES:
             problem[0] = "the frames written passed %d bytes" % MAX_EXTRACT_BYTES
@@ -2206,13 +2352,19 @@ def extract(args, video, info, ffmpeg, common):
     except OSError as exc:
         temp_drop(stderr_path)
         raise Refused("the decoder could not be started (%s)" % describe(exc))
-    log_times = LogTimes(stderr_path)
+    log_times = LogTimes(stderr_path, (width, height), quiet_names(video), MAX_EXTRACT)
     times = log_times.read()
     temp_drop(stderr_path)
+    unconfirmed = []
     for index, row in enumerate(written):
         seconds = times.get(index, row["frame"] / info["rate"] if info["rate"] else None)
         row["time"] = stamp(seconds)
         row["time_from"] = "the frame's presentation time" if index in times else "frame / rate" if info["rate"] else "unknown"
+        if index in log_times.other_first:
+            row["native"] = False
+            row["decoded_size"] = log_times.other_first[index]
+        elif index not in log_times.seen:
+            unconfirmed.append(row["frame"])
     wanted = last - first + 1
     reasons = []
     if problem[0]:
@@ -2220,15 +2372,23 @@ def extract(args, video, info, ffmpeg, common):
     if state["stopped"] == "clock":
         reasons.append("the tool's clock ran out after %d of %d frames" % (len(written), wanted))
     if state["stopped"] == "pipe held":
-        reasons.append("the decoder ended but something it started kept its output pipe open")
+        reasons.append("the decoder ended but something it started kept its output pipe open%s" % held_after(state))
     if log_times.trouble:
         reasons.append("the decoder wrote %d line(s) about errors while it decoded: a frame written here may be damaged or concealed" % log_times.trouble)
+    if log_times.other_size:
+        reasons.append("%d frame(s) were decoded at another size than the stream's %d x %d and were scaled to it, so they are not at native size (native: false, "
+                       "decoded_size on each)" % (log_times.other_size, width, height))
+    if unconfirmed:
+        reasons.append("the decoder's own line for %d frame(s) (the first %d) was not read: their size was not confirmed" % (len(unconfirmed), unconfirmed[0]))
+    if state["left"] and state["stopped"] is None:
+        reasons.append("the decoder's output ended inside a frame (%d bytes over)" % state["left"])
     if len(written) < wanted and not reasons:
         reasons.append("the stream gave %d of the %d frames asked for: it ends at frame %d, or is damaged there" % (len(written), wanted, first + len(written) - 1))
     status = "failed" if not written else "partial" if reasons else "complete"
     answer = {**common, "mode": "extract", "status": status, "complete": status == "complete", "first": first, "last": last, "frames_written": len(written),
-              "size": "%d x %d (native)" % (width, height), "frames": written[:MAX_EXTRACT], "output_directory": place.shown,
-              "status_basis": ("every frame asked for (%d to %d) was decoded and written at native size as a PNG" % (first, last)) if status == "complete" else
+              "size": "%d x %d (native)" % (width, height), "frames": written[:MAX_EXTRACT], "output_directory": place.shown, **turned(info),
+              "status_basis": ("every frame asked for (%d to %d) was decoded and written at native size as a PNG, each frame's size confirmed by the decoder's own line"
+                               % (first, last)) if status == "complete" else
                               "%d of %d frames were written: %s" % (len(written), wanted, "; ".join(reasons))}
     if problem[0] and "could not be written" in problem[0]:
         answer["write_error"] = problem[0]
@@ -2404,8 +2564,8 @@ def main():
     args, unknown = read_args(KNOWN_PARAMS)
     mode = choice_param(args, "mode", "survey", MODES)
     seconds = int_param(args, "max_seconds", DEFAULT_SECONDS, 5, MAX_SECONDS)
-    for key in ("every", "start_frame", "max_frames", "tile_width", "columns", "rows", "window", "first", "last"):
-        int_param(args, key, None, 0, 10 ** 9)
+    for key, (low, high) in RANGES.items():
+        int_param(args, key, None, low, high)
     if args.get("video") is None:
         raise Refused("video is required: the path of a video file. " + RULES[0])
     video = path_param(args.get("video"), "video")
