@@ -432,7 +432,8 @@ await new Promise((r) => setTimeout(r, 20000));
   assert.equal(c.status, 99, c.stderr);
   const { svc } = service(S, { packDirs: [] });
   await svc.start();
-  const job = svc.jobs.get("j000001")!;
+  // Its seal is queued by the recovery, not waited for by the start.
+  const job = await until(svc, "j000001");
   assert.equal(job.state, "committed");
   assert.equal(job.status, "interrupted", "kept as interrupted, not retried");
   await svc.stop("over");

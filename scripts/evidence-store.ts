@@ -6,6 +6,9 @@
  *   <sandbox>.journal-anchor.json         the chain's head, out of every VM's reach
  *   <sandbox>/store/jobs/<id>/out/…       a job's committed outputs, read-only
  *   <sandbox>/store/jobs/<id>/manifest.json   every file: name bytes, size, sha256
+ *   <sandbox>/store/jobs/<id>/manifest.head.json, manifest.index.tsv
+ *                                         made from a large manifest, to find one file in it (manifest-index.ts)
+ *   <sandbox>/store/jobs/<id>/.seal-out/  a seal's own record while it runs (sealDirOf)
  *   <sandbox>/store/blobs/<sha256>        each file's bytes once (hard links)
  *   <sandbox>/store/imports/<id>/…        a brain's own output a finding cited (tool:, trace:), sealed by
  *                                         an import job and published here with its trace provenance
@@ -24,9 +27,13 @@
  */
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createReadStream, existsSync, readFileSync, realpathSync } from "node:fs";
-import { chmod, copyFile, link, lstat, mkdir, open, readdir, readFile, readlink, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { createReadStream, existsSync, readFileSync, realpathSync, type Stats } from "node:fs";
+import { chmod, copyFile, link, lstat, mkdir, open, readdir, readFile, readlink, rename, rm, stat, truncate, unlink, writeFile } from "node:fs/promises";
+import { availableParallelism } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
+import { Worker } from "node:worker_threads";
+import { buildIndex, INDEX_MIN_BYTES, manifestView, writeIndex, type IndexedFile, type ManifestView } from "./manifest-index.ts";
+import { SEAL_RECORD_BYTES, type SealWorkerData, type SealWorkerDone, type SealWorkerTask } from "./seal-worker.ts";
 import { jsonlLines, jsonlRecords } from "../extensions/jsonl-lines.ts";
 import { fileURLToPath } from "node:url";
 
@@ -280,10 +287,15 @@ async function walk(root: string): Promise<Walked[]> {
       else throw err;
       return;
     }
-    for (const name of names) {
-      const r = joinB(rel, name);
+    // Each name's lstat, a few at a time; what they found is read in the names' order.
+    const stats: Array<Stats | null> = [];
+    for (let i = 0; i < names.length; i += 32) {
+      stats.push(...(await Promise.all(names.slice(i, i + 32).map((name) => lstat(Buffer.concat([rootB, Buffer.from("/"), joinB(rel, name)])).catch(() => null)))));
+    }
+    for (let i = 0; i < names.length; i += 1) {
+      const r = joinB(rel, names[i]);
       const full = Buffer.concat([rootB, Buffer.from("/"), r]);
-      const st = await lstat(full).catch(() => null);
+      const st = stats[i];
       if (!st) {
         out.push({ rel: r, kind: "reject", how: "vanished while read" });
         continue;
@@ -314,77 +326,414 @@ async function copyTree(from: string, to: string, entries: Walked[]): Promise<vo
   }
 }
 
+/** How far a seal has got: what a job's status can show while its output is hashed. */
+export type SealProgress = {
+  job: string;
+  /** walk: the tree is being listed; move: into the store; hash: files_done of files_total; manifest: written and indexed; done. */
+  phase: "walk" | "move" | "hash" | "manifest" | "done";
+  files_done: number;
+  files_total: number;
+  bytes_done: number;
+  bytes_total: number;
+  /** Files an earlier, interrupted seal had hashed: taken from its record, not hashed again (counted in files_done). */
+  resumed_files: number;
+  /** Worker threads hashing (0: in this thread, a small tree). */
+  workers: number;
+  started_at: string;
+  at: string;
+};
+
+export type SealOptions = {
+  /** Called at each phase and a few times a second while hashing. */
+  onProgress?: (p: SealProgress) => void;
+  /** Worker threads to hash in; 0 hashes in this thread, one file after another. Default: the processors less one, at most SEAL_WORKERS_MAX. */
+  workers?: number;
+};
+
+export type Sealed = {
+  manifest: Manifest;
+  manifestSha256: string;
+  /** What this seal did: files hashed now, files taken from an interrupted seal's record, threads, time. */
+  seal: { files: number; hashed: number; resumed: number; workers: number; ms: number };
+};
+
+export const SEAL_WORKERS_MAX = 8;
+/** A tree smaller than both is hashed where the seal runs: starting threads would take longer. */
+export const SEAL_POOL_MIN_FILES = 256;
+export const SEAL_POOL_MIN_BYTES = 64 * 1024 * 1024;
+/** What one worker is handed at a time. */
+const SEAL_BATCH_FILES = 64;
+const SEAL_BATCH_BYTES = 32 * 1024 * 1024;
+
 /**
- * Seal a fenced job's staging directory into the store: links, devices,
- * FIFOs and sockets are recorded and left out (never followed); the tree is
- * moved (renamed, or copied when staging is on another file system) to
- * `dest`, every file hashed there — after its producer is gone, never live —
- * made read-only, and hard-linked to store/blobs/<sha256> so the same bytes
- * are kept once however many jobs produce them. The manifest names every
- * file by its exact bytes and a readable form.
+ * Where a seal keeps its own record while it runs, beside the tree it seals
+ * and gone when the manifest is written:
+ *
+ *   plan.json       the job, the attempt, a digest of the walk, what was left out (links, devices) before it was removed
+ *   modes.bin       each file's mode as the job left it (u16le, in walk order): the seal makes files read-only as it goes
+ *   w<k>.log        worker k's finished files (seal-worker.ts), what a seal that is run again does not hash again
+ *   progress.json   SealProgress, rewritten about twice a second (readSealProgress)
  */
-export async function sealTree(sandbox: string, staging: string, dest: string, job: string, attempt: number, manifestPath = join(dirname(dest), "manifest.json")): Promise<{ manifest: Manifest; manifestSha256: string }> {
-  const P = storePaths(sandbox);
-  const rootSt = await lstat(staging).catch(() => null);
-  if (!rootSt || !rootSt.isDirectory()) throw new Error(`the staging directory ${staging} is not a directory`);
-  const entries = await walk(staging);
-  const rejected: ManifestRejected[] = [];
-  for (const e of entries.filter((x) => x.kind === "reject")) {
-    rejected.push({ path: shownName(e.rel), path_b64: e.rel.toString("base64"), kind: e.how ?? "other", ...(e.link ? { link_b64: e.link.toString("base64"), link: shownName(e.link) } : {}) });
-    const p = Buffer.concat([Buffer.from(staging), Buffer.from("/"), e.rel]);
+export function sealDirOf(dest: string): string {
+  return join(dirname(dest), `.seal-${basename(dest)}`);
+}
+
+/** How far the seal of `dest` has got, from its record; null when none is running (or it runs in one thread: a small tree). */
+export async function readSealProgress(dest: string): Promise<SealProgress | null> {
+  try {
+    return JSON.parse(await readFile(join(sealDirOf(dest), "progress.json"), "utf8")) as SealProgress;
+  } catch {
+    return null;
+  }
+}
+
+type SealPlan = { v: 1; job: string; attempt: number; walk_sha256: string; files: number; bytes: number; copied: boolean; staging: string; moved: boolean; rejected: ManifestRejected[] };
+
+/**
+ * What a worker thread is started with: only the flags that say how a file
+ * of this repository is loaded. A process started by a test runner or with
+ * a string to run (node -e) carries flags a thread refuses, and they are
+ * not handed on.
+ */
+const WORKER_ARGV = (() => {
+  const out: string[] = [];
+  const argv = process.execArgv;
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i];
+    if (/^--(experimental-strip-types|experimental-transform-types|no-warnings)$/.test(a)) out.push(a);
+    else if (/^(--import|--loader|--experimental-loader|--conditions|-C|-r|--require)$/.test(a) && i + 1 < argv.length) out.push(a, argv[(i += 1)]);
+    else if (/^--(import|loader|experimental-loader|conditions|require)=/.test(a)) out.push(a);
+  }
+  return out;
+})();
+
+const breathe = () => new Promise<void>((ok) => setImmediate(ok));
+
+/** What a walk found, as one digest: the names, kinds and sizes a seal run again must find the same. */
+async function walkDigest(kept: Walked[]): Promise<string> {
+  const h = createHash("sha256");
+  for (let i = 0; i < kept.length; i += 1) {
+    const e = kept[i];
+    h.update(e.kind === "dir" ? "d" : "f");
+    h.update(e.rel);
+    h.update(`\0${e.kind === "file" ? e.bytes : ""}\n`);
+    if (i % 4096 === 4095) await breathe();
+  }
+  return h.digest("hex");
+}
+
+async function readPlan(dir: string, job: string, attempt: number): Promise<SealPlan | null> {
+  try {
+    const p = JSON.parse(await readFile(join(dir, "plan.json"), "utf8")) as SealPlan;
+    return p && p.v === 1 && p.job === job && p.attempt === attempt && Array.isArray(p.rejected) ? p : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writePlan(dir: string, plan: SealPlan, kept: Walked[] | null): Promise<void> {
+  await mkdir(dir, { recursive: true });
+  if (kept) {
+    const files = kept.filter((x) => x.kind === "file");
+    const modes = Buffer.alloc(files.length * 2);
+    for (let i = 0; i < files.length; i += 1) modes.writeUInt16LE((files[i].mode ?? 0o644) & 0xffff, i * 2);
+    await writeFile(join(dir, "modes.bin"), modes);
+  }
+  // Renamed into place: a plan is whole or it is not there.
+  const tmp = join(dir, `.plan.${process.pid}.tmp`);
+  await writeFile(tmp, `${JSON.stringify(plan)}\n`);
+  await rename(tmp, join(dir, "plan.json"));
+}
+
+async function readModes(dir: string, files: number): Promise<Buffer | null> {
+  const b = await readFile(join(dir, "modes.bin")).catch(() => null);
+  return b && b.length === files * 2 ? b : null;
+}
+
+function rejectedOf(e: Walked): ManifestRejected {
+  return { path: shownName(e.rel), path_b64: e.rel.toString("base64"), kind: e.how ?? "other", ...(e.link ? { link_b64: e.link.toString("base64"), link: shownName(e.link) } : {}) };
+}
+
+/** What an interrupted seal left out and removed, then what this walk found: each name once. */
+function mergeRejected(before: ManifestRejected[], now: ManifestRejected[]): ManifestRejected[] {
+  const seen = new Set(before.map((r) => r.path_b64));
+  return [...before, ...now.filter((r) => !seen.has(r.path_b64))];
+}
+
+async function removeRejected(root: string, entries: Walked[]): Promise<void> {
+  for (const e of entries) {
+    if (e.kind !== "reject") continue;
+    const p = Buffer.concat([Buffer.from(root), Buffer.from("/"), e.rel]);
     if (e.how?.startsWith("unreadable directory")) await rm(p, { recursive: true, force: true }).catch(() => undefined);
     else await unlink(p).catch(() => undefined);
   }
-  const kept = entries.filter((x) => x.kind !== "reject");
-  await mkdir(dirname(dest), { recursive: true });
-  let copied = false;
-  const stagingDev = (await stat(staging)).dev;
-  const destDev = (await stat(dirname(dest))).dev;
-  if (existsSync(dest)) throw new Error(`${dest} exists already`);
-  if (stagingDev === destDev) {
-    await rename(staging, dest);
-  } else {
-    await copyTree(staging, dest, kept);
-    copied = true;
+}
+
+/** A manifest written as JSON.stringify writes it, a piece at a time: a tree of 200,000 files is over 100 MB of it. */
+async function writeManifest(path: string, manifest: Manifest): Promise<string> {
+  const h = createHash("sha256");
+  const tmp = join(dirname(path), `.${basename(path)}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`);
+  const fh = await open(tmp, "w", 0o444);
+  try {
+    let part = "";
+    const flush = async () => {
+      if (!part) return;
+      h.update(part, "utf8");
+      await fh.write(part, null, "utf8");
+      part = "";
+    };
+    let first = true;
+    for (const [key, value] of Object.entries(manifest)) {
+      if (value === undefined) continue;
+      part += `${first ? "{" : ","}${JSON.stringify(key)}:`;
+      first = false;
+      if (Array.isArray(value)) {
+        part += "[";
+        for (let i = 0; i < value.length; i += 1) {
+          part += (i ? "," : "") + JSON.stringify(value[i]);
+          if (part.length >= 1 << 20) await flush();
+        }
+        part += "]";
+      } else part += JSON.stringify(value);
+    }
+    part += `${first ? "{" : ""}}\n`;
+    await flush();
+    await fh.sync();
+  } finally {
+    await fh.close();
   }
-  maybeCrash("seal:moved");
+  await rename(tmp, path);
+  return h.digest("hex");
+}
+
+/** Make a large manifest's head and index in a thread of its own (seal-worker.ts). */
+function indexInWorker(manifestPath: string): Promise<void> {
+  return new Promise<void>((ok, fail) => {
+    const w = new Worker(new URL("./seal-worker.ts", import.meta.url), { execArgv: WORKER_ARGV, workerData: { seal_worker: true, blobs: "", log: "", tmp: join(dirname(manifestPath), `.index-${process.pid}.tmp`) } satisfies SealWorkerData });
+    const end = (err?: Error) => {
+      void w.terminate();
+      if (err) fail(err);
+      else ok();
+    };
+    w.once("message", (m: SealWorkerDone) => end(m.error ? new Error(m.error) : undefined));
+    w.once("error", end);
+    w.once("exit", () => end(new Error("the index worker stopped")));
+    w.postMessage({ op: "index", id: 0, manifestPath } satisfies SealWorkerTask);
+  });
+}
+
+/**
+ * Hash, link and record a tree that is in the store already: the part of a
+ * seal after the move, and all of one that is run again. `plan` and the
+ * modes are on disk in sealDirOf(dest); what the worker logs there say was
+ * hashed by an interrupted seal is not hashed again.
+ */
+async function sealMoved(sandbox: string, dest: string, kept: Walked[], plan: SealPlan, modes: Buffer, manifestPath: string, opts: SealOptions, progress: SealProgress, started: number): Promise<Sealed> {
+  const P = storePaths(sandbox);
+  const dir = sealDirOf(dest);
   await mkdir(P.blobs, { recursive: true });
+  const fileEntries = kept.filter((x) => x.kind === "file");
+  const N = fileEntries.length;
+  const shaOf: Array<string | null> = new Array<string | null>(N).fill(null);
+  const sizeOf = new Float64Array(N);
+  const failed = new Map<number, string>();
+  const done = new Uint8Array(N);
+  // What an interrupted seal finished: a record whose place and size are a file of this walk.
+  let resumed = 0;
+  let resumedBytes = 0;
+  for (const name of (await readdir(dir).catch(() => [] as string[])).filter((n) => /^w\d+\.log$/.test(n)).sort()) {
+    const log = join(dir, name);
+    const b = await readFile(log).catch(() => Buffer.alloc(0));
+    const whole = Math.floor(b.length / SEAL_RECORD_BYTES);
+    for (let i = 0; i < whole; i += 1) {
+      const at = i * SEAL_RECORD_BYTES;
+      const ord = b.readUInt32LE(at);
+      const size = b.readDoubleLE(at + 4);
+      if (ord >= N || done[ord] || fileEntries[ord].bytes !== size) continue;
+      done[ord] = 1;
+      shaOf[ord] = b.toString("hex", at + 12, at + 44);
+      sizeOf[ord] = size;
+      resumed += 1;
+      resumedBytes += size;
+    }
+    // A record cut short by the kill: the next one must start on a boundary.
+    if (b.length % SEAL_RECORD_BYTES) await truncate(log, whole * SEAL_RECORD_BYTES).catch(() => undefined);
+  }
+  const pending: number[] = [];
+  let pendingBytes = 0;
+  for (let ord = 0; ord < N; ord += 1) {
+    if (done[ord]) continue;
+    pending.push(ord);
+    pendingBytes += fileEntries[ord].bytes ?? 0;
+  }
+  const want = opts.workers ?? Math.min(SEAL_WORKERS_MAX, Math.max(1, availableParallelism() - 1));
+  let width = want > 0 && (pending.length >= SEAL_POOL_MIN_FILES || pendingBytes >= SEAL_POOL_MIN_BYTES) ? Math.max(1, Math.min(Math.floor(want), Math.ceil(pending.length / SEAL_BATCH_FILES))) : 0;
+  // Where a thread cannot be started the files are hashed here: a seal does not fail for the want of one.
+  let workers: Worker[] = [];
+  try {
+    for (let k = 0; k < width; k += 1) workers.push(new Worker(new URL("./seal-worker.ts", import.meta.url), { execArgv: WORKER_ARGV, workerData: { seal_worker: true, blobs: P.blobs, log: join(dir, `w${k}.log`), tmp: join(dir, `t${k}`) } satisfies SealWorkerData }));
+  } catch {
+    await Promise.all(workers.map((w) => w.terminate()));
+    workers = [];
+    width = 0;
+  }
+  Object.assign(progress, { phase: "hash", files_total: N, bytes_total: plan.bytes, files_done: resumed, bytes_done: resumedBytes, resumed_files: resumed, workers: width });
+  // The readable record of how far it is: one write at a time, the last one awaited before the directory goes.
+  let lastTold = 0;
+  let writing: Promise<void> | null = null;
+  const tell = (force = false) => {
+    const now = Date.now();
+    if (!force && now - lastTold < 200) return;
+    lastTold = now;
+    progress.at = new Date(now).toISOString();
+    opts.onProgress?.({ ...progress });
+    if (width && !writing) {
+      const tmp = join(dir, ".progress.tmp");
+      writing = writeFile(tmp, `${JSON.stringify(progress)}\n`)
+        .then(() => rename(tmp, join(dir, "progress.json")))
+        .catch(() => undefined)
+        .finally(() => {
+          writing = null;
+        });
+    }
+  };
+  tell(true);
+  const full = (ord: number) => Buffer.concat([Buffer.from(dest), Buffer.from("/"), fileEntries[ord].rel]);
+  /** One file after another, in this thread: a small tree, or what the threads left when one of them failed. */
+  const inThread = async (list: number[]) => {
+    const tmp = join(dir, "t-main");
+    for (const ord of list) {
+      const p = full(ord);
+      await chmod(p, 0o644).catch(() => undefined);
+      let sha: string;
+      try {
+        sha = await sha256File(p);
+      } catch (err) {
+        failed.set(ord, (err as NodeJS.ErrnoException).code ?? "error");
+        continue;
+      }
+      const st = await stat(p);
+      await chmod(p, 0o444);
+      const blob = join(P.blobs, sha);
+      try {
+        await link(p, blob);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "EEXIST") {
+          // The same bytes are already kept (by an earlier file, or by another seal a moment ago):
+          // this occurrence becomes a link to them, put in place by a rename so the name is never missing.
+          try {
+            const keptBlob = await stat(blob);
+            if (keptBlob.size === st.size && keptBlob.ino !== st.ino) {
+              await unlink(tmp).catch(() => undefined);
+              await link(blob, tmp);
+              await rename(tmp, p);
+            }
+          } catch {
+            // A blob with no room for another link: the occurrence stays its own copy.
+            await unlink(tmp).catch(() => undefined);
+          }
+        }
+        // A file system without hard links keeps the occurrence as its own copy.
+      }
+      shaOf[ord] = sha;
+      sizeOf[ord] = st.size;
+      progress.files_done += 1;
+      progress.bytes_done += st.size;
+      tell();
+    }
+  };
+  if (width === 0) await inThread(pending);
+  else {
+    let cursor = 0;
+    let batches = 0;
+    const next = (): SealWorkerTask | null => {
+      if (cursor >= pending.length) return null;
+      const rels: string[] = [];
+      const ords: number[] = [];
+      for (let bytes = 0; cursor < pending.length && rels.length < SEAL_BATCH_FILES && (bytes < SEAL_BATCH_BYTES || !rels.length); cursor += 1) {
+        const ord = pending[cursor];
+        rels.push(fileEntries[ord].rel.toString("latin1"));
+        ords.push(ord);
+        bytes += fileEntries[ord].bytes ?? 0;
+      }
+      batches += 1;
+      return { op: "hash", id: batches, root: dest, rels, ords };
+    };
+    let over = false;
+    let broken = false;
+    // Tests only: SWARM_JOB_CRASH_AT=seal:hashed:<n> stops the process once n files are hashed.
+    const crashAt = Number(/^seal:hashed:(\d+)$/.exec(process.env.SWARM_JOB_CRASH_AT ?? "")?.[1] ?? 0);
+    try {
+      await new Promise<void>((ok, fail) => {
+        let active = 0;
+        const give = (w: Worker) => {
+          const task = next();
+          if (!task) {
+            if (!active) ok();
+            return;
+          }
+          active += 1;
+          w.postMessage(task);
+        };
+        for (const w of workers) {
+          w.on("message", (m: SealWorkerDone) => {
+            if (m.error || !m.done) return fail(new Error(`the seal of ${dest} failed: ${m.error ?? "a worker answered nothing"}`));
+            for (const [ord, sha, x] of m.done) {
+              if (sha === null) failed.set(ord, String(x));
+              else {
+                shaOf[ord] = sha;
+                sizeOf[ord] = Number(x);
+                progress.bytes_done += Number(x);
+              }
+              progress.files_done += 1;
+            }
+            active -= 1;
+            tell();
+            if (crashAt && progress.files_done >= crashAt) maybeCrash(`seal:hashed:${crashAt}`);
+            give(w);
+          });
+          w.on("error", (err) => fail(new Error(`the seal of ${dest} failed: ${err.message}`)));
+          w.on("exit", (code) => {
+            if (!over) fail(new Error(`the seal of ${dest} failed: a worker stopped (exit ${code})`));
+          });
+          give(w);
+        }
+      });
+    } catch {
+      // A thread failed (it could not load, or it died): what the threads did not finish is hashed here,
+      // and an error that is the tree's own is met again, and thrown, there.
+      broken = true;
+    } finally {
+      over = true;
+      await Promise.all(workers.map((w) => w.terminate()));
+    }
+    if (broken) await inThread(pending.filter((ord) => shaOf[ord] === null && !failed.has(ord)));
+  }
+  // The manifest's lists, in the order the tree was walked.
   const files: ManifestFile[] = [];
   const dirs: Array<{ path: string; path_b64: string }> = [];
+  const rejected = [...plan.rejected];
   let total = 0;
-  for (const e of kept) {
-    const full = Buffer.concat([Buffer.from(dest), Buffer.from("/"), e.rel]);
+  let ord = 0;
+  for (let i = 0; i < kept.length; i += 1) {
+    const e = kept[i];
+    if (i % 2048 === 2047) await breathe();
     if (e.kind === "dir") {
       dirs.push({ path: shownName(e.rel), path_b64: e.rel.toString("base64") });
       continue;
     }
-    await chmod(full, 0o644).catch(() => undefined);
-    let sha: string;
-    try {
-      sha = await sha256File(full);
-    } catch (err) {
-      rejected.push({ path: shownName(e.rel), path_b64: e.rel.toString("base64"), kind: `unreadable file (${(err as NodeJS.ErrnoException).code ?? "error"})` });
+    const at = ord;
+    ord += 1;
+    const sha = shaOf[at];
+    if (sha === null) {
+      rejected.push({ path: shownName(e.rel), path_b64: e.rel.toString("base64"), kind: `unreadable file (${failed.get(at) ?? "error"})` });
       continue;
     }
-    const st = await stat(full);
-    await chmod(full, 0o444);
-    const blob = join(P.blobs, sha);
-    try {
-      if (existsSync(blob)) {
-        // The same bytes are already kept: this occurrence becomes a link to them.
-        if ((await stat(blob)).size === st.size && (await stat(blob)).ino !== st.ino) {
-          await unlink(full);
-          await link(blob, full);
-        }
-      } else {
-        await link(full, blob);
-      }
-    } catch {
-      // A file system without hard links keeps the occurrence as its own copy.
-    }
-    files.push({ path: shownName(e.rel), path_b64: e.rel.toString("base64"), bytes: st.size, sha256: sha, mode: (e.mode ?? 0o644).toString(8) });
-    total += st.size;
+    files.push({ path: shownName(e.rel), path_b64: e.rel.toString("base64"), bytes: sizeOf[at], sha256: sha, mode: modes.readUInt16LE(at * 2).toString(8) });
+    total += sizeOf[at];
   }
+  progress.phase = "manifest";
+  tell(true);
   // Directories read-only from the deepest up.
   for (const e of [...kept].filter((x) => x.kind === "dir").reverse()) {
     await chmod(Buffer.concat([Buffer.from(dest), Buffer.from("/"), e.rel]), 0o555).catch(() => undefined);
@@ -392,32 +741,128 @@ export async function sealTree(sandbox: string, staging: string, dest: string, j
   await chmod(dest, 0o555);
   const manifest: Manifest = {
     v: 1,
-    job,
-    attempt,
+    job: plan.job,
+    attempt: plan.attempt,
     sealed_at: new Date().toISOString(),
     files,
     dirs,
     rejected,
     totals: { files: files.length, bytes: total },
-    ...(copied ? { copied: true as const } : {}),
+    ...(plan.copied ? { copied: true as const } : {}),
   };
-  // Compact: a materialised tree of a hundred thousand files is read back
-  // whenever one of them is cited.
-  const text = `${JSON.stringify(manifest)}\n`;
-  await writeDurable(manifestPath, text, 0o444);
-  if (copied) await rm(staging, { recursive: true, force: true }).catch(() => undefined);
-  return { manifest, manifestSha256: sha256Hex(text) };
+  // Compact, and written a piece at a time: the same bytes JSON.stringify gives.
+  const manifestSha256 = await writeManifest(manifestPath, manifest);
+  // Its head and index (manifest-index.ts), where it is large enough to have them: made from the manifest,
+  // and made again by whoever finds them missing.
+  try {
+    const st = await stat(manifestPath);
+    if (st.size >= INDEX_MIN_BYTES) {
+      if (width) await indexInWorker(manifestPath);
+      else await writeIndex(manifestPath, buildIndex(manifest, { sha256: manifestSha256, bytes: st.size, mtime_ms: st.mtimeMs }));
+    }
+  } catch {
+    // made when first asked for
+  }
+  if (plan.copied && plan.staging) await rm(plan.staging, { recursive: true, force: true }).catch(() => undefined);
+  if (writing) await writing;
+  await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  progress.phase = "done";
+  progress.at = new Date().toISOString();
+  opts.onProgress?.({ ...progress });
+  return { manifest, manifestSha256, seal: { files: N, hashed: pending.length, resumed, workers: width, ms: Date.now() - started } };
 }
 
-/** A tree already moved into the store (a crash after the move): hash it again and write its manifest. */
-export async function resealMoved(sandbox: string, dest: string, job: string, attempt: number, manifestPath = join(dirname(dest), "manifest.json")): Promise<{ manifest: Manifest; manifestSha256: string }> {
-  // Make it writable again so the same seal can run over it in place.
+function sealProgress(job: string): SealProgress {
+  const at = new Date().toISOString();
+  return { job, phase: "walk", files_done: 0, files_total: 0, bytes_done: 0, bytes_total: 0, resumed_files: 0, workers: 0, started_at: at, at };
+}
+
+/**
+ * Seal a fenced job's staging directory into the store: links, devices,
+ * FIFOs and sockets are recorded and left out (never followed); the tree is
+ * moved (renamed, or copied when staging is on another file system) to
+ * `dest`, every file hashed there — after its producer is gone, never live —
+ * made read-only, and hard-linked to store/blobs/<sha256> so the same bytes
+ * are kept once however many jobs produce them. The manifest names every
+ * file by its exact bytes and a readable form, in the order the tree was
+ * walked, whatever order the files were hashed in.
+ *
+ * A tree of any size is hashed in worker threads (seal-worker.ts), so the
+ * process that seals keeps answering; a seal that is killed leaves its
+ * record beside the tree (sealDirOf), and `resealMoved` goes on from it.
+ */
+export async function sealTree(sandbox: string, staging: string, dest: string, job: string, attempt: number, manifestPath = join(dirname(dest), "manifest.json"), opts: SealOptions = {}): Promise<Sealed> {
+  const started = Date.now();
+  const rootSt = await lstat(staging).catch(() => null);
+  if (!rootSt || !rootSt.isDirectory()) throw new Error(`the staging directory ${staging} is not a directory`);
+  const progress = sealProgress(job);
+  opts.onProgress?.({ ...progress });
+  const entries = await walk(staging);
+  await mkdir(dirname(dest), { recursive: true });
+  if (existsSync(dest)) throw new Error(`${dest} exists already`);
+  const kept = entries.filter((x) => x.kind !== "reject");
+  const files = kept.filter((x) => x.kind === "file");
+  const dir = sealDirOf(dest);
+  const walked = await walkDigest(kept);
+  // A seal of this tree that stopped before the move: what it left out is in its plan, and gone from the tree.
+  let before = await readPlan(dir, job, attempt);
+  if (before && (before.walk_sha256 !== walked || !(await readModes(dir, files.length)))) before = null;
+  if (!before) await rm(dir, { recursive: true, force: true });
+  const copied = (await stat(staging)).dev !== (await stat(dirname(dest))).dev;
+  const plan: SealPlan = { v: 1, job, attempt, walk_sha256: walked, files: files.length, bytes: files.reduce((a, e) => a + (e.bytes ?? 0), 0), copied, staging: resolve(staging), moved: false, rejected: mergeRejected(before?.rejected ?? [], entries.filter((x) => x.kind === "reject").map(rejectedOf)) };
+  // The plan first: what is removed next is on record before it is gone.
+  await writePlan(dir, plan, before ? null : kept);
+  await removeRejected(staging, entries);
+  Object.assign(progress, { phase: "move", files_total: plan.files, bytes_total: plan.bytes });
+  opts.onProgress?.({ ...progress });
+  if (copied) await copyTree(staging, dest, kept);
+  else await rename(staging, dest);
+  plan.moved = true;
+  await writePlan(dir, plan, null);
+  maybeCrash("seal:moved");
+  const modes = (await readModes(dir, files.length)) ?? Buffer.alloc(files.length * 2);
+  return sealMoved(sandbox, dest, kept, plan, modes, manifestPath, opts, progress, started);
+}
+
+/**
+ * A tree already moved into the store (a crash after the move): seal it
+ * where it stands. With the interrupted seal's record beside it, only the
+ * files that seal had not finished are hashed, and the manifest is the one
+ * it would have written; without one (a seal from before the record
+ * existed) every file is hashed, and a file's mode is what it has now.
+ */
+export async function resealMoved(sandbox: string, dest: string, job: string, attempt: number, manifestPath = join(dirname(dest), "manifest.json"), opts: SealOptions = {}): Promise<Sealed> {
+  const started = Date.now();
+  const dir = sealDirOf(dest);
+  const before = await readPlan(dir, job, attempt);
+  if (before && before.copied && !before.moved && before.staging && existsSync(before.staging)) {
+    // A copy cut short: the store holds part of the tree, and the whole of it is still where it was.
+    await rm(dest, { recursive: true, force: true });
+    return sealTree(sandbox, before.staging, dest, job, attempt, manifestPath, opts);
+  }
+  const progress = sealProgress(job);
+  opts.onProgress?.({ ...progress });
+  // The walk opens every directory up again; the files are opened up as they are hashed.
   const entries = await walk(dest);
-  await chmod(dest, 0o755).catch(() => undefined);
-  for (const e of entries) await chmod(Buffer.concat([Buffer.from(dest), Buffer.from("/"), e.rel]), e.kind === "dir" ? 0o755 : 0o644).catch(() => undefined);
-  const tmp = `${dest}.reseal`;
-  await rename(dest, tmp);
-  return sealTree(sandbox, tmp, dest, job, attempt, manifestPath);
+  await removeRejected(dest, entries);
+  const kept = entries.filter((x) => x.kind !== "reject");
+  const files = kept.filter((x) => x.kind === "file");
+  const walked = await walkDigest(kept);
+  const found = entries.filter((x) => x.kind === "reject").map(rejectedOf);
+  let plan: SealPlan;
+  let modes = before && before.walk_sha256 === walked ? await readModes(dir, files.length) : null;
+  if (before && modes) {
+    plan = { ...before, moved: true, rejected: mergeRejected(before.rejected, found) };
+    await writePlan(dir, plan, null);
+  } else {
+    // Nothing to go on from: every file again, the modes as they are now.
+    const keep = before ? { rejected: before.rejected, copied: before.copied, staging: before.staging } : { rejected: [], copied: false, staging: "" };
+    await rm(dir, { recursive: true, force: true });
+    plan = { v: 1, job, attempt, walk_sha256: walked, files: files.length, bytes: files.reduce((a, e) => a + (e.bytes ?? 0), 0), copied: keep.copied, staging: keep.staging, moved: true, rejected: mergeRejected(keep.rejected, found) };
+    await writePlan(dir, plan, kept);
+    modes = (await readModes(dir, files.length)) ?? Buffer.alloc(files.length * 2);
+  }
+  return sealMoved(sandbox, dest, kept, plan, modes, manifestPath, opts, progress, started);
 }
 
 export async function readManifest(path: string): Promise<{ manifest: Manifest; sha256: string } | null> {
@@ -427,6 +872,67 @@ export async function readManifest(path: string): Promise<{ manifest: Manifest; 
   } catch {
     return null;
   }
+}
+
+/**
+ * A sealed manifest asked a file or a directory at a time, from its head
+ * and index (manifest-index.ts) and never the manifest whole: what a ref, a
+ * declared input and a job's status need. What verifies a store reads the
+ * manifest itself (`readManifest`).
+ */
+export function manifestOf(manifestPath: string): Promise<ManifestView | null> {
+  return manifestView(manifestPath, indexInWorker);
+}
+
+/**
+ * The file of a sealed manifest a name names: its shown path, or its name's
+ * bytes read as UTF-8 (the two differ where a name holds a backslash or a
+ * control character); the earliest in the manifest when several do.
+ */
+export async function manifestFile(manifestPath: string, view: ManifestView, names: readonly string[]): Promise<IndexedFile | null> {
+  const hit = await view.file(names.flatMap((w) => [w, shownName(Buffer.from(w, "utf8"))]));
+  if (hit || !view.head.odd_names || !names.some((w) => w.includes("�"))) return hit;
+  // A name that is not UTF-8, cited as UTF-8 reads it: only the manifest holds its bytes.
+  const whole = await readManifest(manifestPath);
+  const n = whole ? whole.manifest.files.findIndex((x) => names.some((w) => x.path === w || Buffer.from(x.path_b64, "base64").toString("utf8") === w)) : -1;
+  return whole && n >= 0 ? { ...whole.manifest.files[n], n } : null;
+}
+
+/**
+ * The files of a sealed manifest whose names are nearest to one that is not
+ * in it: those with the same last name anywhere in the tree and those in the
+ * same directory, by edit distance. Read from the index as a stream.
+ */
+export async function manifestNearNames(manifestPath: string, want: string, n = 5): Promise<string[]> {
+  const view = await manifestOf(manifestPath);
+  if (!view) return [];
+  const base = (x: string) => x.slice(x.lastIndexOf("/") + 1).toLowerCase();
+  const wantBase = base(want);
+  const wantDir = want.includes("/") ? want.slice(0, want.lastIndexOf("/") + 1).toLowerCase() : "";
+  const same: string[] = [];
+  const beside: string[] = [];
+  for await (const rows of view.files()) for (const f of rows) {
+    const b = base(f.path);
+    if (b === wantBase) {
+      if (same.length < 200) same.push(f.path);
+    } else if (beside.length < 500 && f.path.length - b.length === wantDir.length && f.path.slice(0, wantDir.length).toLowerCase() === wantDir) beside.push(f.path);
+  }
+  const dist = (a: string, b: string) => {
+    a = a.slice(-200);
+    b = b.slice(-200);
+    let row = Array.from({ length: b.length + 1 }, (_, i) => i);
+    for (let i = 1; i <= a.length; i += 1) {
+      const next = [i];
+      for (let j = 1; j <= b.length; j += 1) next.push(Math.min(row[j] + 1, next[j - 1] + 1, row[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)));
+      row = next;
+    }
+    return row[b.length];
+  };
+  const w = want.toLowerCase();
+  return [...same.map((x) => ({ x, d: dist(x.toLowerCase(), w) })), ...beside.map((x) => ({ x, d: 1000 + dist(x.toLowerCase(), w) }))]
+    .sort((a, b) => a.d - b.d)
+    .slice(0, n)
+    .map((r) => r.x);
 }
 
 // --- object references -------------------------------------------------------------
@@ -522,7 +1028,9 @@ export async function resolveRef(sandbox: string, ref: string, opts: ResolveOpti
     const id = slash < 0 ? value : value.slice(0, slash);
     const rel = slash < 0 ? "" : value.slice(slash + 1);
     if (!/^[a-z0-9-]{1,64}$/.test(id)) return { ok: false, ref, reason: `${id} is not a ${kind} id` };
-    const found = await readManifest(join(kind === "job" ? P.jobs : P.imports, id, "manifest.json"));
+    // Asked of the manifest's head and index: a manifest of 200,000 files is not read for one of them.
+    const manifestPath = join(kind === "job" ? P.jobs : P.imports, id, "manifest.json");
+    const found = await manifestOf(manifestPath);
     if (!found) {
       // A job that ran and waits for its seal is not a job that left nothing: say which, so the seat waits instead of re-running it.
       const state = kind === "job" ? await readFile(join(P.jobs, id, "job.json"), "utf8").then((t) => String((JSON.parse(t) as { state?: unknown }).state ?? "")).catch(() => "") : "";
@@ -533,7 +1041,7 @@ export async function resolveRef(sandbox: string, ref: string, opts: ResolveOpti
     // A job's own outcome travels with what it left: a failed job's kept output is citable, and said to be.
     const status = kind === "job" ? await jobStatus(join(P.jobs, id)) : undefined;
     const st0 = status ? { status } : {};
-    if (!rel) return { ok: true, ref, kind, path: `${base}/out`, bytes: found.manifest.totals.bytes, ...st0 };
+    if (!rel) return { ok: true, ref, kind, path: `${base}/out`, bytes: found.head.totals.bytes, ...st0 };
     // A job's logs are sealed beside its output (their sha256 in its
     // job_committed line): stdout.log, stderr.log and pip's lists.
     if (kind === "job" && /^(stdout\.log|stderr\.log|pip-before\.txt|pip-after\.txt)$/.test(rel)) {
@@ -549,7 +1057,7 @@ export async function resolveRef(sandbox: string, ref: string, opts: ResolveOpti
     }
     // The path as the store shows it (out/…) is the same file.
     const want = rel.startsWith("out/") ? [rel, rel.slice(4)] : [rel];
-    const f = found.manifest.files.find((x) => want.some((w) => x.path === w || Buffer.from(x.path_b64, "base64").toString("utf8") === w));
+    const f = await manifestFile(manifestPath, found, want);
     return f ? { ok: true, ref, kind, sha256: f.sha256, bytes: f.bytes, path: `${base}/out/${f.path}`, ...st0 } : { ok: false, ref, reason: `${rel} is not in ${kind} ${id}'s manifest` };
   }
   if (kind === "net") {

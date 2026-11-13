@@ -159,7 +159,8 @@ test("tools match by name, with the same arguments ranked first; independent: tr
   assert.equal(line.independent, true, "the reproduction is said on the journal");
   assert.equal((journal(S).find((l) => l.type === "job_accepted" && l.job === c.job.id)!.spec as { independent?: boolean }).independent, true);
   assert.match(String(similarView(c.job.id, c.similar!, true).similar_note), /independent reproduction/);
-  const d = ok(await svc.submit("a4", { kind: "tool", tool: "writer", args: { output: "{OUT}/w.txt", text: "one" }, inputs: ["input:notes.txt"] }));
+  // Other arguments: the identical call would be answered with the job under way (tests/job-stages.test.ts), and say nothing of the others.
+  const d = ok(await svc.submit("a4", { kind: "tool", tool: "writer", args: { output: "{OUT}/w.txt", text: "three" }, inputs: ["input:notes.txt"] }));
   assert.equal(d.similar?.find((x) => x.job === c.job.id)?.independent, true, "a reproduction is named as one to the next seat");
   assert.equal((await jobView(S, c.job)).independent, true);
   // Only a command or a tool is a reproduction: an import says nothing of it.
