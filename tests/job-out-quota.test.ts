@@ -13,6 +13,9 @@ test("$OUT's quota is the free room less what the service keeps free, never belo
   assert.equal(outQuotaMb(300_000, 4096, {}), 295_904, "the disk's room, less the service's reserve");
   assert.equal(outQuotaMb(6000, 4096, {}), 4096, "never below what a job could write before");
   assert.equal(outQuotaMb(null, 4096, {}), 4096, "room unknown: the default");
+  assert.equal(outQuotaMb(300_000, 4096, {}, 3), 98_634, "three jobs that write at once share the room");
+  assert.equal(outQuotaMb(10_000, 4096, {}, 3), 4096, "a share is never below the default");
+  assert.equal(outQuotaMb(300_000, 4096, {}, 0), 295_904, "a count that is no count is one");
   assert.equal(outQuotaMb(300_000, 4096, { SWARM_JOB_OUT_QUOTA_MB: "20000" }), 20_000);
   assert.equal(outQuotaMb(300_000, 4096, { SWARM_JOB_OUT_QUOTA_MB: "nope" }), 295_904);
 });

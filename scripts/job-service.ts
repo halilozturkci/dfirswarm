@@ -669,13 +669,18 @@ export const MSB_DEFAULT_QUOTA_MB = 4096;
 /**
  * The write quota of a job's $OUT, in MiB: `SWARM_JOB_OUT_QUOTA_MB` when set,
  * else the room free where it is kept less the room the service keeps free,
- * and never below microsandbox's default (a job could write that much before).
+ * shared among the jobs that write at once (`sharers`: this job and every
+ * other that runs), and never below microsandbox's default
+ * (a job could write that much before). Each job used to be given all the
+ * free room: three whole-image extractions of one run were promised the same
+ * 64 GB, and the disk stood at 94%.
  */
-export function outQuotaMb(free: number | null, minFreeMb: number, env: NodeJS.ProcessEnv = process.env): number {
+export function outQuotaMb(free: number | null, minFreeMb: number, env: NodeJS.ProcessEnv = process.env, sharers = 1): number {
   const set = Number(env.SWARM_JOB_OUT_QUOTA_MB);
   if (Number.isFinite(set) && set > 0) return Math.floor(set);
   if (free === null) return MSB_DEFAULT_QUOTA_MB;
-  return Math.max(MSB_DEFAULT_QUOTA_MB, Math.floor(free - minFreeMb));
+  const n = Number.isFinite(sharers) && sharers >= 1 ? Math.floor(sharers) : 1;
+  return Math.max(MSB_DEFAULT_QUOTA_MB, Math.floor((free - minFreeMb) / n));
 }
 
 export class JobService {
@@ -1620,7 +1625,7 @@ export class JobService {
     for (const pack of this.o.packDirs) if (existsSync(pack)) tail.push({ host: pack, guest: pack, readonly: true });
     // $OUT's write quota: what the disk holds beyond the room the service keeps free, never below microsandbox's own default (4 GiB),
     // which stopped whole-image extractions part way through a file (outQuotaMb).
-    tail.push({ host: st.out, guest: this.outPath(job), noexec: true, quota_mb: outQuotaMb(freeMb(st.out), this.o.minFreeMb) });
+    tail.push({ host: st.out, guest: this.outPath(job), noexec: true, quota_mb: outQuotaMb(freeMb(st.out), this.o.minFreeMb, process.env, this.stagingSharers(job.id)) });
     tail.push({ host: st.ctl, guest: "/job", noexec: true });
     const accessOf = (list: Array<Mount & { note?: string }>) => list.map((m) => ({ path: m.guest ?? m.host, access: `${m.readonly ? "read-only" : "read-write"}${m.noexec ? ", no-exec" : ""}${m.quota_mb ? `, writes up to ${m.quota_mb} MiB` : ""}${m.note ? `; ${m.note}` : ""}` }));
     const strip = (list: Array<Mount & { note?: string }>) => list.map(({ note: _note, ...m }) => m);
@@ -3221,6 +3226,13 @@ export class JobService {
     const out: string[] = [];
     for await (const rows of view.files()) for (const f of rows) out.push(f.sha256);
     return out;
+  }
+
+  /** The jobs that may still write at once: this one and every other that runs (what an ended job wrote is already out of the free room). */
+  private stagingSharers(id: string): number {
+    let n = 1;
+    for (const j of this.jobs.values()) if (j.id !== id && j.state === "running") n += 1;
+    return n;
   }
 
   /** The kickoff's plan: every recipe the census found applies, run once the hub is up. */
