@@ -76,6 +76,7 @@ IDLE_SEC="${SWARM_IDLE_SEC:-180}"
 NEWS_SEC="${SWARM_NEWS_SEC:-45}"
 WAIT_IDLE_SEC="${SWARM_WAIT_IDLE_SEC:-600}"
 COMPACT_STALL_SEC="${SWARM_COMPACT_STALL_SEC:-1200}"
+COMPACT_GRACE_SEC="${SWARM_COMPACT_GRACE_SEC:-300}"
 CALL_STALL_SEC="${SWARM_CALL_STALL_SEC:-2400}"
 # How recent an agent's last wait must be for it to be waiting still: the
 # wait tool's longest call (WAIT_MAX_SECONDS, 300) and two minutes for the
@@ -103,6 +104,7 @@ while [[ $# -gt 0 ]]; do
     --news-sec) NEWS_SEC="$2"; shift 2 ;;
     --wait-idle-sec) WAIT_IDLE_SEC="$2"; shift 2 ;;
     --compact-stall-sec) COMPACT_STALL_SEC="$2"; shift 2 ;;
+    --compact-grace-sec) COMPACT_GRACE_SEC="$2"; shift 2 ;;
     --call-stall-sec) CALL_STALL_SEC="$2"; shift 2 ;;
     --interval) INTERVAL="$2"; shift 2 ;;
     --max-nudges) MAX_NUDGES="$2"; shift 2 ;;
@@ -160,7 +162,11 @@ last_turn() { # <agent id>
 }
 
 # Each agent's clocks, one line each, from one read of the trace:
-#   <id> <idle> <busy> <waiting> <compacting since>
+#   <id> <idle> <busy> <waiting> <compacting since> <compaction ended>
+# compaction ended: seconds since its last compaction ended, -1 for none. A
+# seat just out of one has not ended its turn: its hand-off is on its way, and
+# it is not told "you ended your turn" for COMPACT_GRACE_SEC (37 of 37 such
+# prompts in four runs followed a compaction; no seat had ended a turn).
 # idle: seconds since it last did anything (its Pi session files, which Pi
 # appends to on every message, or its last trace row, whichever is newer), -1
 # when nothing is known. A prompt arriving is not the agent doing anything:
@@ -189,7 +195,7 @@ BOOKKEEPING = {
 }
 WAITING = {"wait", "inbox"}
 now = time.time()
-seen = {a: {"last": 0.0, "first": 0.0, "work": 0.0, "wait": 0.0, "compact": 0.0} for a in ids}
+seen = {a: {"last": 0.0, "first": 0.0, "work": 0.0, "wait": 0.0, "compact": 0.0, "ended": 0.0} for a in ids}
 try:
     with open(os.path.join(sandbox, "traces", "events.jsonl"), "rb") as fh:
         for raw in fh:
@@ -216,6 +222,7 @@ try:
                 s["compact"] = at
             elif tool == "compact_done" or (tool == "compact_failed" and stage in ("compaction", "pi")):
                 s["compact"] = 0.0
+                s["ended"] = at
             if tool in WAITING:
                 s["wait"] = max(s["wait"], at)
             elif tool not in BOOKKEEPING:
@@ -235,7 +242,8 @@ for agent in ids:
     busy = int(now - base) if base else -1
     waiting = 1 if s["wait"] > s["work"] and now - s["wait"] <= loop_sec else 0
     since = int(s["compact"]) if s["compact"] else -1
-    print(agent, idle, busy, waiting, since)
+    ended = int(now - s["ended"]) if s["ended"] else -1
+    print(agent, idle, busy, waiting, since, ended)
 PY
 }
 
@@ -773,7 +781,7 @@ while :; do
   clocks="$([[ -n "${ids// /}" ]] && agent_clocks $ids)"
   for id in $ids; do
     [[ -e "$SANDBOX/done/agents/$id.done" || -e "$SANDBOX/done/agents/$id.dead" ]] && continue
-    read -r idle busy waiting since <<<"$(awk -v id="$id" '$1 == id { print $2, $3, $4, $5 }' <<<"$clocks")"
+    read -r idle busy waiting since ended <<<"$(awk -v id="$id" '$1 == id { print $2, $3, $4, $5, $6 }' <<<"$clocks")"
     [[ -n "$idle" ]] || continue
     # A seat whose compaction runs refuses every prompt; a nudge would be
     # dropped and counted. Past the bound it is reported instead.
@@ -796,6 +804,7 @@ while :; do
       deliver="steer"
     else
       [[ "$idle" -ge 0 ]] || continue
+      [[ "${ended:--1}" -ge 0 && "${ended:--1}" -lt "$COMPACT_GRACE_SEC" ]] && continue
       if [[ "$unread" -gt 0 ]]; then
         [[ "$idle" -ge "$NEWS_SEC" ]] || continue
       else

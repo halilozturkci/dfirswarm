@@ -171,11 +171,32 @@ export type HandoffFacts = {
   stopping?: boolean;
 };
 
+/** How long a hand-off waits for the hub's facts before it is sent with them marked unknown. */
+export const HANDOFF_FACTS_MS = 4000;
+
+/**
+ * The hub's facts for a hand-off, or "unknown" when the hub fails or does not answer within `ms`: the note does not wait
+ * for the hub (hand-offs came 2 to 4.5 minutes after the compaction in four runs, and the watchdog told the seat it had
+ * ended its turn), and a header with unknown facts says so instead of zeros (the run s082123).
+ */
+export async function factsWithin(read: () => Promise<HandoffFacts>, ms: number): Promise<HandoffFacts> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([read(), new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new Error("late")), ms)))]);
+  } catch {
+    return { claims: [], unread: {}, ledgerTotal: 0, ledgerMine: 0, sentinel: false, spentUsd: 0, unknown: true };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export type SelfCompactDeps = {
   agentId: () => string;
   /** One trace line; the extension's own `logEvent`, so attribution and the collector are the same. */
   trace: (cwd: string, tool: string, args: Record<string, unknown>, result: unknown) => Promise<void>;
   handoffFacts: (cwd: string, agentId: string) => Promise<HandoffFacts>;
+  /** How long the hand-off waits for those facts before it goes without them (HANDOFF_FACTS_MS). */
+  handoffFactsMs?: number;
   /** Where the four prompt files live (the repo's `prompts/`). */
   promptsDir: string;
   /** An operator-supplied summary prompt file (SWARM_COMPACT_PROMPT), replacing `compaction-summary.md`. */
@@ -762,13 +783,7 @@ export function registerSelfCompact(pi: ExtensionAPI, deps: SelfCompactDeps): Se
       }
       return;
     }
-    let facts: HandoffFacts;
-    try {
-      facts = await deps.handoffFacts(ctx.cwd, agentId());
-    } catch {
-      // The hub could not be reached: what the facts would say is unknown, and the header says so instead of zeros (the run s082123).
-      facts = { claims: [], unread: {}, ledgerTotal: 0, ledgerMine: 0, sentinel: false, spentUsd: 0, unknown: true };
-    }
+    const facts = await factsWithin(() => deps.handoffFacts(ctx.cwd, agentId()), deps.handoffFactsMs ?? HANDOFF_FACTS_MS);
     const header = handoffHeader(agentId(), R.state.cycle, facts, hadNote, reason);
     const content = hadNote && h ? `${header}\n${h.note}` : header;
     const details = { id: h?.id, cycle: R.state.cycle, note: hadNote ? h?.note : undefined, reason, facts };

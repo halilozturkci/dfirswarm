@@ -212,6 +212,10 @@ import { registerPlaywrightTool, runBrowserCheck } from "./playwright-tool.ts";
 import { readToolchainAt, TOOLCHAIN_DIR } from "./toolchain.ts";
 import { installChunkedEgress } from "./vm-egress.ts";
 import { toolsListing } from "./tools-view.ts";
+import { lastKnown } from "./last-known.ts";
+
+/** How long a read made before a model call may take before the call goes out on the last known value. */
+const PRECALL_DEADLINE_MS = 1500;
 
 type ToolCtx = { cwd: string };
 
@@ -1432,6 +1436,8 @@ export default function (pi: ExtensionAPI) {
     return { messages: capped.messages };
   });
 
+  const precallBudget = lastKnown<Awaited<ReturnType<typeof readBudgetLive>>>(PRECALL_DEADLINE_MS);
+  const precallSentinel = lastKnown<boolean>(PRECALL_DEADLINE_MS);
   pi.on("context", async (_event, ctx) => {
     if (!agentId || precallStopped) return;
     // A VM whose hub is down has no budget or sentinel to read; the lost-hub
@@ -1440,18 +1446,20 @@ export default function (pi: ExtensionAPI) {
     if (boardSocket() && hubLost.since) return;
     const cwd = ctx.cwd;
     // The short deadline: a dead link is replaced, not waited on for two minutes before every model call.
-    const before = await readBudgetLive(cwd).catch(() => null);
+    // Each read has PRECALL_DEADLINE_MS: past it the call goes out on the last value the hub gave (last-known.ts), and
+    // the read goes on for the next call. A busy hub must not stand between a tool result and the model.
+    const before = await precallBudget.read(() => readBudgetLive(cwd)).catch(() => null);
     if (before) await enforceAllCaps(cwd, before, ctx).catch(() => undefined);
     // Read again after the caps were enforced: the check that writes the
     // pause holds the call it was made for too.
-    const budget = before ? await readBudgetLive(cwd).catch(() => before) : null;
+    const budget = before ? await precallBudget.read(() => readBudgetLive(cwd)).catch(() => before) : null;
     // A paused run (the stop policy): this call does not go out. The turn
     // ends here and the seat stays, idle, with everything it held; the
     // operator's extension wakes it (the watchdog's prompt). In a VM this is
     // advisory: the hub prompts no paused seat, and the model gateway
     // refuses the call on the host.
     const paused = budget?.paused;
-    if (paused && !stoppedByHarness && !(await swarmDoneExists(cwd).catch(() => false))) {
+    if (paused && !stoppedByHarness && !(await precallSentinel.read(() => swarmDoneExists(cwd)).catch(() => false))) {
       if (pauseHeld !== paused.at) {
         pauseHeld = paused.at;
         await logEvent(cwd, agentId, "pause_hold", { reason: paused.reason, since: paused.at }, { ok: true, brake: boardSocket() ? "advisory (in the VM; the hub and the model gateway hold the brake)" : "host" }).catch(() => undefined);
@@ -1460,7 +1468,7 @@ export default function (pi: ExtensionAPI) {
       ctx.abort();
       return;
     }
-    const sentinel = !stoppedByHarness && (await swarmDoneExists(cwd).catch(() => false));
+    const sentinel = !stoppedByHarness && (await precallSentinel.read(() => swarmDoneExists(cwd)).catch(() => false));
     if (!stoppedByHarness && !sentinel) return;
     precallStopped = true;
     if (sentinel) {

@@ -266,8 +266,11 @@ comp_once --compact-stall-sec 300
 pass "a compaction open past --compact-stall-sec is said once, on the board and the trace, and the seat is not nudged"
 row k0 compact_done 100 '{"reason":"manual","via":"self"}' >> "$CS/traces/events.jsonl"
 comp_once --compact-stall-sec 300
+[[ "$(grep -c '^k0	' "$PROMPT_LOG")" -eq 0 ]] || fail "a seat 100 s out of its compaction was told it had ended its turn: $(cat "$PROMPT_LOG")"
+pass "a seat just out of a compaction is not told it ended its turn: its hand-off is on its way (--compact-grace-sec, 300 by default)"
+comp_once --compact-stall-sec 300 --compact-grace-sec 60
 [[ "$(grep -c '^k0	' "$PROMPT_LOG")" -eq 1 ]] || fail "a seat whose compaction ended is not watched again"
-pass "once the compaction ends the seat is watched like any other"
+pass "once the compaction ends and the grace is over the seat is watched like any other"
 
 # --- a local model's first turn ---------------------------------------------
 # The LM Studio seat on BelkaCTF #6 took about four minutes to answer its
