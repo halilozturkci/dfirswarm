@@ -1124,6 +1124,17 @@ function citeHead(e: LedgerEntry): Span[] {
   return [{ e: e.seq }, ` · ${KIND_LABEL[e.kind] ?? e.kind}${e.kind === "answer" ? ` (${sectionName(e.section)})` : ""}: `, e.value];
 }
 
+/**
+ * An answer as the report words it: its value, then its qualifier (candidate, partial, the open part) set apart from it. An
+ * answer that established no value has none to print, and says so instead of an empty line.
+ */
+export function answerWords(a: { value: string; qualifier?: string }): string {
+  const value = (a.value ?? "").trim();
+  const q = (a.qualifier ?? "").trim();
+  if (!value) return q ? `No value is established. ${q}` : "No value is established.";
+  return q ? `${value}\n\nQualified: ${q}` : value;
+}
+
 function sectionName(section: string | undefined): string {
   if (!section) return "no section";
   if (section === "summary" || section === "narrative") return `the ${section}`;
@@ -2169,7 +2180,7 @@ function questionBlock(q: Question, run: Run, memo: Map<number, EntryState>): Bl
   const bounded = boundedConclusion(a, q, run);
   // A partial answer leads with its parts in a plain line (docs/adr/0013, "What the report shows of an answer's parts"); one without rows reads as before.
   body.push(...partialLeadBlocks(a, run));
-  body.push({ k: "voice", voice: "opinion", label: a.inconclusive ? "Answer (inconclusive)" : "Answer", s: [bounded ?? a.value], chips: chipsOf(a, s).filter((c) => c.text !== "answer") });
+  body.push({ k: "voice", voice: "opinion", label: a.inconclusive ? "Answer (inconclusive)" : "Answer", s: [bounded ?? answerWords(a)], chips: chipsOf(a, s).filter((c) => c.text !== "answer") });
   if (bounded) body.push({ k: "p", s: [`As the agents worded it (not the conclusion: the bar for saying more is not met): ${a.value}`] });
   body.push(...resultBlocks(a, q, run));
   body.push(...partsBlocks(a, q, run));
@@ -2716,7 +2727,7 @@ function conclusionsSection(run: Run, memo: Map<number, EntryState>): BodySectio
   for (const { label, a } of answers) {
     const s = stateOf(a, run, memo);
     const basis = (a.support ?? []).map((x) => run.bySeq.get(x.seq)).filter((x): x is LedgerEntry => Boolean(x));
-    blocks.push({ k: "voice", voice: "opinion", label, s: [a.value], chips: chipsOf(a, s).filter((c) => c.text !== "answer" && c.text !== "opinion") });
+    blocks.push({ k: "voice", voice: "opinion", label, s: [answerWords(a)], chips: chipsOf(a, s).filter((c) => c.text !== "answer" && c.text !== "opinion") });
     blocks.push({
       k: "p",
       s: [
@@ -3132,7 +3143,7 @@ function recommendationsSection(run: Run, memo: Map<number, EntryState>): BodySe
   if (qs.length) blocks.push({ k: "p", s: ["They are opinions, resting on the findings the answers cite."] });
   for (const q of qs) {
     const a = standingAnswer(run, `question:${q.id}`);
-    if (a) blocks.push({ k: "voice", voice: "opinion", label: questionName(q), s: [a.value, " (", { e: a.seq }, "; its basis in ", { a: `#${questionAnchor(q.id)}`, text: "§5" }, ")"], chips: chipsOf(a, stateOf(a, run, memo)).filter((c) => c.text !== "answer" && c.text !== "opinion") });
+    if (a) blocks.push({ k: "voice", voice: "opinion", label: questionName(q), s: [answerWords(a), " (", { e: a.seq }, "; its basis in ", { a: `#${questionAnchor(q.id)}`, text: "§5" }, ")"], chips: chipsOf(a, stateOf(a, run, memo)).filter((c) => c.text !== "answer" && c.text !== "opinion") });
     else blocks.push({ k: "note", s: [`${questionName(q)} has no standing answer: no recommendation is made for it.`] });
   }
   if (!qs.length) blocks.push({ k: "note", s: ["No answer in the ledger holds them (an answer recorded for the section \"recommendations\", or for a question that asks for them): none are made here."] });
@@ -3212,7 +3223,7 @@ function exhibitBox(e: LedgerEntry, run: Run, memo: Map<number, EntryState>): Bl
   const s = stateOf(e, run, memo);
   const rows: Row[] = [];
   const valueLabel = e.kind === "answer" ? "Answer" : e.basis === "observed" ? "Observation" : e.basis === "inferred" ? "Claim (inferred)" : "Recorded";
-  rows.push({ label: valueLabel, voice: e.kind === "answer" ? "opinion" : e.basis === "inferred" ? undefined : "fact", s: [e.value] });
+  rows.push({ label: valueLabel, voice: e.kind === "answer" ? "opinion" : e.basis === "inferred" ? undefined : "fact", s: [e.kind === "answer" ? answerWords(e) : e.value] });
   if (e.kind === "answer") {
     rows.push({ label: "Section", s: [sectionName(e.section)] });
     rows.push({ label: "Reasoning", voice: "interpretation", s: [e.reasoning ?? ""] });
