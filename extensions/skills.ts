@@ -1510,6 +1510,9 @@ export function registerSkills(pi: ExtensionAPI, deps: SkillsDeps): SkillsHandle
           : gone
             ? `\`${raw}\` was already marked done and has been released from your context (a one-line stub stands in its place); skill("${raw}") loads it again. Nothing to mark done.`
             : `\`${raw}\` is not among the notes you have loaded (none, a compaction took it out of your context, or it was released). Nothing to mark done.`;
+      // A note that is no longer in the context has nothing left to release, which is what skill_done is for: that is an
+      // answer, not an error (20 such refusals in two runs, each a turn spent on a note a compaction had already taken).
+      if (reason === "not loaded") return text(out.replace("Nothing to mark done.", "Nothing is left to mark done: it is already out of your context."), { ok: true, already_gone: true });
       return text(out, { ok: false, error: reason });
     }
     const already = Boolean(target.done);

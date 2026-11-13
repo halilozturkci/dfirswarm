@@ -496,7 +496,8 @@ test("skill_done records what the seat took, marks the body releasable, and says
     await withSeat(t, [a, b], async (seat) => {
       const early = await seat.done("evidence/one", "never loaded");
       assert.match(early.text, /is not among the notes you have loaded/);
-      assert.deepEqual([early.details.ok, early.details.error], [false, "not loaded"]);
+      // Nothing to release is an answer, not an error: the note is already out of the context.
+      assert.deepEqual([early.details.ok, early.details.already_gone], [true, true]);
 
       await seat.skill("evidence/one");
       const done = await seat.done("evidence/one", "run count and last eight times; not who ran it");

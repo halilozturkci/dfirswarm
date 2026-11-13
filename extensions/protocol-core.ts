@@ -2056,7 +2056,8 @@ export async function claimName(
     const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
     const clash = names.find((n) => n.id !== agentId && key(n.name) === key(name));
     if (clash) {
-      return { ok: false as const, error: `${clash.id} already answers to "${name}". Pick another.`, taken_by: clash.id };
+      const taken = names.filter((n) => n.id !== agentId).map((n) => `"${n.name}"`);
+      return { ok: false as const, error: `${clash.id} already answers to "${name}". Pick another: a name none of these has (${taken.join(", ")}), for example "${name} ${agentId.slice(-2)}".`, taken_by: clash.id };
     }
     const previous = had?.name;
     const next = names.filter((n) => n.id !== agentId);

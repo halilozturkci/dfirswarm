@@ -937,9 +937,9 @@ export function registerSelfCompact(pi: ExtensionAPI, deps: SelfCompactDeps): Se
         const keep = keepRecent(ctx);
         return refuse(`nothing to compact yet: Pi keeps the newest ${fmt(keep)} tokens untouched and this session does not reach past them (context ${R.usage.tokens === null ? "?" : fmt(R.usage.tokens)} tokens, ${fmtPct(R.usage.percent)}). No note was saved and nothing is blocked. Keep working and call ${SELF_COMPACT_TOOL} later.`);
       }
-      if (existing && existing.note.trim() !== raw.trim()) {
-        return refuse(`a note is already saved (${existing.note.length} chars). Retry ${SELF_COMPACT_TOOL} with that saved note verbatim instead of a new one.`);
-      }
+      // A second, different note while one is saved: the saved one stands and the hand-off goes on with it. Refusing it
+      // cost a turn each time and asked the seat to repeat 9,000 characters verbatim (13 such refusals in the runs).
+      const keptEarlier = Boolean(existing && existing.note.trim() !== raw.trim());
       const note = existing ? existing.note : raw;
       R.state.handoff = { id: existing?.id ?? randomUUID(), note, status: "pending", attempts: 0, savedAt: Date.now() };
       R.lastCompactionError = undefined;
@@ -955,7 +955,7 @@ export function registerSelfCompact(pi: ExtensionAPI, deps: SelfCompactDeps): Se
       });
       const at = R.usage.tokens === null ? "unknown usage" : `${fmt(R.usage.tokens)} tokens (${fmtPct(R.usage.percent)}), level ${R.level}`;
       return {
-        content: [{ type: "text" as const, text: `Note saved (${note.length} chars) at ${at}. Every other tool is blocked until compaction succeeds. Stop now: compaction runs when this turn ends and your note will be returned verbatim.` }],
+        content: [{ type: "text" as const, text: `${keptEarlier ? `The note you saved earlier (${note.length} chars) stands and is the one that will be returned; this second one was not taken.` : `Note saved (${note.length} chars) at ${at}.`} Every other tool is blocked until compaction succeeds. Stop now: compaction runs when this turn ends and your note will be returned verbatim.` }],
         details: { handoffId: R.state.handoff.id, noteChars: note.length, cycle: R.state.cycle + 1, usedTokens: R.usage.tokens, usedPercent: R.usage.percent, level: R.level },
         terminate: true as const,
       };
