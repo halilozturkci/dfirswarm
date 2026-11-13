@@ -721,7 +721,7 @@ const REF_FORMS = "A ref names an object of this run (input:<path>, job:<id>/<pa
 export async function checkRefsAll(sandboxRoot: string, refs: string[]): Promise<{ resolved: Array<{ ref: string; kind: string; status?: string }>; bad: Array<{ ref: string; why: string }> }> {
   // Loaded when a ref is checked, not with the extension: a VM that mounts
   // only extensions/ still loads it, and in a VM the hub checks refs anyway.
-  const { readManifest, resolveRef, storePaths } = await import("../scripts/evidence-store.ts");
+  const { manifestNearNames, manifestOf, resolveRef, storePaths } = await import("../scripts/evidence-store.ts");
   const resolved: Array<{ ref: string; kind: string; status?: string }> = [];
   const bad: Array<{ ref: string; why: string }> = [];
   for (const ref of refs) {
@@ -745,14 +745,22 @@ export async function checkRefsAll(sandboxRoot: string, refs: string[]): Promise
         const slash = m[2].indexOf("/");
         const id = slash < 0 ? m[2] : m[2].slice(0, slash);
         const P = storePaths(sandboxRoot);
-        const found = await readManifest(join(m[1] === "job" ? P.jobs : P.imports, id, "manifest.json"));
+        // From the manifest's index as a stream, never the manifest parsed whole: one of 200,000 files is 50 MB of JSON, read here once for every ref that did not resolve.
+        const manifestPath = join(m[1] === "job" ? P.jobs : P.imports, id, "manifest.json");
+        const found = await manifestOf(manifestPath);
         if (found && slash >= 0) {
           const want = m[2].slice(slash + 1).replace(/^out\//, "");
           // A directory of the job's output is not an object: the files under it are, and the job as a whole.
-          const under = found.manifest.files.map((f) => f.path).filter((f) => f.startsWith(`${want.replace(/\/+$/, "")}/`));
-          near = (under.length ? under.slice(0, 5) : nearestNames(want, found.manifest.files.map((f) => f.path))).map((p) => `${m[1]}:${id}/${p}`);
-          if (under.length) {
-            bad.push({ ref, why: `ref ${JSON.stringify(ref)} is a directory of ${m[1]} ${id}'s output (${under.length} ${under.length === 1 ? "file" : "files"} under it), and a ref names a file: cite the files the entry rests on (${near.join(", ")}${under.length > 5 ? ", …" : ""}), or the whole output as ${m[1]}:${id}` });
+          const prefix = `${want.replace(/\/+$/, "")}/`;
+          const under: string[] = [];
+          let underTotal = 0;
+          for await (const rows of found.files()) for (const f of rows) if (f.path.startsWith(prefix)) {
+            underTotal += 1;
+            if (under.length < 5) under.push(f.path);
+          }
+          near = (underTotal ? under : await manifestNearNames(manifestPath, want)).map((p) => `${m[1]}:${id}/${p}`);
+          if (underTotal) {
+            bad.push({ ref, why: `ref ${JSON.stringify(ref)} is a directory of ${m[1]} ${id}'s output (${underTotal} ${underTotal === 1 ? "file" : "files"} under it), and a ref names a file: cite the files the entry rests on (${near.join(", ")}${underTotal > 5 ? ", …" : ""}), or the whole output as ${m[1]}:${id}` });
             continue;
           }
         } else if (!found) near = nearestNames(id, await readdir(m[1] === "job" ? P.jobs : P.imports).catch(() => [])).map((x) => `${m[1]}:${x}`);
