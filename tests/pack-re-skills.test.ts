@@ -365,7 +365,9 @@ test("the review's wording fixes are in the leaves and the goal, and the goal's 
   const macros = text("documents/macros");
   assert.match(macros, /path under `\$OUT`/);
   assert.match(macros, /`parts\[\]\.modified`[^.]*no zone, two-second resolution/);
-  assert.match(macros, /does not provide: record the comparison as not made/);
+  assert.match(macros, /`olevba --show-pcode <file>` prints the p-code \(`pcodedmp`, installed with it\)/, "the image holds a p-code reader (requires/locks/olevba.txt): the note says how to run it");
+  assert.doesNotMatch(macros, /p-code reader, which this pack does not provide/);
+  assert.match(macros, /say plainly what a file is and holds, not as a candidate\. Does not show: that a macro ran/, "the limit is on execution, not on identifying the file");
   assert.match(macros, /OOXML VBA project part \(by content type\) is an OLE compound file/);
   assert.match(macros, /A token-shaped part name is withheld, by shape only;/);
   assert.match(macros, /`AutoOpen`, `Document_Open` and `Workbook_Open`/);

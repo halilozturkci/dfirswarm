@@ -215,3 +215,14 @@ routerChecks({
   ],
   profiles: ["disk", "full"],
 });
+
+test("keys/other-sources tells the reader to examine a credential store with what the run has, not to record it as unexamined", async () => {
+  const body = flat((await load(SKILLS)).get("keys/other-sources")!.body);
+  assert.doesNotMatch(body, /and that it was not examined/);
+  assert.match(body, /this pack provides no reader that decrypts them/);
+  assert.match(body, /When the question asks for what a store holds, examine it with what the run has/);
+  assert.match(body, /needs the profile key, which `Local State` holds wrapped by DPAPI/);
+  assert.match(body, /Before attacking DPAPI, look where the user keeps secrets/);
+  assert.match(body, /A negative from your own decryption code counts only after that code reproduced a known answer/);
+  assert.match(body, /never test it against a live service/, "the rule against trying a found credential stays");
+});

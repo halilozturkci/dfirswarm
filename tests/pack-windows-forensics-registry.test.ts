@@ -330,10 +330,11 @@ dual("regkv does not follow a subkey list a second time: a cycle is a problem it
 dual("regkv names the key it did not find, with the names that are there", async (v) => {
   await withCwd(async (cwd) => {
     const env = await v.write(cwd, "work/SYSTEM", { name: "ROOT", children: [{ name: "ControlSet001", children: [{ name: "Enum" }] }, { name: "Select" }] });
-    const err = failed(await tool("regkv", cwd, { hive: "work/SYSTEM", key: "CurrentControlSet\\Enum" }, env));
-    assert.equal(err.error, "key not found");
-    assert.equal(err.missing, "CurrentControlSet");
-    assert.deepEqual(err.subkeys_there, ["ControlSet001", "Select"]);
+    // A key the tool looked for in a hive it read is an answer (exit 0, found: false), not a failed job: tests/pack-windows-forensics-regkv-negative.test.ts.
+    const out = body<{ found: boolean; missing: string; subkeys_there: string[] }>(await tool("regkv", cwd, { hive: "work/SYSTEM", key: "CurrentControlSet\\Enum" }, env));
+    assert.equal(out.found, false);
+    assert.equal(out.missing, "CurrentControlSet");
+    assert.deepEqual(out.subkeys_there, ["ControlSet001", "Select"]);
   });
 });
 

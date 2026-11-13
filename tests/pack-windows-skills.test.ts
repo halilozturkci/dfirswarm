@@ -339,3 +339,22 @@ test("a run that carries this pack with others is over the run's index budget, a
   const bare = await section(family, FAMILY);
   assert.ok(bare.shown_tokens > SKILL_BUDGET.run, `without the family's routers the section is ${bare.shown_tokens} tokens, over the run's ${SKILL_BUDGET.run}`);
 });
+
+test("the notes say what regkv answers today, and a secret browser store is read as secret output, as the base pack's note shows", async () => {
+  const skills = await load(SKILLS);
+  // regkv: a missing key is an answer, and a dirty hive is partial.
+  const readers = skills.get("registry/readers")!.body;
+  assert.match(readers, /A key not in the hive is an answer \(`found: false`, exit 0\)/);
+  assert.doesNotMatch(readers, /absent is answered `ok: false`/);
+  assert.match(skills.get("registry/overview")!.body, /a dirty hive answers `partial`/);
+  const regkv = await toolSource("regkv");
+  for (const name of ["found", "path_parts_matched", "transaction_logs_looked_for"]) assert.ok(regkv.includes(`"${name}"`), `regkv writes ${name}`);
+  // sqlite_query on Login Data: the base note's own example is the table export as secret output, so this note cannot say "never".
+  const strings = skills.get("browser/strings")!.body;
+  assert.doesNotMatch(strings, /never on `Login Data`/);
+  assert.match(strings, /`Login Data`, `Cookies`, `Web Data`, `cookies\.sqlite` and `key4\.db` are read as secret output: a job with `secret_output: true`, `table` and `write_values: true`/);
+  assert.match(strings, /never an inline `sql` over the values \(the base pack's `data\/sqlite-secrets`\)/);
+  const base = (await load(join(BASE, "skills"))).get("data/sqlite-secrets")!.body;
+  assert.match(base, /secret_output: true/);
+  assert.match(base, /"write_values": true/);
+});

@@ -245,12 +245,12 @@ dual("regkv pages its problems: the first 50 are inline, all are in a file the a
 dual("regkv names a missing key with at most 200 of the names that are there, and counts them", async (v) => {
   await withCwd(async (cwd) => {
     const env = await v.write(cwd, "work/h.dat", { name: "ROOT", children: [{ name: "Wide", children: keys(300) }] });
-    const err = failed(await tool("regkv", cwd, { hive: "work/h.dat", key: "Wide\\Nope" }, env));
-    assert.equal(err.error, "key not found");
-    assert.equal((err.subkeys_there as string[]).length, 200);
-    assert.equal(err.subkeys_there_count, 300);
-    assert.equal(err.status, "failed");
-    assert.ok(typeof err.status_basis === "string" && String(err.status_basis).length > 10);
+    const out = body<{ found: boolean; subkeys_there: string[]; subkeys_there_count: number; status: string; status_basis: string }>(await tool("regkv", cwd, { hive: "work/h.dat", key: "Wide\\Nope" }, env));
+    assert.equal(out.found, false);
+    assert.equal(out.subkeys_there.length, 200);
+    assert.equal(out.subkeys_there_count, 300);
+    assert.equal(out.status, "complete", "a key that is not in a clean hive read whole is an answer");
+    assert.ok(typeof out.status_basis === "string" && out.status_basis.length > 10);
   });
 });
 

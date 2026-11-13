@@ -1,7 +1,7 @@
 {
   "id": "encrypted-containers",
   "name": "Encrypted Containers Pack",
-  "version": "1.14.10",
+  "version": "1.14.11",
   "description": "Telling one kind of encryption from another: volume headers and their key protectors, LUKS key slots, the container that has no signature at all, password-protected archives and documents, and where key material the case supplies may already be.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -30,7 +30,7 @@
       "skills/files/aescrypt.md": "1a40603a6bccc0702fb488d558cfe89c8bdf14eefd12affd1c3f0de514e31d35",
       "skills/identify/by-format.md": "2b07f41624d479e7aacac9a1be9ff4fb3cfdff09cd383f8d3b12ca0d740a7511",
       "skills/identify/headers.md": "d4d32807a2d67c5cc2a0c787d5ff107d47dc748caf2cff4bfd820b9c3b867a55",
-      "skills/keys/other-sources.md": "e29540952ad5b51a7e2b0ca0d27ce7dcdd1fd17144b92ad0a3dca91e522fee82",
+      "skills/keys/other-sources.md": "ba934484a29b00a81a5b638b6481200bc7df21032f4ac27c3cbd9adcf2ff550f",
       "skills/keys/recovery-key-scan.md": "20ef32793301e983b2877226fb0bcddec96f5e1f49098741e06bceb09211c3e2",
       "skills/keys/where-they-hide.md": "023f7e0071013f934b8618cb225170cca3c81a69c912007b237291c67c117947",
       "skills/messages/openpgp.md": "b0a28c87e3f15a12ce8e830cad5fbddc7daa5abe18e99a378da69c5555081a6c",

@@ -1,7 +1,7 @@
 {
   "id": "reverse-engineering",
   "name": "Reverse Engineering Pack",
-  "version": "1.16.11",
+  "version": "1.16.12",
   "description": "Static triage of a binary or a document under quarantine: what the file actually is, PE and ELF structure, entropy and packing, obfuscated strings, capability mapping, macros and embedded objects, and rules. Nothing from the evidence is ever executed.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -48,7 +48,7 @@
       "skills/code/second-readers.md": "17f9afaee56dc8183cb00403388fd2e5ab06582718921ccd84258020e6096cf5",
       "skills/code/static-inspection.md": "bf23318e50845870358c398f5361f5ba4a353c7293911cfe90f8cd70ba4915ca",
       "skills/documents/external-and-active-content.md": "7eaed7e8e8f3b29bed7d58942c27774e551709615abc46f7e89d43491199b250",
-      "skills/documents/macros.md": "cd605c48a7adb6a1745f556cbddf7f2ae3e9ca034296b39d56dd9caf51bd356d",
+      "skills/documents/macros.md": "4d28bc17d89e23a598a9a5f08181ab5f21909d484011a81b2d526b974d24f0e7",
       "skills/documents/pdf-rtf.md": "ca21590264220ffbb816e1536eee558a58116e09ecd39fffe1da4b3d34b67352",
       "skills/documents/second-reading.md": "24fbc46d0b8dbf2753d904e79f2ead3587bd127b8d0bc5cdede899818ef89b18",
       "skills/elf/packing-and-identity.md": "a4cfdebf3efb071edca2da1560ff2e7b015ed89d366777645b995aeb2336176a",

@@ -2373,12 +2373,12 @@ def emit(doc, **dumps_kwargs):
 # They are shown as they are even past the judging time, so that an answer stays readable; a name from the evidence that is one of them holds no secret.
 OWN_NAMES.update((
     "all_nodes", "all_problems", "all_results", "all_results_format", "all_stopped_branches", "all_subkeys", "all_subkeys_note", "corrupted_values",
-    "deepest_found", "depth", "error", "hive", "hive_bounds", "hive_bytes", "hive_dirty", "hive_sequence_numbers", "hive_type", "key", "last_modified",
+    "deepest_found", "depth", "error", "found", "hive", "hive_bounds", "hive_bytes", "hive_dirty", "hive_sequence_numbers", "hive_type", "key", "last_modified",
     "last_modified_filetime", "length", "library_messages_withheld", "matched", "missing", "most_keys", "most_values", "name", "node_count", "nodes",
-    "nodes_listed", "not_attempted", "ok", "parser", "path", "problem_count", "problems", "reason", "regipy_version", "repeated_subkey_elements_skipped",
+    "nodes_listed", "not_attempted", "ok", "parser", "path", "path_parts_asked", "path_parts_matched", "problem_count", "problems", "reason", "regipy_version", "repeated_subkey_elements_skipped",
     "returned", "sensitive_values_withheld", "signal", "status", "status_basis", "stopped_branch_count", "stopped_branches", "stopped_branches_not_named",
     "subkey_elements_read", "subkey_list", "subkeys", "subkeys_not_listed_for_time", "subkeys_there", "subkeys_there_count", "subkeys_there_not_shown", "subkeys_there_note",
-    "transaction_logs_beside_hive", "transaction_logs_replayed", "tree_complete", "truncated", "type", "value_lengths", "value_types", "values",
+    "transaction_logs_beside_hive", "transaction_logs_looked_for", "transaction_logs_replayed", "tree_complete", "truncated", "type", "value_lengths", "value_types", "values",
     "values_file", "walk_stopped_by_time_limit", "what", "where"
 ))
 
@@ -2388,6 +2388,7 @@ OWN_NAMES.update((
 FIELDS.update({
     "hive": "path", "key": "key", "path": "key", "where": "key", "deepest_found": "key", "missing": "key", "subkeys_there": "key", "name": "key",
     "all_nodes": "path", "all_subkeys": "path", "all_stopped_branches": "path", "all_problems": "path", "transaction_logs_beside_hive": "path",
+    "transaction_logs_looked_for": "path",
     "last_modified": "time", "last_modified_filetime": "number", "regipy_version": "version", "values_file": "path", "type": "name",
 })
 KEY_KINDS.update({"values": "key", "value_types": "key", "value_lengths": "key"})   # registry value names are often paths (MuiCache, UserAssist)
@@ -2405,31 +2406,35 @@ def ft_to_iso(ft):
 class KeyMissing(Exception):
     """The key asked for is not in the hive: what was found, what is missing, and the names that are there."""
 
-    def __init__(self, found, missing, there):
+    def __init__(self, found, missing, there, matched=0, asked=0):
         super().__init__(missing)
         self.found, self.missing, self.there = found, missing, there
+        self.matched, self.asked = matched, asked          # how many parts of the path asked for were matched, of how many
+        self.problems, self.state, self.hive_type = [], {}, None      # dump() fills these in: what the walk down the path could not read whole, and the hive's state
 
 
 def split_path(path):
     return [p for p in str(path).replace("/", "\\").split("\\") if p]
 
 
-def resolve(hive, path, bounds=None):
+def resolve(hive, path, bounds=None, problems=None):
     """The key at `path`, from the hive's root, and the names of it as the hive itself holds them. regipy's get_key
     takes the first part of a path that does not start with a backslash for the root's own name and drops it, so
     the path is walked here: the root's name is dropped when the caller gave it, / is taken for \\, and a part is
     matched without regard to case. The canonical names are what a value is judged by (a place such as
-    Policy\\Secrets is the same place however the caller spelled it)."""
+    Policy\\Secrets is the same place however the caller spelled it). What a subkey list on the way could not be read
+    whole for goes to `problems` when the caller gives a list: a key that is not found in such a list is not shown absent."""
     parts = split_path(path)
     if parts and parts[0].lower() == (hive.root.name or "").lower():
         parts = parts[1:]
     bounds = bounds or HiveBounds(None, 1 << 40)
+    problems = [] if problems is None else problems
     node, names = hive.root, []
     for part in parts:
-        kids = bounds.subkeys(node, "\\" + "\\".join(names), [])
+        kids = bounds.subkeys(node, "\\" + "\\".join(names), problems)
         match = next((kid for kid in kids if kid.name.lower() == part.lower()), None)
         if match is None:
-            raise KeyMissing("\\" + "\\".join(names), part, [kid.name for kid in kids])
+            raise KeyMissing("\\" + "\\".join(names), part, [kid.name for kid in kids], len(names), len(parts))
         node, names = match, names + [match.name]
     return node, names
 
@@ -2552,11 +2557,45 @@ class Sink:
         self.page.add(item)
 
 
+LOG_SUFFIXES = (".LOG1", ".LOG2", ".LOG")
+
+
+def hive_state(h, hive_path):
+    """Whether the hive file is dirty (its two sequence numbers differ: a write was not finished in the file, and the newest state is in the
+    transaction logs), the log files the tool looked for beside it and the ones that are there. The logs are never replayed by this tool."""
+    header = h.header
+    looked = [hive_path + s for s in LOG_SUFFIXES]
+    return {"hive_dirty": header.primary_sequence_num != header.secondary_sequence_num,
+            "hive_sequence_numbers": [header.primary_sequence_num, header.secondary_sequence_num],
+            "transaction_logs_looked_for": looked,
+            "transaction_logs_beside_hive": [path for path in looked if os.path.isfile(path)],
+            "transaction_logs_replayed": False}
+
+
+def dirty_caveat(state):
+    """Why an answer read from a dirty hive is not complete, in the tool's own words and counts (None for a clean hive). The tool cannot show
+    that the key or value asked about is outside the pages the logs would rewrite, so every answer from a dirty hive carries it."""
+    if not state.get("hive_dirty"):
+        return None
+    there = len(state.get("transaction_logs_beside_hive") or [])
+    return ("the hive is dirty (its sequence numbers %s and %s differ) and no transaction log was replayed: the tool looked for %s beside the hive "
+            "(transaction_logs_looked_for) and %s, and it replays none, so what is read here is the hive file as it is and keys and values may differ from "
+            "the live registry (give registry_recover the hive and its logs and read the copy it makes)" % (
+                state["hive_sequence_numbers"][0], state["hive_sequence_numbers"][1], ", ".join(LOG_SUFFIXES[:-1]) + " and " + LOG_SUFFIXES[-1],
+                "found none (they are not in what this job can read)" if not there else "found %d (transaction_logs_beside_hive)" % there))
+
+
 def dump(hive_path, key, recurse=False, depth=2, limit=500, max_nodes=MAX_NODES):
     from regipy.registry import RegistryHive
     h = RegistryHive(hive_path)
     bounds = HiveBounds(hive_path)
-    k, names = resolve(h, key, bounds)
+    path_problems = []
+    try:
+        k, names = resolve(h, key, bounds, path_problems)
+    except KeyMissing as gone:
+        # The hive was opened and the path walked as far as it goes: that is an answer, and it says what it rests on.
+        gone.problems, gone.state, gone.hive_type = path_problems, hive_state(h, hive_path), hive_kind(h)
+        raise
     shown = "\\".join(names)
     withheld = []
     # Problems go to a page as they are found (a hive can have one for every key): the first INLINE_PROBLEMS are inline, all are in the file.
@@ -2683,11 +2722,7 @@ def dump(hive_path, key, recurse=False, depth=2, limit=500, max_nodes=MAX_NODES)
     out["walk_stopped_by_time_limit"] = out_of_time_at is not None
     out["library_messages_withheld"] = LibraryLog.messages
     out["sensitive_values_withheld"] = withheld
-    header = h.header
-    out["hive_dirty"] = header.primary_sequence_num != header.secondary_sequence_num
-    out["hive_sequence_numbers"] = [header.primary_sequence_num, header.secondary_sequence_num]
-    out["transaction_logs_beside_hive"] = [hive_path + s for s in (".LOG1", ".LOG2", ".LOG") if os.path.isfile(hive_path + s)]
-    out["transaction_logs_replayed"] = False
+    out.update(hive_state(h, hive_path))
     out["hive_type"] = hive_kind(h)
     out["hive_bounds"] = {"hive_bytes": bounds.hive_bytes, "most_keys": bounds.key_cells, "most_values": bounds.value_cells,
                           "subkey_elements_read": bounds.keys_read, "repeated_subkey_elements_skipped": bounds.repeats}
@@ -2698,6 +2733,43 @@ def refuse(message, **extra):
     close_values()
     emit({"ok": False, "error": message, "status": "failed", "status_basis": "the tool stopped with an error (see error); no key was read", **extra})
     sys.exit(1)
+
+
+def regipy_release():
+    try:
+        from importlib.metadata import version
+        return version("regipy")
+    except Exception:
+        return None
+
+
+def answer_missing(hive, key, gone):
+    """The key is not in the hive that was read: an answer (ok, found: false, exit 0), not a failure. It is complete only when every subkey list
+    on the way down the path was read whole and the hive is not dirty; otherwise it is partial and the basis says why the key may still exist."""
+    there = print_order(gone.there, "key")
+    problems = gone.problems
+    reasons = []
+    if problems:
+        reasons.append("%d problem(s) are named under problems: a subkey list on the path was not read whole, or holds a name that could not be decoded" % len(problems))
+    if LibraryLog.messages:
+        reasons.append("regipy logged %d message(s) while reading (library_messages_withheld)" % LibraryLog.messages)
+    caveat = dirty_caveat(gone.state)
+    if caveat:
+        reasons.append(caveat)
+    read = ("the hive was opened and the path walked from its root: %d of the %d part(s) of the key asked for were matched (deepest_found), and the subkey list of "
+            "that key holds %d name(s), none of them the next part (missing), compared without regard to case" % (gone.matched, gone.asked, len(there)))
+    basis = (read + "; that list and every list above it was read to its end without a problem, and the hive is not dirty") if not reasons \
+        else (read + "; the key is not shown absent: " + "; ".join(reasons))
+    out = {"ok": True, "found": False, "parser": PARSER, "regipy_version": regipy_release(), "hive": hive, "key": key,
+           "status": "partial" if reasons else "complete", "status_basis": basis,
+           "deepest_found": gone.found, "missing": gone.missing, "path_parts_matched": gone.matched, "path_parts_asked": gone.asked,
+           "subkeys_there": there[:INLINE_NAMES], "subkeys_there_count": len(there), "subkeys_there_not_shown": max(len(there) - INLINE_NAMES, 0),
+           "subkeys_there_note": "the first %d names of the key that was reached, in order; read that key to list them all (all_subkeys)" % INLINE_NAMES,
+           "problems": problems[:INLINE_PROBLEMS], "problem_count": len(problems), "library_messages_withheld": LibraryLog.messages,
+           **gone.state, "hive_type": gone.hive_type}
+    OWN_NAMES.add(basis)                                      # made of counts and the tool's own words
+    emit(out, indent=1)
+    close_values()
 
 
 def main():
@@ -2746,17 +2818,11 @@ def main():
     try:
         out = dump(hive, key, recurse, depth, limit, max_nodes)
     except KeyMissing as gone:
-        there = print_order(gone.there, "key")
-        refuse('key not found', key=key, deepest_found=gone.found, missing=gone.missing, subkeys_there=there[:INLINE_NAMES],
-               subkeys_there_count=len(there), subkeys_there_not_shown=max(len(there) - INLINE_NAMES, 0),
-               subkeys_there_note="the first %d names of the key that was reached, in order; read that key to list them all (all_subkeys)" % INLINE_NAMES)
+        answer_missing(hive, key, gone)
+        return
     except Exception as exc:                                  # not a hive, or one regipy cannot open
         refuse("could not read the hive", hive=hive, reason="%s: %s" % (type(exc).__name__, exc))
-    try:
-        from importlib.metadata import version
-        regipy_version = version("regipy")
-    except Exception:
-        regipy_version = None
+    regipy_version = regipy_release()
     reasons = []
     if out["problem_count"]:
         reasons.append("%d problem(s) are named under problems" % out["problem_count"])
@@ -2764,7 +2830,10 @@ def main():
         reasons.append("%d branch(es) were not entered (stopped_branches)" % out["stopped_branch_count"])
     if out["nodes_listed"] > INLINE_NODES:
         reasons.append("the inline listing holds the first %d keys (the rest are in all_subkeys)" % INLINE_NODES)
-    out = {"parser": PARSER, "regipy_version": regipy_version, "hive": hive,
+    caveat = dirty_caveat(out)
+    if caveat:
+        reasons.append(caveat)
+    out = {"found": True, "parser": PARSER, "regipy_version": regipy_version, "hive": hive,
            "status": "partial" if reasons else "complete",
            "status_basis": "; ".join(reasons) if reasons else "every subkey and value list the answer needed was read to its end: no problem is named and no branch was left unentered", **out}
     OWN_NAMES.add(out["status_basis"])                       # made of counts and the tool's own words
