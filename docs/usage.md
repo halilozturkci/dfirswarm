@@ -912,8 +912,19 @@ added late included), every capture, every whole output kept under
 UTF-16LE, each file streamed whole, bytes and strings only. The result is a
 line of `ledger/sweeps.jsonl` (chained, bound to the record's hash): clean,
 hits (in objects neither the record's refs nor the outputs among its
-result_refs name), or partial (what the budget did not reach, each named;
-`SWARM_SWEEP_MAX_BYTES`, 16 GiB, and `SWARM_SWEEP_MAX_SEC`, 1800, set it). A
+result_refs name), or partial (what a pass's budget did not reach;
+`SWARM_SWEEP_MAX_BYTES`, 16 GiB, and `SWARM_SWEEP_MAX_SEC`, 1800, set a
+pass). The search runs in a process of its own, one pass at a time: a pass
+serves every coverage record that waits when it starts and reads each
+object once for all of them, keeps what it found by object and string
+(`ledger/sweeps/cache/`), so a later record with the same strings reads
+nothing, and the next pass goes on where a budget stopped the last, until
+the record is clean or has hits; a store larger than the budget is swept in
+several passes. A line names up to 50 unsearched objects; past that it
+holds their count by reason and by directory and names a side file with
+every one (`ledger/sweeps/unsearched-<sha256>.jsonl`, whose sha256 the
+chained line carries; the file stays with the run and is not in a
+package). A
 negative resting on the record waits for its sweep (`sweep_pending`); a hit
 outside it holds the negative until the record is recorded again naming that
 object, with what it showed, or the answer is revised (`sweep_hits`). What it

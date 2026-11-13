@@ -1271,6 +1271,14 @@ export class Hub {
     } catch (err) {
       this.log(`store sweeps read again: ${(err as Error).message}`);
     }
+    // A coverage record whose sweep a crash lost is swept now, not when the finish gate first asks (on the run s082123
+    // four such sweeps ran 85 to 89 minutes after their records, during the finish, while finish status said ready).
+    try {
+      const SW = await import("../extensions/store-sweep.ts");
+      await SW.reconcileSweepsAtStart(this.cfg.sandbox);
+    } catch (err) {
+      this.log(`store sweeps reconciled at start: ${(err as Error).message}`);
+    }
   }
 
   /**
