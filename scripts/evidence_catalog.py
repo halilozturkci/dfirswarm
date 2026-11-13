@@ -84,15 +84,16 @@ def catalog_slug(rel_under):
     return re.sub(rb"[^A-Za-z0-9._-]", b"_", os.fsencode(rel_under)).decode("ascii")
 
 
-SEGMENT = re.compile(r"^(?P<stem>.+)\.(?P<ext>[Ee][0-9][0-9]|[Ee][A-Za-z][A-Za-z]|[Ee][Xx][0-9][0-9]|[Ss][0-9][0-9]|[0-9][0-9][0-9])$")
-FIRSTS = ("E01", "e01", "Ex01", "ex01", "EX01", "S01", "s01", "001")
+SEGMENT = re.compile(r"^(?P<stem>.+)\.(?P<ext>[Ee][0-9][0-9]|[Ee][A-Za-z][A-Za-z]|[Ee][Xx][0-9][0-9]|[Ss][0-9][0-9]|[0-9][0-9][0-9]|[Aa][Dd][1-9][0-9]{0,3})$")
+FIRSTS = ("E01", "e01", "Ex01", "ex01", "EX01", "S01", "s01", "001", "ad1", "AD1", "Ad1")
 
 
 def continuation_of(path):
     """The first segment's name when `path` is a further segment of a set whose
     first segment is beside it; None otherwise. EWF counts .E01 … .E99 .EAA …
-    (.Ex01 for EnCase 7), split raw .001 .002 …; libewf and The Sleuth Kit read
-    the whole set from its first segment, so only that one is catalogued."""
+    (.Ex01 for EnCase 7), split raw .001 .002 …, FTK Imager's AD1 .ad1 .ad2 …;
+    libewf, The Sleuth Kit and the AD1 reader read the whole set from its first
+    segment, so only that one is catalogued."""
     base = os.path.basename(path)
     m = SEGMENT.match(base)
     if not m or m.group("ext") in FIRSTS:
@@ -102,6 +103,16 @@ def continuation_of(path):
         if os.path.isfile(os.path.join(os.path.dirname(path), first)):
             return first
     return None
+
+
+def segment_order(path):
+    """The order of a set's further segments: by bytes, which is the count for
+    EWF and split raw, and by number for AD1, whose .ad10 comes after .ad9 (the
+    AD1 reader takes segment k from the k-th path it is given)."""
+    m = SEGMENT.match(os.path.basename(path))
+    if m and m.group("ext")[:2].lower() == "ad":
+        return (int(m.group("ext")[2:]), os.fsencode(path))
+    return (0, os.fsencode(path))
 
 
 def shown(name):
@@ -265,7 +276,7 @@ class Catalog:
         # knows no format).
         inputs_dir = os.path.join(self.sandbox, "inputs")
         self.collections = [{"input": "inputs/" + os.path.relpath(first, inputs_dir),
-                             "members": ["inputs/" + os.path.relpath(p, inputs_dir) for p in [first] + sorted(rest, key=os.fsencode)]}
+                             "members": ["inputs/" + os.path.relpath(p, inputs_dir) for p in [first] + sorted(rest, key=segment_order)]}
                             for first, rest in sorted(sets.items(), key=lambda kv: os.fsencode(kv[0]))]
         for img in found:
             rel_under = os.path.relpath(img, os.path.join(self.sandbox, "inputs"))
@@ -287,7 +298,7 @@ class Catalog:
                 self.cover(rel_raw, size, "segment", "a further segment of %s: the set is read, and catalogued, from that one" % first)
                 continue
             slug = catalog_slug(rel_under)
-            paths = [img] + sorted(sets.get(img, []), key=os.fsencode)
+            paths = [img] + sorted(sets.get(img, []), key=segment_order)
             target = {"paths": paths, "name": rel_raw, "ref": "input:" + rel_under}
             self.one(rel_raw, rel, size, slug, target)
         self.write(segments_skipped, segment_sets)
