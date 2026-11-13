@@ -60,7 +60,7 @@ import { join } from "node:path";
 import * as L from "./leads.ts";
 import * as NB from "./negative-bar.ts";
 import * as P from "./protocol.ts";
-import { boundItems } from "../scripts/reply-bound.ts";
+import { boundItems } from "./reply-bound.ts";
 import { firstLine } from "./answer-format.ts";
 
 export const FINISH_LOG = "leads/finish.jsonl";

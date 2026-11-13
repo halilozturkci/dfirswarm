@@ -4,7 +4,7 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { boundItem, boundItems, boundRpcAnswer, rpcAnswerMax, UNBOUNDED_FNS } from "../scripts/reply-bound.ts";
+import { boundItem, boundItems, boundRpcAnswer, rpcAnswerMax, UNBOUNDED_FNS } from "../extensions/reply-bound.ts";
 import { HANDOFF_LEADS_MAX, handoffLeads } from "../extensions/self-compact.ts";
 
 test("an answer past the bound is kept whole and named, not sent; one within it goes as it is", async () => {

@@ -95,7 +95,7 @@ import { bindJobGrants, checkJobGrants, fetchForSeat, netTick, netViewFor, reque
 import { readCasePolicy } from "./case-policy.ts";
 import { resolveScope, scopeKindOf } from "./job-scope.ts";
 import { commandNames, freshCoverage, libraryHint, shortHint, type CoverageHint, type ShortHint } from "./library-hint.ts";
-import { boundRpcAnswer } from "./reply-bound.ts";
+import { boundRpcAnswer } from "../extensions/reply-bound.ts";
 import { jobsListing, storeFind } from "./store-find.ts";
 import { loopMonitor, sampleHealth, snapshotAt, snapshotDue } from "./hub-health.ts";
 import { sensitiveIndex } from "./output-hygiene.ts";
@@ -2062,7 +2062,7 @@ export class Hub {
           try {
             const fn = String(msg.fn ?? "");
             const raw = await this.callOnce(agent, fn, args, controller.signal, msg.rid);
-            // The wall behind every bounded source (reply-bound.ts): an answer past it is kept whole and named, never sent.
+            // The wall behind every bounded source (extensions/reply-bound.ts): an answer past it is kept whole and named, never sent.
             const { answer: result, cut } = await boundRpcAnswer(fn, raw, async (text) => {
               const kept = await P.keepToolOutput(this.cfg.sandbox, P.toolOutputRel("harness", `answer-${fn}`, "text"), text);
               return kept.write_error ? { write_error: kept.write_error } : { path: kept.path, bytes: kept.bytes, sha256: kept.sha256 };
