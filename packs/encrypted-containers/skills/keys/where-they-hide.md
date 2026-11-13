@@ -31,8 +31,8 @@ headers and conventional key-file names. Only if you report what it found:
 `keys/recovery-key-scan` says what it shows and does not.
 
 **ioc_scan** finds a literal you name, in ASCII and UTF-16LE, in a file or an image;
-use it for a known identifier or a phrase such as the name of a key file. Its hits
-carry context snippets that can themselves be the secret.
+use it for a known identifier or a key file's name. It answers with locators; the
+bytes around a hit can be the secret and need `write_values`.
 
 Only if the key may sit in a password store, a memory image, an escrow record or shell history: `keys/other-sources`.
 

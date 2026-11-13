@@ -1,7 +1,7 @@
 {
   "id": "reverse-engineering",
   "name": "Reverse Engineering Pack",
-  "version": "1.16.14",
+  "version": "1.16.15",
   "description": "Static triage of a binary or a document under quarantine: what the file actually is, PE and ELF structure, entropy and packing, obfuscated strings, capability mapping, macros and embedded objects, and rules. Nothing from the evidence is ever executed.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -64,7 +64,7 @@
       "skills/rules/authoring.md": "69f5cc20f032ed367ef83cab58b64de51c135c217fc6aa9f4f224db71ceb2cb1",
       "skills/rules/yara.md": "2213f557ec06ae3b6f81a3462ca45406a24c2556c3350e3cfbd5b582ae3d84f3",
       "skills/runtimes/go-rust.md": "201ca852f9e13d07f7066b383c35ad9f888598981eb75125aa36026dd23e9f59",
-      "skills/runtimes/python-packaged.md": "cff9431a9876d09b2321729ca4d3d7a9086c1ce570766df1d87866368422c0e6",
+      "skills/runtimes/python-packaged.md": "6e25df7b442aaedb664811748f4111b6551e1f0b78faa6567bbf5263b7078c17",
       "skills/scripts/static-analysis.md": "6379f5106767d8dde5c85a43202d4a02f43bb218f2ccea538ee538bd1b5496b3",
       "skills/strings/decoding-and-similarity.md": "cf3625d59f59ebc9d4c84c705c37d3d50f0fa7989c959aa6ce54bfef73a990e7",
       "skills/strings/obfuscated.md": "0113316f5746fc5739244b717bf0c5ef02d5d83b47c253a23a5d51f9b07a2eb5",

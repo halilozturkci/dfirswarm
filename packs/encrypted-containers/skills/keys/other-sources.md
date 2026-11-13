@@ -14,7 +14,7 @@ Browser password stores, password managers and keychains are protected by the
 account's own material, and this pack provides no reader that decrypts them. When
 the question asks for what a store holds, examine it with what the run has, within
 the case's authority: say where it is, read its rows without printing the values
-(`sqlite_query` in a job with `secret_output: true`: the base pack's
+(`sqlite_query`, `write_values` and `table`, in a secret-output job:
 `data/sqlite-secrets`) and name what would open it. A Chromium `v10` or `v11` value
 needs the profile key, which `Local State` holds wrapped by DPAPI; a Firefox login
 needs `key4.db` and the primary password. Before attacking DPAPI, look where the
