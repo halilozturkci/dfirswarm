@@ -1,23 +1,55 @@
 {
   "name": "ad1_extract",
-  "description": "Write the files and folders of an AccessData AD1 logical image (version 4, unencrypted) out as a tree, each file inflated, hashed (SHA-256) and checked against the MD5 and SHA-1 the image records, with a manifest (ad1_extract.tsv) of what went where and ad1_extract.coverage.json (written as incomplete before the first item). Two statuses, kept apart: processing_status (complete, partial, failed: were all items written) and integrity_status (verified, mismatch, unverified, not_applicable: does what was written match the recorded digests); ok is true only for a complete extraction with no mismatch, while the exit status is 0 for a complete one and for one a budget stopped between items (the files were written and the answer says where it stopped; a mismatch is a finding about the image) and 1 when an item broke or could not be written. Data the tree does not lead to is read to its end under the call's clock, in 1 MiB blocks: non-zero bytes in it, or a read the clock stopped before its end, make the answer partial and the integrity unverified, never complete and verified; unreferenced_data says how much was read and where it stopped, counts the gaps with non-zero bytes or not read to their end, lists the first 20 and keeps every one (at most 100,000) in ad1_extract.gaps.jsonl. Budgets (max_items, max_walk, max_bytes, max_ratio, max_seconds) bound the call; one that is reached stops it, keeps what it wrote, and says so. max_ratio holds the bytes written to max_ratio times the bytes of the image's content read (default 1000, as in archive_extract); past it the call stops and names the ratio. A broken or cut file is kept as <name>.partial under a name no other item of its directory holds, and its row's size and sha256 are of the bytes kept. Extracted files carry the host's timestamps, not the item's recorded ones (the manifest and the catalogue's members.tsv have those, with no zone the image records). Run it as a job (job_run tool=ad1_extract) so the files are sealed into the store and the derived catalogue takes them in turn (an archive or a disk image inside). The catalogue's members.tsv for the image (recipe ad1-items) gives the item numbers. SIGTERM, SIGINT and SIGHUP end it with one JSON answer (partial, with interrupted true and the signal, and what was done), exit 128 plus the signal, and the removal of the hidden file it was writing; the program it was running is ended by its pid.",
+  "description": "List, or write out, the files and folders of an AccessData AD1 logical image (version 4, unencrypted). FOUR WAYS TO CALL IT. (1) list: true writes nothing of the image out: every item as a row n, locator, type, size, path in ad1_list.tsv under out_dir, the first rows (show, default 50) in the answer; about 15 s for 400,000 items. (2) members, members_file or paths write the items named, a folder with its subtree: members is a list of item numbers (n, as numbers) or locators (the text ad1:item=<address>); members_file is a file of them (one a line, or a table whose locator or n column is taken: a members.tsv, an ad1_list.tsv, cut to the rows wanted; column names another column); paths is a list of patterns matched against an item's whole path, letter case aside (* any run of characters, / included; ? one). (3) Nothing named: a small image is written out whole; one past whole_guard_items items (50,000) or whole_guard_bytes of content (2 GiB) is NOT written, the call answers with the list as in (1) and says so in whole_not_written. (4) whole: true writes the whole tree, whatever its size. Each file written is inflated, hashed (SHA-256) and checked against the MD5 and SHA-1 the image records, with a manifest (ad1_extract.tsv) of what went where and ad1_extract.coverage.json (written as incomplete before the first item). THE WALK STOPS EARLY: a call that names files by number or locator stops once every one of them is written (walk.stopped_early_at); the rest of the image is not looked at and the image-wide checks are not run, which image_status (not_checked) and unreferenced_check (not_run) say. A call that takes a subtree (a folder that was named, an item with children) is walked to the end and checked, since a subtree is whole only if the tree is. TWO THINGS ARE JUDGED APART. selection (the same as status and processing_status: complete, partial, failed) is whether the items asked for were written; for files named by number or locator what is wrong elsewhere in the image (a segment that is not there, an item that cannot be read, data nothing leads to) is in image_status and image_errors and does not make it partial, unless it may have cut what was asked for. For a folder's subtree, paths, the whole tree and a list the image's errors are the call's: a list cannot be whole unless the tree is. image_status is complete (the tree was walked to its end, every item read, and the data it leads to accounts for the image's), partial, or not_checked. integrity_status (verified, mismatch, unverified, not_applicable) is whether what was written matches the recorded digests: it is of the files written, and integrity_note says when the unreferenced-data check did not run. ok is true only for a complete selection with no mismatch; the exit status is 0 for a complete one and for one a budget stopped between items (the files were written and the answer says where it stopped; a mismatch is a finding about the image), and 1 when an item broke or could not be written or a selector named no item. status_basis names the causes that applied, and no other. SELECTORS: a number given as text (\"52330\") is taken as that item number and said in adjusted; a locator whose value is no item's address but is an item's number, and a number that is no item's number but is an item's address, are answered with the item meant (did you mean), and nothing is written for them. When the walk reaches the end of the tree, data the tree does not lead to is read to its end under the call's clock, in 1 MiB blocks: non-zero bytes in it, or a read the clock stopped before its end, make a whole-tree, subtree, paths or list answer partial and its integrity unverified, never complete and verified; unreferenced_data says how much was read and where it stopped, counts the gaps with non-zero bytes or not read to their end, lists the first 20 and keeps every one (at most 100,000) in ad1_extract.gaps.jsonl. Budgets (max_items, max_walk, max_bytes, max_ratio, max_seconds) bound the call; one that is reached stops it, keeps what it wrote, and says so. max_ratio holds the bytes written to max_ratio times the bytes of the image's content read (default 1000, as in archive_extract); past it the call stops and names the ratio. A broken or cut file is kept as <name>.partial under a name no other item of its directory holds, and its row's size and sha256 are of the bytes kept. Extracted files carry the host's timestamps, not the item's recorded ones (the manifest and the catalogue's members.tsv have those, with no zone the image records). Run it as a job (job_run tool=ad1_extract) so the files are sealed into the store and the derived catalogue takes them in turn (an archive or a disk image inside). In a job every path the answer names is the store's (out_dir, manifest, list, coverage as job:<id>/<path>; out_relative is the path under $OUT), never the staging directory, which is gone once the job is sealed. The item numbers and locators come from a list: true call or from the catalogue's members.tsv for the image (recipe ad1-items). SIGTERM, SIGINT and SIGHUP end it with one JSON answer (partial, with interrupted true and the signal, and what was done), exit 128 plus the signal, and the removal of the hidden file it was writing; the program it was running is ended by its pid.",
   "params": {
     "image": {
       "type": "string",
       "description": "The AD1 image's first segment (.ad1), under inputs/ or a job's output under store/; its further segments are looked for beside it (x.ad2, ...)",
       "required": true
     },
+    "list": {
+      "type": "boolean",
+      "description": "true: extract nothing; write the list of items (n, locator, type, size, path) to ad1_list.tsv under out_dir and give the first rows in the answer. With members, members_file or paths, the list is of what the same call without list would write"
+    },
     "members": {
       "type": "array",
-      "description": "Items from the catalogue's members.tsv for this image: their locators (ad1:item=<address>, the same in a partial and a whole read) or their numbers (n); a folder takes its subtree. Default: every item"
+      "description": "Items to write, from a list: true call or the catalogue's members.tsv: their numbers (n, as numbers: 1234; a string of digits is taken as the number, and said) or their locators (the text ad1:item=<address>, the same in a partial and a whole read); a folder takes its subtree. Never ad1:item=<n>. For files the walk stops once they are written; for a folder it goes to the end of the tree"
+    },
+    "members_file": {
+      "type": "string",
+      "description": "A file of selectors in place of, or added to, members: one a line (a locator or a number), or a tab-separated table (a members.tsv, an ad1_list.tsv, a catalog_search result cut to the rows wanted) whose locator column, else its n column, is taken; empty lines and lines that start with # are passed over. A value that is neither a locator nor a number refuses the call, with its line"
+    },
+    "column": {
+      "type": "string",
+      "description": "With members_file: the column that holds the selectors, by its header's name (locator, n) or its number from 1"
+    },
+    "paths": {
+      "type": "array",
+      "description": "Patterns matched against an item's whole path as the list shows it, letter case aside: * is any run of characters (/ included), ? is one; at most 64. An item that matches is written, a folder with its subtree: [\"*/Users/*/NTUSER.DAT\", \"*.evtx\"]. The tree is walked to its end (a later item may match). A pattern with ? is not tried on a path longer than 1024 characters, which the answer says and counts as partial"
+    },
+    "whole": {
+      "type": "boolean",
+      "description": "true: write the whole tree, whatever the image's size. Without it a call that names no members, members_file or paths writes a small image out and answers for a large one with its list"
+    },
+    "whole_guard_items": {
+      "type": "integer",
+      "description": "The most items an image may hold for a call that names nothing to write it out without whole: true (default 50,000)"
+    },
+    "whole_guard_bytes": {
+      "type": "integer",
+      "description": "The most bytes of content an image may hold for the same (default 2 GiB)"
+    },
+    "show": {
+      "type": "integer",
+      "description": "Rows of a list given in the answer itself (default 50, at most 500); every row is in ad1_list.tsv"
     },
     "out_dir": {
       "type": "string",
-      "description": "A new or empty directory for the tree. Default: in a job $OUT/<image name less .ad1> (in a job it must be inside $OUT, and a relative one is taken under $OUT, said in adjusted); called directly, work/<your id>/ad1/<image name less .ad1>"
+      "description": "A new or empty directory for the tree or the list. Default: in a job $OUT/<image name less .ad1> (in a job it must be inside $OUT, and a relative one is taken under $OUT, said in adjusted); called directly, work/<your id>/ad1/<image name less .ad1>"
     },
     "max_items": {
       "type": "integer",
-      "description": "Most items taken in this call (default 5,000,000); past it the call stops and says so"
+      "description": "Most items taken (written or listed) in this call (default 5,000,000); past it the call stops and says so"
     },
     "max_walk": {
       "type": "integer",
@@ -39,7 +71,7 @@
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 1800,
-  "example": "{\"image\": \"inputs/disk.ad1\"}",
+  "example": "{\"image\": \"inputs/disk.ad1\", \"list\": true}",
   "use": {
     "extensions": [
       ".ad1"
@@ -53,6 +85,6 @@
   },
   "by": "maintainer",
   "at": "2026-10-01T12:00:00.000Z",
-  "version": 15,
-  "sha256": "a62cd1e98bb277f1a975cc8767708ea217ffe71d1ccf5fbf82e5bd8ffba5010b"
+  "version": 16,
+  "sha256": "39ab931d915af8043143fae8b57da2a04d88b17b5eeaf09c9a4506b2fce87c16"
 }

@@ -47,6 +47,57 @@ class ChunkNeedles(Case):
         self.assertEqual(self.read(self.argv_file).split(), ["-b", "4096", "-o", "2048", "inputs/disk.E01", "168-128-4"])
         self.assertEqual(r.json["hits"]["needle"]["ascii"], 1)
 
+    def test_a_segment_of_a_compressed_container_is_said_not_to_have_been_searched(self):
+        """One segment of a zlib-compressed AD1 set answered complete, "the whole stream was read" (the run s5d814f, j000009 and j000019):
+        true of the file, and read as a search of the evidence. The fixtures are the formats' own first bytes."""
+        import gzip
+        import io
+        import struct
+        import zipfile
+        import zlib
+        # Segment 3 of 12 of an AD1 image: the segment header (its number at 0x18, the set's size at 0x1c), then deflated content
+        # that holds the needle, and the needle once as stored text (an item's name is stored as text).
+        ad1 = bytearray(512)
+        ad1[:16] = b"ADSEGMENTEDFILE\x00"
+        struct.pack_into("<IIQI", ad1, 0x18, 3, 12, 1 << 20, 512)
+        ad1 = bytes(ad1) + b"name:needle.txt" + zlib.compress(b"the needle inside the content " * 50)
+        r = self.file_run(ad1, "needle")
+        self.assertEqual(r.code, 0, r.stdout)
+        self.assertEqual((r.json["status"], r.json["complete"], r.json["hits"]["needle"]["ascii"]), ("partial", False, 1))
+        self.assertEqual(r.json["container"]["what"], "segment 3 of 12 of an AccessData AD1 logical image")
+        self.assertEqual((r.json["container"]["segment"], r.json["container"]["segments"], r.json["container"]["content_searched"]), (3, 12, False))
+        basis = r.json["status_basis"]
+        self.assertTrue(basis.startswith("the stream is segment 3 of 12 of an AccessData AD1 logical image; it is one segment of a set, and the other 11 were not read at all. "
+                                         "Its content is compressed or packed and was not searched"), basis)
+        self.assertIn("a needle that was not found is not shown to be absent from the content", basis)
+        self.assertIn("ad1_extract", basis)
+        self.assertTrue(basis.endswith("Of the stored bytes: the whole stream was read and every occurrence in it is reported"), basis)
+        self.assertEqual(r.json["scanned_bytes"], len(ad1))
+        # An EWF segment (E01): the signature, then the segment number; a set's size is not in a segment's header.
+        e01 = b"EVF\x09\x0d\x0a\xff\x00\x01\x02\x00\x00\x00" + b"\x00" * 64
+        r = self.file_run(e01, "needle")
+        self.assertEqual((r.json["status"], r.json["complete"], r.json["container"]["what"]), ("partial", False, "segment 2 of an EnCase EWF image (E01)"))
+        self.assertIn("it is one segment of a set, and the others were not read at all", r.json["status_basis"])
+        # Common archives, each made by the library that writes the format.
+        z = io.BytesIO()
+        with zipfile.ZipFile(z, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("a.txt", "needle " * 100)
+        for data, what in ((z.getvalue(), "a ZIP archive"), (gzip.compress(b"needle " * 100), "a gzip stream"),
+                           (__import__("bz2").compress(b"needle " * 100), "a bzip2 stream"), (__import__("lzma").compress(b"needle " * 100), "an xz stream"),
+                           (b"7z\xbc\xaf\x27\x1c\x00\x04" + b"\x00" * 40, "a 7z archive"), (b"Rar!\x1a\x07\x01\x00" + b"\x00" * 40, "a RAR archive")):
+            r = self.file_run(data, "needle")
+            self.assertEqual((r.json["status"], r.json["complete"], r.json["container"]["what"], r.json["container"].get("segment")), ("partial", False, what, None), what)
+            self.assertIn("Its content is compressed or packed and was not searched", r.json["status_basis"], what)
+        # The same through icat: the inode's content is the archive.
+        r = self.inode_run(z.getvalue(), "needle")
+        self.assertEqual((r.json["status"], r.json["complete"], r.json["container"]["what"]), ("partial", False, "a ZIP archive"))
+        # A stream that is none of them is as before: complete, with no container, and the basis it always had. A magic that is not at
+        # the start, or bytes that only resemble one (BZ without a level digit), name nothing.
+        for data in (b"plain text with a needle in it", b"x" + z.getvalue(), b"BZhello needle", b"ADSEGMENTEDFILE needle", b""):
+            r = self.file_run(data, "needle")
+            self.assertEqual((r.json["status"], r.json["complete"], r.json.get("container")), ("complete", True, None), data[:20])
+            self.assertEqual(r.json["status_basis"], "the whole stream was read and every occurrence in it is reported")
+
     def test_without_a_sector_size_icat_gets_no_b(self):
         self.inode_run(b"needle", "needle")
         self.assertEqual(self.read(self.argv_file).split(), ["-o", "2048", "inputs/disk.E01", "12"])

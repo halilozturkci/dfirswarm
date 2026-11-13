@@ -52,9 +52,12 @@ Platform-specific artefact knowledge lives in the packs that depend on this one.
 `timestamp_decode`, `ad1_extract`, `archive_extract`, `sqlite_snapshot`,
 `image_verify`, `layer_describe`, `byte_range_extract`, `browser_storage`. `file_type` to `timestamp_decode` arrived
 with the packs that depend on this one: a tool every pack would have carried
-belongs here once, not in each of them. `ad1_extract` writes an AccessData
-AD1 logical image's files out, checked against the digests the image
-records; run as a job, what it writes is catalogued in turn. `archive_extract`
+belongs here once, not in each of them. `ad1_extract` lists an AccessData
+AD1 logical image's items (`list: true`, nothing written out) and writes its
+files out, checked against the digests the image records: the items named
+(`members`, `members_file`, `paths`), where the walk stops once they are written
+and the selection is judged apart from the image, or the whole tree (a large
+image's only with `whole: true`); run as a job, what it writes is catalogued in turn. `archive_extract`
 writes the members of a zip, tar (gzip, bzip2, xz, zstd), 7z, RAR (through 7zz) or single compressed
 file into a private directory under byte, ratio, member, depth and time budgets, and never
 recreates a link or a device. `image_verify` gives a receipt for an EWF set: each
@@ -100,7 +103,10 @@ digests the image records and a locator, each file inflated to check them,
 every address, count and chain the image names held to what the image can hold
 before it is followed, a metadata chain that items share written once, the data
 no item leads to counted (a lost item makes the answer partial), nothing
-extracted; `ad1_extract` writes the files out. `memory-windows` is a
+extracted; `ad1_extract` writes the files out. It runs in two phases: the
+listing is whole on disk, and its coverage record says "listing complete;
+digests pending", before any content is inflated; `RECIPE_PHASE=listing` ends
+it there. `memory-windows` is a
 broad extraction of a Windows memory image, Volatility's standard views of
 the whole of it. `disk-timeline` is a broad extraction of a disk image,
 Plaso's log2timeline over every partition and volume and a psort CSV timeline;

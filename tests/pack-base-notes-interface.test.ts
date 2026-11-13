@@ -55,7 +55,7 @@ function examples(body: string, tool: string, fill: (text: string) => string): A
   });
 }
 
-test("evidence/ad1 shows members by locator and by number, one example of each, and both take the same item", async () => {
+test("evidence/ad1 says to list first, then shows members by locator and by number, one example of each, and both take the same item", async () => {
   const { front, body } = await note("evidence/ad1");
   const flat = body.replace(/\s+/g, " ");
   // The rule, in the prose and in the card a seat is shown with a call it makes without holding the note.
@@ -69,10 +69,16 @@ test("evidence/ad1 shows members by locator and by number, one example of each, 
   assert.doesNotMatch(flat, /Declare every segment/);
   assert.match(flat, /Name the first segment only, in `image` and in `inputs`: the job is given the image's whole segment set from it\./);
   const lines = body.split("\n").filter((l) => /^ {4}job_run tool=ad1_extract /.test(l));
-  assert.equal(lines.length, 2, "one example of each form");
+  assert.equal(lines.length, 3, "the list first, then one example of each form of members");
   assert.ok(lines.every((l) => l.endsWith('inputs=["input:case.ad1"]')), "each declares the first segment and no other");
-  assert.match(lines[0], /"members": \["ad1:item=<address>"\]/);
-  assert.match(lines[1], /"members": \[<n>\]/);
+  assert.match(lines[0], /"list": true/);
+  assert.match(lines[1], /"members": \["ad1:item=<address>"\]/);
+  assert.match(lines[2], /"members": \[<n>\]/);
+  // List first, then targeted members; the whole tree only on purpose (the Batman III runs: six seats each walked the whole image).
+  assert.match(card, /List first \(\{"list": true\}: no file written; rows n, locator, type, size, path\), then name what you need/);
+  assert.match(card, /The whole tree only with whole: true\./);
+  assert.match(flat, /Naming nothing writes a small image out and answers for a large one with the list: `whole: true` writes the whole tree/);
+  assert.match(flat, /A `members` call for files stops once they are written: `selection` answers for them, and `image_status: not_checked` says the image-wide checks did not run\. A folder, whole or `paths` call walks to the end/);
 
   await withRun(async (run) => {
     const tree = [{ name: "C:", folder: true, children: [{ name: "a.txt", content: Buffer.from("first") }, { name: "wanted.txt", content: Buffer.from("the one asked for") }] }];
@@ -88,7 +94,16 @@ test("evidence/ad1 shows members by locator and by number, one example of each, 
     assert.match(locator, /^ad1:item=\d+$/);
     assert.notEqual(locator, `ad1:item=${n}`, "an item's number is not its address");
 
-    const calls = examples(body, "ad1_extract", (t) => t.replace("ad1:item=<address>", locator).replace("<n>", n));
+    const all = examples(body, "ad1_extract", (t) => t.replace("ad1:item=<address>", locator).replace("<n>", n));
+    // The list the note says to take first: no file of the image, and the two columns the other forms are written from.
+    assert.deepEqual(all[0], { image: "inputs/case.ad1", list: true });
+    const listed = await runPy(AD1_EXTRACT, run, { ...all[0], out_dir: "work/s1/listed" }, undefined, { AGENT_ID: "s1" });
+    assert.equal(listed.code, 0, listed.stdout + listed.stderr);
+    const l = JSON.parse(listed.stdout) as Answer;
+    assert.deepEqual([l.mode, l.rows_total, l.columns], ["list", 3, ["n", "locator", "type", "size", "path"]]);
+    assert.deepEqual(l.rows.find((r: Answer) => r.path === "C:/wanted.txt"), { n: Number(n), locator, type: "file", size: 17, path: "C:/wanted.txt" }, "the list and the catalogue name the item alike");
+    await assert.rejects(readFile(join(run, "work", "s1", "listed", "C:", "wanted.txt")), "a list writes no file of the image out");
+    const calls = all.slice(1);
     assert.deepEqual(calls.map((c) => c.members), [[locator], [Number(n)]]);
     for (const [i, args] of calls.entries()) {
       const r = await runPy(AD1_EXTRACT, run, { ...args, out_dir: `work/s1/form-${i}` }, undefined, { AGENT_ID: "s1" });

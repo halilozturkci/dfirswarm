@@ -1412,6 +1412,8 @@ export type StoreJobRow = {
   similar: StoreSimilar[];
   /** Its job_same_as line's entries, whole: its files that are an earlier job's output byte for byte. */
   same_as: StoreSameAs[];
+  /** How many there are in all and where the whole list is: the line keeps the first few of a long list, so a count is read here and never from `same_as`. */
+  same_as_total: { files: number; bytes: number; list: string | null; list_sha256: string | null } | null;
   cancel_requested: string | null;
   parent: string | null;
   note: string | null;

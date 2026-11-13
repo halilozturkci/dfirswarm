@@ -272,7 +272,7 @@ test("ad1_extract takes the items named, a folder with its subtree, and refuses 
     assert.match(JSON.parse(r.stdout).error, why, out_dir);
   }
   const none = await runPy(TOOL, cwd, { image: "inputs/case.ad1", members: [] }, undefined, { AGENT_ID: "s1" });
-  assert.match(JSON.parse(none.stdout).error, /members is a non-empty list of item numbers \(n\) or locators \(ad1:item=<address>\).*leave it out to take every item/);
+  assert.match(JSON.parse(none.stdout).error, /members is a non-empty list of item numbers \(n\) or locators \(ad1:item=<address>\).*leave it out and name paths or members_file, or pass whole: true for every item/);
   const notAd1 = await runPy(TOOL, cwd, { image: "inputs/../work/s1/some/ad1_extract.tsv" }, undefined, { AGENT_ID: "s1" });
   assert.match(JSON.parse(notAd1.stdout).error, /not an AD1 image this tool reads: no ADSEGMENTEDFILE header/);
   assert.deepEqual(readdirSync(join(cwd, "inputs")), ["case.ad1"]);
@@ -288,7 +288,9 @@ test("in a job ad1_extract writes under $OUT, and a file whose content breaks is
   const r = await runPy(TOOL, cwd, { image: "inputs/bad.ad1" }, undefined, { AGENT_ID: "s1", JOB_ID: "j000007", OUT: out });
   assert.equal(r.code, 1, "an item that broke fails the call, after the rest is written");
   const res = JSON.parse(r.stdout);
-  assert.equal(res.out_dir, join(out, "bad"));
+  assert.equal(res.out_dir, "job:j000007/bad", "named as the store will cite it, never by the staging path, which is gone once the job is sealed");
+  assert.deepEqual([res.out_relative, res.manifest, res.coverage], ["bad", "job:j000007/bad/ad1_extract.tsv", "job:j000007/bad/ad1_extract.coverage.json"]);
+  assert.ok(!r.stdout.includes(out), "no staging path anywhere in the answer");
   assert.equal(res.note, undefined, "in a job there is nothing to say about work/");
   assert.match(res.errors[0], /item 8 \(C:\/Users\/alice\/bomb\.bin, ad1:item=\d+\): its chunk 0 inflates past the chunk size of 1024/);
   assert.ok(existsSync(join(out, "bad", "C:", "Users", "alice", "bomb.bin.partial")));
@@ -305,11 +307,12 @@ test("in a job ad1_extract writes under $OUT, and a file whose content breaks is
   const relative = await runPy(TOOL, cwd, { image: "inputs/ok.ad1", out_dir: "tree", max_seconds: 3000 }, undefined, { AGENT_ID: "s1", JOB_ID: "j000007", OUT: out });
   assert.equal(relative.code, 0, relative.stdout);
   const rel = JSON.parse(relative.stdout);
-  assert.equal(rel.out_dir, join(out, "tree"));
+  assert.equal(rel.out_dir, "job:j000007/tree");
+  assert.ok(!relative.stdout.includes(out), "no staging path anywhere in the answer, the adjusted note included");
   assert.ok(existsSync(join(out, "tree", "ad1_extract.tsv")));
   assert.equal(rel.budgets.max_seconds, 1700);
   assert.ok(rel.adjusted.includes("max_seconds 3000 is over this tool's ceiling of 1700: held to 1700"), rel.adjusted);
-  assert.ok(rel.adjusted.some((x: string) => x.startsWith("out_dir 'tree' is relative: in a job it is taken under $OUT")), rel.adjusted);
+  assert.ok(rel.adjusted.some((x: string) => x === "out_dir 'tree' is relative: in a job it is taken under $OUT, as $OUT/tree (job:j000007/tree once the job is sealed)"), rel.adjusted);
   // The bytes written are held to the room where $OUT is, less a margin, and said.
   const fs = statfsSync(out);
   const free = Number(fs.bavail) * Number(fs.bsize);
@@ -459,7 +462,7 @@ test("an item's locator names it in a partial read and in a whole one alike, whe
   const byNumber = await runPy(TOOL, cwd, { image: "inputs/n.ad1", members: [1], out_dir: "work/s1/num" }, undefined, { AGENT_ID: "s1" });
   assert.deepEqual(tsv(join(cwd, "work", "s1", "num", "ad1_extract.tsv")).map((x) => x.path), ["A/B.txt"]);
   const unknown = await runPy(TOOL, cwd, { image: "inputs/n.ad1", members: ["ad1:item=7"], out_dir: "work/s1/none" }, undefined, { AGENT_ID: "s1" });
-  assert.match(JSON.parse(unknown.stdout).errors[0], /no item at ad1:item=7 in this read of the image; the nearest items this read holds are at ad1:item=\d+\. A locator is an item's address as the ad1-items generation's members\.tsv lists it \(catalog_search which=members\), not an offset in a segment file/);
+  assert.match(JSON.parse(unknown.stdout).errors[0], /no item at ad1:item=7 in this read of the image; the nearest items this read holds are at ad1:item=\d+\. A locator is an item's address as the ad1-items generation's members\.tsv lists it \(catalog_search which=members\) or as a list: true call does, not an item number and not an offset in a segment file/);
 });
 
 test("ad1_extract renames every name a file system cannot hold, keeps a file's children beside it, and a name a sibling took stays taken", async () => {
@@ -641,7 +644,7 @@ test("what ad1_extract holds while it walks is the depth of the tree, not the nu
   const wrapper = peakRssPrelude() + "import json, subprocess\n" +
     "p, peak = run_peak([sys.executable, sys.argv[1]], input=sys.argv[2], capture_output=True, text=True)\n" +
     "print(json.dumps({'out': p.stdout, 'peak': peak}))\n";
-  const r = spawnSync("python3", ["-c", wrapper, TOOL, JSON.stringify({ image: "inputs/big.ad1" })], { cwd: d, encoding: "utf8", env: { ...process.env, AGENT_ID: "s1" } });
+  const r = spawnSync("python3", ["-c", wrapper, TOOL, JSON.stringify({ image: "inputs/big.ad1", whole: true })], { cwd: d, encoding: "utf8", env: { ...process.env, AGENT_ID: "s1" } });
   const got = JSON.parse(r.stdout) as { out: string; peak: number };
   const res = JSON.parse(got.out);
   assert.deepEqual([res.processing_status, res.items, res.files, res.folders], ["complete", 100100, 100000, 100]);
@@ -655,7 +658,7 @@ test("a locator with a digit that is not a decimal digit is refused with a messa
     const r = await runPy(TOOL, cwd, { image: "inputs/case.ad1", members: [bad] }, undefined, { AGENT_ID: "s1" });
     assert.equal(r.code, 1, bad);
     assert.doesNotMatch(r.stderr, /Traceback/, bad);
-    assert.match(JSON.parse(r.stdout).error, /an item number \(n\) or a locator/, bad);
+    assert.match(JSON.parse(r.stdout).error, /an item number \(n, as a number: 1234\) or a locator/, bad);
   }
 });
 

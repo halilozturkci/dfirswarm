@@ -1723,8 +1723,9 @@ export async function checkStore(sandbox: string, before = Infinity): Promise<St
   };
   for (const l of checked.lines) {
     if (l.type === "derived_offered") {
-      out.derived.offered += ((l.offered as unknown[]) ?? []).length;
-      out.derived.skipped += ((l.skipped as unknown[]) ?? []).length;
+      // The line's lists are bounded; its totals are the count (a line written before the totals has only its lists).
+      out.derived.offered += typeof l.offered_total === "number" ? l.offered_total : ((l.offered as unknown[]) ?? []).length;
+      out.derived.skipped += typeof l.skipped_total === "number" ? l.skipped_total : ((l.skipped as unknown[]) ?? []).length;
     } else if (l.type === "detect_answered") {
       const rows = (l.rows as Array<{ applies?: boolean | "unknown" }>) ?? [];
       out.derived.detected += rows.length;

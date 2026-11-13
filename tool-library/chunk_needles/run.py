@@ -414,7 +414,7 @@ CHILD = {"proc": None}      # the icat being read, ended by pid on a stop
 PROGRESS = {"scanned": 0}
 
 
-TOOL = {"name": "chunk_needles", "version": 21}
+TOOL = {"name": "chunk_needles", "version": 22}
 CHUNK_DEFAULT = 8 * 1024 * 1024
 CHUNK_MIN, CHUNK_MAX = 16, 256 * 1024 * 1024
 CONTEXT_MAX = 65536
@@ -433,6 +433,51 @@ SECTOR_MAX = 65536
 INODE = re.compile(r"^\d+(-\d+(-\d+)?)?$")
 RESOLVE_SECONDS = 60               # the search for the image under inputs/ (when image= is not given)
 CANDIDATES_MAX = 200               # and the images it keeps before it asks the caller to say which
+HEAD_BYTES = 64                    # the first bytes of the stream, kept to say what kind of file it is
+HEAD = [b""]
+
+# A stream that is a compressed or packed container, by its first bytes: (magic, what it is, how its content is reached). The scan reads
+# the bytes as they are stored, so what the container holds is not searched, and an answer that said "the whole stream was read" over
+# one segment of twelve of a zlib-compressed image was taken for a search of the evidence (the run s5d814f, jobs j000009 and j000019).
+CONTAINERS = (
+    (b"ADSEGMENTEDFILE\x00", "AccessData AD1 logical image", "file content is stored in zlib-compressed chunks (names and metadata are stored as text): write the files out with ad1_extract and scan those"),
+    (b"ADCRYPT", "encrypted AccessData AD1 image", "its content is encrypted: decrypt it, write the files out with ad1_extract and scan those"),
+    (b"EVF\x09\x0d\x0a\xff\x00", "EnCase EWF image (E01)", "its sectors are stored in chunks, compressed unless it was acquired without compression: scan an inode through icat (inode and image) or a file written out of it"),
+    (b"LVF\x09\x0d\x0a\xff\x00", "EnCase EWF logical image (L01)", "its content is stored in chunks, compressed unless it was acquired without compression: scan the files written out of it"),
+    (b"EVF2\x0d\x0a\x81\x00", "EnCase EWF2 image (Ex01)", "its sectors are stored in compressed chunks: scan an inode through icat (inode and image) or a file written out of it"),
+    (b"LEF2\x0d\x0a\x81\x00", "EnCase EWF2 logical image (Lx01)", "its content is stored in compressed chunks: scan the files written out of it"),
+    (b"PK\x03\x04", "ZIP archive", "its members are deflated unless stored: write them out with archive_extract and scan those"),
+    (b"PK\x05\x06", "ZIP archive (empty)", "it has no member"),
+    (b"PK\x07\x08", "ZIP archive (a spanned set)", "its members are deflated unless stored: write them out with archive_extract and scan those"),
+    (b"7z\xbc\xaf\x27\x1c", "7z archive", "its members are compressed: write them out with archive_extract and scan those"),
+    (b"Rar!\x1a\x07", "RAR archive", "its members are compressed unless stored: write them out with archive_extract and scan those"),
+    (b"\x1f\x8b\x08", "gzip stream", "its content is deflated: write it out with archive_extract and scan that"),
+    (b"BZh", "bzip2 stream", "its content is compressed: write it out with archive_extract and scan that"),
+    (b"\xfd7zXZ\x00", "xz stream", "its content is compressed: write it out with archive_extract and scan that"),
+    (b"\x28\xb5\x2f\xfd", "Zstandard stream", "its content is compressed: write it out and scan that"),
+    (b"\x04\x22\x4d\x18", "LZ4 frame", "its content is compressed: write it out and scan that"),
+    (b"MSCF\x00\x00\x00\x00", "Microsoft cabinet", "its members are compressed unless stored: write them out with archive_extract and scan those"),
+)
+
+
+def container_of(head):
+    """None, or what compressed or packed container the stream's first bytes say it is: {format, content_searched: false, how, and
+    for a segmented image which segment of how many}. Told by the magic alone: a file that only begins like one is named all the same,
+    and the answer says the stored bytes were searched and the content was not."""
+    for magic, what, how in CONTAINERS:
+        if not head.startswith(magic):
+            continue
+        if magic == b"BZh" and not (len(head) > 3 and 0x31 <= head[3] <= 0x39):
+            continue
+        found = {"format": what, "content_searched": False, "how": how}
+        if magic.startswith(b"ADSEGMENTEDFILE") and len(head) >= 0x20:
+            number, count = int.from_bytes(head[0x18:0x1c], "little"), int.from_bytes(head[0x1c:0x20], "little")
+            if 1 <= number <= count <= 4096:
+                found["segment"], found["segments"] = number, count
+        elif magic[:3] in (b"EVF", b"LVF") and magic[3:4] == b"\x09" and len(head) >= 11:
+            found["segment"] = int.from_bytes(head[9:11], "little")       # the set's size is not in a segment's header
+        return found
+    return None
 
 # BEGIN SHARED SCAN
 # The same text is in ioc_scan, chunk_needles and sig_carve (tests/test_scan_core.py holds the copies equal and holds the
@@ -1362,6 +1407,8 @@ def scan_fh(fh, source, total=None):
                 break
             if not data:
                 break
+            if len(HEAD[0]) < HEAD_BYTES:
+                HEAD[0] += bytes(data[:HEAD_BYTES - len(HEAD[0])])
             for off in range(0, len(data), FEED):
                 block = data[off:off + FEED] if len(data) > FEED else data
                 inside = not drain(scanner.feed(block))
@@ -1478,10 +1525,11 @@ secret.close()
 # A needle whose list past the inline page is not whole in a file (the file could not be written, or reached its cap) is a loss the
 # counts do not show: it makes the answer partial, and the basis names the needles and where the rest is.
 lost = [h["needle_index"] for h in hits.values() if h.get("all_results_error") or h.get("all_results_complete") is False]
+container = container_of(HEAD[0])
 answer = {
     "tool": TOOL, "source": source, "scanned_bytes": scanned, "hits": hits,
-    "complete": stopped is None and secret.stopped_at is None and not lost,
-    "status": "complete" if stopped is None and not lost else "partial",
+    "complete": stopped is None and secret.stopped_at is None and not lost and container is None,
+    "status": "complete" if stopped is None and not lost and container is None else "partial",
     "status_basis": ("the whole stream was read and every occurrence in it is reported" if stopped is None
                      else "icat ended, but something it started kept its output pipe open, so the end of the stream was not seen (see stopped): only occurrences that start before next_start are reported" if HELD[0]
                      else "the scan stopped at its clock before the end of the stream (see stopped): only occurrences that start before next_start are reported"),
@@ -1508,5 +1556,16 @@ if lost:
 if secret.stopped_at is not None:
     answer["status"] = "partial"
     answer["status_basis"] += "; the values file stopped at its cap (secret_values.stopped_at_offset), the locators did not"
+if container is not None:
+    # The stored bytes were searched, the content was not: said first, in place of "the whole stream was read", which is true of the file
+    # and was read as a statement about what it holds.
+    which = ("segment %d of %d of " % (container["segment"], container["segments"]) if "segments" in container else
+             "segment %d of " % container["segment"] if "segment" in container else "") + ("an " if container["format"].startswith(("A", "E", "e", "xz", "LZ4")) else "a ") + container["format"]
+    part = ("; it is one segment of a set, and the other %d were not read at all" % (container["segments"] - 1) if container.get("segments", 1) > 1 else
+            "; it is one segment of a set, and the others were not read at all" if "segment" in container and "segments" not in container else "")
+    answer["container"] = {**container, "what": which}
+    answer["status_basis"] = ("the stream is %s%s. Its content is compressed or packed and was not searched: the bytes were scanned as they are stored, so a count here is of the stored bytes alone, "
+                              "and a needle that was not found is not shown to be absent from the content (%s). Of the stored bytes: %s"
+                              % (which, part, container["how"], answer["status_basis"]))
 print_answer(answer)
 _leave(0)
