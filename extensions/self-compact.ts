@@ -155,6 +155,8 @@ export type HandoffFacts = {
    * which to load again if it still needs them.
    */
   skills?: string;
+  /** The facts could not be read (the hub unreachable): the header says unknown, never zeros or absent. */
+  unknown?: boolean;
   /**
    * The rules that change during a run and that only the forced prompt used to
    * carry, so that the run a hand-off starts has them: the instruction that
@@ -436,9 +438,9 @@ export function handoffHeader(agentId: string, cycle: number, facts: HandoffFact
   const lines = [
     `[self-compact · handoff] cycle ${cycle} · ${who}.`,
     `Your context was just compacted (${reason}). SWARM.md is unchanged; re-read it only if the summary above leaves the goal unclear.`,
-    `Live claims: ${claims}.`,
-    `Unread posts: ${unread}`,
-    `Ledger: ${facts.ledgerTotal} entries, ${facts.ledgerMine} yours. Sentinel: ${sentinel}. Spend: ${spend}.`,
+    ...(facts.unknown
+      ? ["Live claims, unread posts, the ledger, the sentinel and spend: unknown (the hub could not be reached when this was written). Call inbox and check done/SWARM_DONE before acting."]
+      : [`Live claims: ${claims}.`, `Unread posts: ${unread}`, `Ledger: ${facts.ledgerTotal} entries, ${facts.ledgerMine} yours. Sentinel: ${sentinel}. Spend: ${spend}.`]),
     ...(facts.leads ? [`The lead register now (your leads are yours: go on with them, or release them):\n${facts.leads}`] : []),
     ...(facts.skills ? [facts.skills] : []),
     ...(facts.capHit ? [facts.capHit] : []),
@@ -764,7 +766,8 @@ export function registerSelfCompact(pi: ExtensionAPI, deps: SelfCompactDeps): Se
     try {
       facts = await deps.handoffFacts(ctx.cwd, agentId());
     } catch {
-      facts = { claims: [], unread: {}, ledgerTotal: 0, ledgerMine: 0, sentinel: false, spentUsd: 0 };
+      // The hub could not be reached: what the facts would say is unknown, and the header says so instead of zeros (the run s082123).
+      facts = { claims: [], unread: {}, ledgerTotal: 0, ledgerMine: 0, sentinel: false, spentUsd: 0, unknown: true };
     }
     const header = handoffHeader(agentId(), R.state.cycle, facts, hadNote, reason);
     const content = hadNote && h ? `${header}\n${h.note}` : header;

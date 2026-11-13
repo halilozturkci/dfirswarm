@@ -159,3 +159,9 @@ A hit the store sweep found outside a coverage record held until the record was 
 swept anew, finding the seats' own outputs of the last round (one run's finish loop). A hit is now examined in place when a standing
 finding, event, absence or limitation for one of the record's questions, written after the sweep, names the object and a seat other than
 its authors attested it. Unattested, or attested only by its author, the hit holds as before. The `sweep_hits` fix says so.
+
+### Fixed: a seat told of facts the hub could not give is told they are unknown, not zero
+
+When the hub restarted, a compaction's hand-off header fell back to zeros and printed them as fact ("Ledger: 0 entries", "Sentinel:
+absent"), and a turn whose sentinel or inputs read was refused ran on Pi's base prompt alone. The header now says those facts are unknown
+and to check the inbox and the sentinel; the prompt is built with the reads it has and says which it could not make.

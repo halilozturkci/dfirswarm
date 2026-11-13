@@ -1295,14 +1295,23 @@ export default function (pi: ExtensionAPI) {
       ? `Your assigned id is ${agentId}. Use it on every post and claim.`
       : "AGENT_ID is unset. Refuse to claim or post until the spawner sets it.";
     // Independent reads of the sandbox: issue them together.
+    // A read the hub link lost (a hub restart) leaves its line unknown and says so, never the whole prompt lost (the run s082123: a seat
+    // ran a turn on Pi's base prompt when the sentinel read was refused).
+    const unread: string[] = [];
     const [done, status, mine, inputs, onDisk] = await Promise.all([
-      swarmDoneExists(cwd),
+      swarmDoneExists(cwd).catch(() => {
+        unread.push("whether done/SWARM_DONE exists");
+        return false;
+      }),
       readBudgetStatus(ctxFrom(cwd, agentId || "agent00")).catch(() => null),
       agentId ? nameOf(cwd, agentId).catch(() => undefined) : undefined,
-      readInputsManifest(cwd),
+      readInputsManifest(cwd).catch(() => {
+        unread.push("the inputs manifest");
+        return null;
+      }),
       forging ? listForgedTools(cwd).catch(() => [] as ForgedToolManifest[]) : ([] as ForgedToolManifest[]),
     ]);
-    const capLine = status?.over_budget ? `\n\n${capHitLine(status)}` : "";
+    const capLine = (status?.over_budget ? `\n\n${capHitLine(status)}` : "") + (unread.length ? `\n\nThe harness could not read ${unread.join(" or ")} for this turn (the hub link was down): it is unknown, not absent. Check it before you act on it (inbox, or the file).` : "");
     // The prompt files the kickoff passes: Pi takes the path of one that is not there as the text of the prompt.
     await reportMissingPromptFiles(cwd, event.systemPrompt);
     // What holds for the whole run is in Pi's own prompt (the kickoff's .pi/APPEND_SYSTEM.md and .pi/seat-<id>.md),
