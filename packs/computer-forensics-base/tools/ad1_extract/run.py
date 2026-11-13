@@ -21,7 +21,10 @@ Args, JSON on stdin:
             written, wall clock): defaults 5,000,000, 5,000,000, 256 GiB and
             1500 s. A call that reaches one stops, keeps what it wrote, and
             says it was partial. What is held while it walks is the depth of
-            the tree, not the number of items
+            the tree, not the number of items. One over its ceiling is held
+            to the ceiling; in a job max_bytes is held to the room free where
+            $OUT is (less 64 MiB) and a relative out_dir is taken under $OUT:
+            each is said in the answer's adjusted
 
 Run it as a job (job_run tool=ad1_extract): what it writes is then sealed
 into the store, citable as job:<id>/<path>, and the derived catalogue offers
@@ -220,6 +223,7 @@ import hashlib
 import json
 import os
 import sys
+import shutil
 import time
 import unicodedata
 from pathlib import Path
@@ -494,6 +498,7 @@ ITEMS_DEFAULT, ITEMS_CEILING = 5_000_000, 100_000_000
 WALK_DEFAULT, WALK_CEILING = 5_000_000, 100_000_000       # items looked at, taken or not
 BYTES_DEFAULT, BYTES_CEILING = 256 * 1024 ** 3, 1024 ** 4
 SECONDS_DEFAULT, SECONDS_CEILING = 1500, 1700          # the ceiling is inside the manifest's own 1800-second limit
+DISK_MARGIN = 64 * 1024 ** 2                           # left free where $OUT is, in a job
 RATIO_DEFAULT, RATIO_CEILING = 1000, 1_000_000         # bytes written per byte of the image's content read (the max_ratio archive_extract has)
 RATIO_SLACK = 1 << 20                                  # a file may expand this much past the ratio before it counts (a tiny image)
 
@@ -1194,8 +1199,14 @@ def main():
         fail("image is required: the AD1 image's first segment (.ad1)")
     want_n, want_addr = parse_members(args.get("members"))
     budgets = {}
+    # What the call took otherwise than it was asked, and why: said in the answer (adjusted), never silent.
+    adjusted = []
     for key, default, ceiling in (("max_items", ITEMS_DEFAULT, ITEMS_CEILING), ("max_walk", WALK_DEFAULT, WALK_CEILING), ("max_bytes", BYTES_DEFAULT, BYTES_CEILING), ("max_ratio", RATIO_DEFAULT, RATIO_CEILING), ("max_seconds", SECONDS_DEFAULT, SECONDS_CEILING)):
         v = args.get(key, default)
+        # Over the ceiling is held to it and said: a seat that asked for 3000 seconds was refused and sent the call again (the run s571aaa).
+        if isinstance(v, int) and not isinstance(v, bool) and v > ceiling:
+            adjusted.append("%s %d is over this tool's ceiling of %d: held to %d" % (key, v, ceiling, ceiling))
+            v = ceiling
         if not isinstance(v, int) or isinstance(v, bool) or not 1 <= v <= ceiling:
             fail("%s is a whole number from 1 to %d" % (key, ceiling), **{key: v})
         budgets[key] = v
@@ -1208,6 +1219,22 @@ def main():
     out_arg = args.get("out_dir") or (os.path.join(os.environ["OUT"], stem) if in_job else os.path.join("work", os.environ.get("AGENT_ID") or "ad1", "ad1", stem))
     if not isinstance(out_arg, str) or "\0" in out_arg:
         fail("out_dir is a string without a NUL byte: a new or empty directory", out_dir=str(out_arg)[:200])
+    # In a job a relative out_dir ("tree") is taken under $OUT, the one place a job writes, and said (it was refused, on the run s571aaa).
+    if in_job and not os.path.isabs(out_arg):
+        adjusted.append("out_dir %r is relative: in a job it is taken under $OUT, as %s" % (out_arg, os.path.join(os.environ["OUT"], out_arg)))
+        out_arg = os.path.join(os.environ["OUT"], out_arg)
+    # In a job the bytes written are held to the room where $OUT is, less a margin: a whole-image call that ran into a full disk
+    # stopped part way through a file with an error (three jobs of the Batman III runs); held here it stops by its budget, between
+    # items, keeping what it wrote, and says so.
+    if in_job:
+        try:
+            room = shutil.disk_usage(os.environ["OUT"]).free - DISK_MARGIN
+        except OSError:
+            room = None
+        if room is not None and budgets["max_bytes"] > max(room, 1):
+            adjusted.append("max_bytes %d is more than the %d bytes free where $OUT is, less a margin of %d: held to %d, so the call stops by its budget instead of filling the disk; name fewer members to take the rest in another job"
+                            % (budgets["max_bytes"], room + DISK_MARGIN, DISK_MARGIN, max(room, 1)))
+            budgets["max_bytes"] = max(room, 1)
     try:
         out = resolve_output(out_arg)
         holds_something = out.exists() and (not out.is_dir() or any(out.iterdir()))
@@ -1234,6 +1261,7 @@ def main():
     taken = {"": {fold(MANIFEST), fold(ERRORS), fold(COVERAGE), fold(GAPS)}}  # directory (relative) -> folded names already used there
     walked = 0
     seen_n, seen_addr = set(), set()       # the wanted numbers and addresses that were met, not every item's
+    near_of = {a: [None, None] for a in sorted(want_addr)[:16]} if want_addr else {}
     counts = {"items": 0, "files": 0, "folders": 0, "bytes": 0, "renamed": 0, "mismatches": 0, "checked": 0}
     tally = {"no_stored_hash": 0, "not_read": 0}
     reached = [None]                      # the budget that stopped the call, if one did
@@ -1340,6 +1368,13 @@ def main():
                     seen_n.add(n)
                 if want_addr is not None and item["addr"] in want_addr:
                     seen_addr.add(item["addr"])
+                # The addresses either side of each locator asked for, for one the image does not hold (16 at most: two numbers each).
+                for a, v in near_of.items():
+                    x = item["addr"]
+                    if x < a and (v[0] is None or x > v[0]):
+                        v[0] = x
+                    elif x > a and (v[1] is None or x < v[1]):
+                        v[1] = x
                 # Leaving a subtree: the chain is cut back to this item's parent, and the state of what was left goes with it.
                 while chain and chain[-1]["n"] != item["parent"]:
                     left = chain.pop()
@@ -1447,7 +1482,14 @@ def main():
                        "item %s was not reached before the call stopped (it had looked at %d items): it is not claimed absent") % (", ".join(map(str, absent)), walked))
     if gone:
         soft[0] += 0 if walked_all else 1
-        errors.append(("no item at %s in this read of the image" if walked_all else
+        # A locator is an item's address as the catalogue's members.tsv lists it, not an offset in a segment file: a seat of the run
+        # s68ce47 worked one out from a raw offset. The nearest addresses the walk met are named, and where the right ones are.
+        near = ""
+        picks = sorted({x for a in gone if a in near_of for x in near_of[a] if x is not None})
+        if walked_all:
+            near = ("; the nearest items this read holds are at %s" % ", ".join("ad1:item=%d" % x for x in picks) if picks else "") + \
+                ". A locator is an item's address as the ad1-items generation's members.tsv lists it (catalog_search which=members), not an offset in a segment file"
+        errors.append(("no item at %s in this read of the image" + near if walked_all else
                        "the item at %s was not reached before the call stopped: it is not claimed absent") % ", ".join("ad1:item=%d" % a for a in gone))
     if stopped:
         errors.insert(0, stopped)
@@ -1501,6 +1543,8 @@ def main():
                                "failed": "no item could be written (see errors)"}[processing],
               "image": image, "out_dir": str(out_arg), "manifest": os.path.join(str(out_arg), MANIFEST), "coverage": os.path.join(str(out_arg), COVERAGE),
               **counts, **tally, "segments_missing": img.missing, "budgets": budgets}
+    if adjusted:
+        result["adjusted"] = adjusted
     if unreferenced:
         result["unreferenced_data"] = unreferenced
     if integrity == "mismatch":

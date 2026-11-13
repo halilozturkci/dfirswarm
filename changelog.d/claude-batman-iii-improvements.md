@@ -75,3 +75,11 @@ It took the largest waiting objects first, and its 50 generations went where the
 user made or kept (a profile's Desktop, Documents, Downloads, …) now goes first and a vendor's or the system's files last (Program Files,
 Windows, ProgramData, AppData/Local/Microsoft, /usr, /lib, shared libraries), the largest first within each; a job's copy of a file an
 import holds is skipped and named, as a copy of an input is.
+
+### Changed: ad1_extract takes what a seat meant instead of refusing it, and names the locators near one it does not hold (computer-forensics-base)
+
+A budget over its ceiling (`max_seconds` 3000) is held to the ceiling, and in a job a relative `out_dir` ("tree") is taken under `$OUT`;
+both were refused, and seats sent the call again. In a job `max_bytes` is held to the room free where `$OUT` is, less 64 MiB, so a
+whole-image call stops by its budget between items instead of running into a full disk part way through a file (three jobs). Each is said
+in the answer's `adjusted`. A locator the image does not hold is answered with the nearest items the read holds, and that a locator is an
+item's address as `members.tsv` lists it, not an offset in a segment file (a seat had worked one out from a raw offset).
