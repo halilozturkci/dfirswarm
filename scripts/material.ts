@@ -593,7 +593,7 @@ function toolPostBody(rec: MaterialRecord, tool: ToolProvenance, entry: number |
     tool.checked.length ? `Hashes the operator gave, each checked against the bytes sealed: ${tool.checked.join(", ")}.` : "Hashes the operator gave: none; the harness holds the bytes to the sha256 each had before it was copied.",
     tool.for?.length ? `It was supplied for ${tool.for.join(", ")}.` : "",
     "It is supplied material, and the harness vouches for the bytes only: where it came from and how it was built are the operator's statement. Test it on input whose answer you know before you rely on it, and say in the record that you did.",
-    `It is readable now, read-only, at store/imports/${id}/out/. Nothing in the store can be executed where it stands (sealed files have no execute bit), so run it in a job: job_run with inputs ${inputs}, copy it, and every library it loads, into an executable temporary directory inside the job (for example one made with mktemp -d under /tmp), make it executable there (chmod +x) and run it from the copy.`,
+    `It is readable now, read-only, at store/imports/${id}/out/. Nothing in the store or in a job's $OUT can be executed where it stands (sealed files have no execute bit, $OUT is no-exec), so run it in a job that names it: job_run with programs ["import:${id}"] (and inputs ${inputs} when you declare them) copies it into an executable directory in the worker, its bin/ on PATH and its lib/ on LD_LIBRARY_PATH ($PROGRAMS names the directory), and your command calls it by name.`,
     `A finding that rests on its output cites the job and ${cite}, and says what the tool is; what rests on it is flagged with its class. It is on the ledger as E-${entry ?? "?"} (kind external).`,
   ].filter(Boolean).join(" ");
 }

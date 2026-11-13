@@ -135,7 +135,7 @@ test("the words: a supplied program is run from a copy; evidence is read and nev
   // Supplied.
   const supplied = execRefusedWords(base, o);
   assert.match(supplied, /^a program it ran could not be executed \("Permission denied" on \/runs\/s3472f0\/store\/imports\/mat-0002\/out\/prog, store\/jobs\/j000090\/stdout\.log line 3; 3 such lines in 2 files\)\./);
-  assert.match(supplied, /Nothing a worker holds in store\/ can be executed where it stands: sealed files have no execute bit\. This is a program the operator supplied, so copy the program, and every library it loads, into an executable temporary directory inside the job \(for example one made with mktemp -d under \/tmp\), make it executable there and run it from that copy; what it writes that you want kept goes to \$OUT \(\/runs\/s3472f0\/\.jobs\/j000090\)$/);
+  assert.match(supplied, /Nothing a worker holds in store\/ can be executed where it stands: sealed files have no execute bit\. This is a program the operator supplied: name it in the job's programs \(programs: \["import:mat-<n>"\]\), which copies it into an executable directory with its bin\/ on PATH and its lib\/ on LD_LIBRARY_PATH; or copy the program, and every library it loads, into an executable temporary directory inside the job \(for example one made with mktemp -d under \/tmp\), make it executable there and run it from that copy; what it writes that you want kept goes to \$OUT \(\/runs\/s3472f0\/\.jobs\/j000090\)$/);
   // Evidence: no recipe, the operator's tool-supply or a reimplementation.
   for (const p of [`${RUN}/inputs/dropper`, `${RUN}/work/extracted/a1/x/dropper`, `${RUN}/work/quarantine/a1/x`, `${RUN}/store/imports/ev-0001/out/e`]) {
     const w = execRefusedWords({ ...base, path: p, file: "out/p1/run.stderr", lines: 1, files: 1 }, o);
@@ -230,7 +230,7 @@ test("through the service: a job that could not execute a program has it in its 
   // A supplied program in the store, run in place: the recipe.
   const supplied = await run("store/imports/mat-0001/out/prog");
   assert.equal(supplied.exit, 126);
-  assert.match(supplied.reason ?? "", new RegExp(`^exit 126: a program it ran could not be executed \\("Permission denied" on ${S_RE}/store/imports/mat-0001/out/prog, store/jobs/${supplied.id}/stderr\\.log line 1\\)\\. Nothing a worker holds in store/ can be executed where it stands: sealed files have no execute bit\\. This is a program the operator supplied, so copy the program, and every library it loads, into an executable temporary directory`));
+  assert.match(supplied.reason ?? "", new RegExp(`^exit 126: a program it ran could not be executed \\("Permission denied" on ${S_RE}/store/imports/mat-0001/out/prog, store/jobs/${supplied.id}/stderr\\.log line 1\\)\\. Nothing a worker holds in store/ can be executed where it stands: sealed files have no execute bit\\. This is a program the operator supplied: name it in the job's programs \\(programs: \\["import:mat-<n>"\\]\\), which copies it into an executable directory with its bin/ on PATH and its lib/ on LD_LIBRARY_PATH; or copy the program, and every library it loads, into an executable temporary directory`));
   assert.equal(supplied.write_refused, undefined);
   // Evidence run in place: no recipe, the operator's tool-supply.
   for (const [cmd, path] of [["inputs/dropper", "inputs/dropper"], ["work/extracted/a1/x", "work/extracted/a1/x"], ["store/imports/ev-0001/out/e", "store/imports/ev-0001/out/e"]] as const) {

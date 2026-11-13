@@ -489,6 +489,9 @@ function hostSection(): string {
         "writes only its own $OUT, sealed into store/jobs/<id>/out/. It has the image's programs " +
         "(/etc/dfirswarm/tools.md) and nothing installed in an agent's own VM; with network=allowlist it reaches " +
         `${hosts}. An exit status of 0 is not the work's success: read what the job wrote, and its stderr. ` +
+        "A program the operator supplies (posted on the board as `TOOL SUPPLIED as import:mat-<n>`) runs in a job that " +
+        'names it in `programs: ["import:mat-<n>"]`: it is copied into an executable directory in the worker, its bin/ on ' +
+        "PATH and its lib/ on LD_LIBRARY_PATH; nothing runs where it stands in store/ or $OUT. " +
         "A file you made in your own VM is not an object of the run until it is sealed: `job_run import=work/<you>/<file>` " +
         "copies it into the store as it is now, and a finding then cites it as job:<id>/<file> in its refs. A whole " +
         "output the harness kept for you under tool-output/<you>/ is cited as `tool:<you>/<file>` (one line of the " +

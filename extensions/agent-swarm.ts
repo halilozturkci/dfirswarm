@@ -2757,6 +2757,7 @@ export default function (pi: ExtensionAPI) {
       lead: Type.Optional(Type.String({ description: "The lead (L-<n>, one you hold) this job is run under; left out, the one active lead you hold, if you hold exactly one. A lead's jobs wait for an interpretation (record with interprets) before the run may end." })),
       net_grants: Type.Optional(Type.Array(Type.String(), { description: "Network grants (N-<k>) you asked for a job (net_request for: \"job\"): bound to this job, which makes each one's exact request with python3 /job/net_fetch.py N-<k> --out \"$OUT/<name>\"; its worker reaches the fetch service on the host and nothing else of it" })),
       independent: Type.Optional(Type.Boolean({ description: "true: an intended reproduction of work another seat did (a second check), recorded as such; similar jobs are still named" })),
+      programs: Type.Optional(Type.Array(Type.String(), { description: "Programs the operator supplied that the command or tool runs, as import:mat-<n> (SWARM.md, Supplied programs): each is copied into an executable directory in the worker before it starts, its bin/ on PATH and its lib/ on LD_LIBRARY_PATH ($PROGRAMS names the directory). Nothing runs where it stands in store/ or $OUT" })),
       secret_output: Type.Optional(Type.Boolean({ description: "true for a job whose output may hold a secret (a key, a credential or a decrypted value the evidence holds): every output it seals is sensitive, a job reading them seals sensitive output too, an entry citing them is recorded sensitive, and a redacted package withholds them" })),
     }),
     async execute(_id, params, signal, _onUpdate, toolCtx: ToolCtx) {
@@ -2787,6 +2788,7 @@ export default function (pi: ExtensionAPI) {
         ...(params.net_grants?.length ? { net_grants: params.net_grants } : {}),
         ...(params.independent === true ? { independent: true } : {}),
         ...(params.secret_output === true ? { secret_output: true } : {}),
+        ...(params.programs?.length ? { programs: params.programs } : {}),
       };
       const wait = Math.min(Math.max(params.wait_seconds ?? 12, 0), 100);
       const res = await submitAndWait(toolCtx.cwd, spec, wait, signal as AbortSignal | undefined);

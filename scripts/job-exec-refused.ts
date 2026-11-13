@@ -179,7 +179,7 @@ export async function execRefused(o: { ctl: string; out: string; cwd: string; ex
 function wayOn(place: Place, out: string): string {
   const copy = `copy the program, and every library it loads, into an executable temporary directory inside the job (for example one made with mktemp -d under /tmp), make it executable there and run it from that copy; what it writes that you want kept goes to $OUT (${out})`;
   if (place === "supplied") {
-    return `Nothing a worker holds in store/ can be executed where it stands: sealed files have no execute bit. This is a program the operator supplied, so ${copy}`;
+    return `Nothing a worker holds in store/ can be executed where it stands: sealed files have no execute bit. This is a program the operator supplied: name it in the job's programs (programs: ["import:mat-<n>"]), which copies it into an executable directory with its bin/ on PATH and its lib/ on LD_LIBRARY_PATH; or ${copy}`;
   }
   if (place === "evidence") {
     return "Nothing a worker holds in inputs/, work/extracted/ or work/quarantine/ can be executed where it stands, and nothing there is to be: evidence is read, never run, and a job that runs code recovered from it is flagged. For a program you trust, ask the operator to supply one (swarm.sh tool-supply); otherwise reimplement the step as a read of the bytes";

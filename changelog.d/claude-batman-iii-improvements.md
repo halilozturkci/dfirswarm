@@ -59,3 +59,11 @@ and lost for the run's last 74 minutes, while the board said "only this turn fai
 most (`SWARM_MAX_IMAGES`, 0 for no limit): past that the oldest are sent as a line naming them, down to half at a time so the history the
 provider caches changes rarely, and the session keeps them all. A refusal for too many images lowers the seat's limit to the provider's
 number (`image_cap`), and the board says what the harness changed.
+
+### Added: a job runs a supplied program by naming it (`programs`)
+
+Nothing runs where it stands in the store (sealed, no execute bit) or in a job's `$OUT` (no-exec), and the one board post that said how to
+run a supplied program came at minute 2: on one run a seat copied ffmpeg and zbarimg into `$OUT`, 26 calls were refused, and the job ended 0.
+`job_run(programs: ["import:mat-<n>"])` now copies each supplied program into an executable directory in the worker, with its `bin/` on
+`PATH` and its `lib/` on `LD_LIBRARY_PATH` (`$PROGRAMS` names the directory), and adds it to a declared scope. Only a supplied import is
+taken. The contract's Tool jobs section, the tool-supply post and the exec-refused reason for a supplied program say so.

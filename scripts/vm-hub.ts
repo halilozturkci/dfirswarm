@@ -916,6 +916,8 @@ export function boardTable(hub: {
         ...(raw.independent === true ? { independent: true } : {}),
         // Every output sensitive at seal time (docs/adr/0016); anything but a boolean is refused by the service.
         ...(raw.secret_output !== undefined ? { secret_output: raw.secret_output as boolean } : {}),
+        // Supplied programs the job runs (job-service.ts programLines); the service checks each.
+        ...(raw.programs !== undefined ? { programs: (Array.isArray(raw.programs) ? raw.programs.map(String) : raw.programs) as string[] } : {}),
       };
       // A job run under a lead: the lead must be the seat's own, checked
       // before the job is accepted, and the job goes on the lead's record.

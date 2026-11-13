@@ -224,6 +224,16 @@ export type JobSpec = {
    */
   independent?: boolean;
   /**
+   * Programs the operator supplied (import:mat-<n>, swarm.sh tool-supply) the
+   * job runs: each is copied into an executable directory inside the worker
+   * before the command, its bin/ directories put on PATH and its lib/
+   * directories on LD_LIBRARY_PATH. Nothing runs where it stands in store/
+   * (sealed files have no execute bit, $OUT is no-exec): on the run sf4406b a
+   * seat copied ffmpeg and zbarimg into $OUT, every call was refused, and the
+   * job ended 0. A command or a tool only; each is added to a declared scope.
+   */
+  programs?: string[];
+  /**
    * Every output this job seals is sensitive (docs/adr/0016): its result
    * may hold a secret. Said by the agent, or declared by the tool's manifest
    * (secret_output_by); the harness never reads the bytes to decide. The
@@ -1098,7 +1108,17 @@ export class JobService {
     if (grants.length && kind !== "command" && kind !== "tool") return { reason: "network grants go with a command or a tool job" };
     if (grants.some((g) => !/^N-[1-9]\d{0,6}$/.test(g)) || grants.length > 8) return { reason: "net_grants names up to 8 grants, N-<k>" };
     if (raw.secret_output !== undefined && typeof raw.secret_output !== "boolean") return { reason: "secret_output is true or false" };
-    const base = { kind, inputs, scope: declared.kind, timeout_seconds: timeout, network, ...(raw.scratch ? { scratch: true } : {}), ...(raw.note ? { note: String(raw.note) } : {}), ...(raw.parent ? { parent: String(raw.parent) } : {}), ...(profile ? { profile } : {}), ...(grants.length ? { net_grants: grants } : {}), ...(raw.independent === true && (kind === "command" || kind === "tool") ? { independent: true } : {}), ...(raw.secret_output === true ? { secret_output: true } : {}) } as JobSpec;
+    const programs = Array.isArray(raw.programs) ? [...new Set(raw.programs.map((p) => String(p).trim().replace(/\/+$/, "")))].filter(Boolean) : [];
+    if (raw.programs !== undefined && !Array.isArray(raw.programs)) return { reason: "programs is a list of supplied programs, import:mat-<n>" };
+    if (programs.length && kind !== "command" && kind !== "tool") return { reason: "programs go with a command or a tool job" };
+    for (const p of programs) {
+      const id = /^import:(mat-\d{1,8})$/.exec(p)?.[1];
+      if (!id) return { reason: `programs names programs the operator supplied, as import:mat-<n> (swarm.sh tool-supply lists them on the board and in SWARM.md): ${JSON.stringify(p)} is not one` };
+      if (!existsSync(join(storePaths(this.S).imports, id, "out"))) return { reason: `programs: no supplied program ${p} in this run's store` };
+    }
+    // A declared scope is given the programs it runs too: they are read from the store like any import.
+    if (programs.length && declared.kind === "declared") for (const p of programs) if (!inputs.some((x) => x.replace(/\/+$/, "") === p)) inputs.push(p);
+    const base = { kind, inputs, scope: declared.kind, timeout_seconds: timeout, network, ...(raw.scratch ? { scratch: true } : {}), ...(raw.note ? { note: String(raw.note) } : {}), ...(raw.parent ? { parent: String(raw.parent) } : {}), ...(profile ? { profile } : {}), ...(grants.length ? { net_grants: grants } : {}), ...(raw.independent === true && (kind === "command" || kind === "tool") ? { independent: true } : {}), ...(raw.secret_output === true ? { secret_output: true } : {}), ...(programs.length ? { programs } : {}) } as JobSpec;
     if (kind === "tool") {
       const args = raw.args && typeof raw.args === "object" && !Array.isArray(raw.args) ? raw.args : {};
       const checked = await this.toolCheck(String(raw.tool ?? ""), args);
@@ -1422,7 +1442,7 @@ export class JobService {
     // A heartbeat beside the command (job-telemetry.ts): the VM's CPU and I/O counters every 15 s, for the host to read while it runs.
     const run = (cmd: string) => [...pip, ...HEARTBEAT_LINES, `timeout --kill-after=10 ${box} ${cmd} > /job/stdout.log 2> /job/stderr.log`, "echo $? > /job/exit", HEARTBEAT_STOP, ...pipAfter];
     // SECRET_OUTPUT=1 for a job run as secret output (the agent's flag, or its tool's manifest), so a tool can refuse a values mode in a job that is not; unset for any other, whatever the image carries.
-    const head = ["#!/bin/bash", "set -u", `cd ${q(this.S)} 2>/dev/null || cd /`, `export OUT=${q(out)}`, job.spec.secret_output === true ? "export SECRET_OUTPUT=1" : "unset SECRET_OUTPUT", WORKER_PROBE_LINE];
+    const head = ["#!/bin/bash", "set -u", `cd ${q(this.S)} 2>/dev/null || cd /`, `export OUT=${q(out)}`, job.spec.secret_output === true ? "export SECRET_OUTPUT=1" : "unset SECRET_OUTPUT", WORKER_PROBE_LINE, ...programLines((job.spec.programs ?? []).map((p) => p.slice("import:".length)), storePaths(this.S).imports)];
     if (job.spec.kind === "tool") {
       const checked = await this.toolCheck(job.spec.tool ?? "", job.spec.args ?? {});
       if (!checked.ok) throw new Error(checked.reason);
@@ -2742,6 +2762,31 @@ export async function programMissing(ctl: string, exit: number | null): Promise<
   return dash ? dash[1]! : "?";
 }
 
+/**
+ * The lines that make a job's supplied programs runnable (JobSpec.programs):
+ * each import's out/ copied into one executable directory under /tmp, every
+ * file in it given its owner's execute bit, its bin/ and sbin/ directories (and
+ * its own top) on PATH, its lib/, lib64/ and *-linux-gnu/ directories on
+ * LD_LIBRARY_PATH, and PROGRAMS naming the directory. What could not be copied
+ * is said in /job/programs.log, which the job keeps with its logs.
+ */
+export function programLines(ids: readonly string[], importsDir: string): string[] {
+  if (!ids.length) return [];
+  const q = shQuote;
+  const lines = ['PROGRAMS="$(mktemp -d /tmp/programs.XXXXXX)"', ": > /job/programs.log"];
+  for (const id of ids) {
+    const dst = `"$PROGRAMS"/${q(id)}`;
+    lines.push(
+      `mkdir -p ${dst} && cp -R ${q(join(importsDir, id, "out"))}/. ${dst}/ 2>>/job/programs.log && chmod -R u+rwX ${dst} && find ${dst} -type f -exec chmod u+x {} + || echo "programs: ${id} could not be made runnable" >> /job/programs.log`,
+      `while IFS= read -r d; do PATH="$d:$PATH"; done < <(find ${dst} -type d \\( -name bin -o -name sbin \\) 2>/dev/null | sort -r)`,
+      `PATH="${"$"}PROGRAMS/${id}:$PATH"`,
+      `while IFS= read -r d; do LD_LIBRARY_PATH="$d\${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; done < <(find ${dst} -type d \\( -name lib -o -name lib64 -o -name '*-linux-gnu' \\) 2>/dev/null | sort -r)`,
+    );
+  }
+  lines.push("export PATH PROGRAMS; export LD_LIBRARY_PATH=\"${LD_LIBRARY_PATH:-}\"");
+  return lines;
+}
+
 /** One post, for the agent that asked. */
 export function describe(job: JobRecord): string {
   const what = job.spec.kind === "tool" ? `tool ${job.spec.tool}` : job.spec.kind === "command" ? "command" : job.spec.kind === "recipe" ? `recipe ${job.spec.recipe}` : job.spec.seal ? `the seal of ${job.spec.seal.ref}` : job.spec.kind === "import" ? `import of ${job.spec.source}${scopeKindOf(job.spec) === "declared" ? ", from the snapshot the hub took at its start" : ", copied live from where it was"}` : "detect pass";
@@ -2790,6 +2835,7 @@ export async function jobView(S: string, job: JobRecord, o: { files?: number } =
     ...(job.generation ? { generation: job.generation, revision: job.revision } : {}),
     ...(job.program_missing ? { program_missing: { ...job.program_missing, note: "the image of its profile does not hold it: run it in a profile that does, install it if the job may, or tell the operator (the console lists these for the images' upkeep)" } } : {}),
     ...(job.spec.independent ? { independent: true } : {}),
+    ...(job.spec.programs?.length ? { programs: job.spec.programs } : {}),
     ...(job.spec.secret_output ? { secret_output: true } : {}),
     ...(job.spec.secret_output_by ? { secret_output_by: job.spec.secret_output_by } : {}),
     ...(job.sensitive ? { sensitive: sensitiveWords(job) } : {}),
