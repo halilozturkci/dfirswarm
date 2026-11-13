@@ -7,12 +7,12 @@ Depends on the Computer Forensics Base Pack.
 
 ## What it carries
 
-**Twenty-eight skills**, seventeen decision leaves, ten second-level leaves they point to
+**Twenty-nine skills**, eighteen decision leaves, ten second-level leaves they point to
 ("only if X") and the router `memory/router` (at most 500 tokens; the prompt shows this one line for the pack when the run's index is over its budget, and it names every leaf); every leaf is at most 800 tokens.
 
 | Family | Skills |
 | --- | --- |
-| Triage | `triage/what-you-have` (second level: `triage/container-details`), `triage/no-framework` (`triage/carve-signatures`, `triage/paging-files`), `triage/address-spaces`, `triage/coverage`, `triage/memprocfs` |
+| Triage | `triage/what-you-have` (second level: `triage/container-details`), `triage/no-framework` (`triage/carve-signatures`, `triage/paging-files`), `triage/address-spaces`, `triage/coverage`, `triage/memprocfs`, `triage/process-dumps` |
 | Frameworks | `triage/volatility` (`triage/volatility-symbols`, `triage/volatility-plugins`, `triage/volatility-catalogue`) |
 | Symbols | `symbols/macos` (no support claim for any macOS version), `symbols/linux` |
 | Artefacts | `artifacts/reconstruction` |
@@ -24,7 +24,7 @@ Depends on the Computer Forensics Base Pack.
 | Pattern matching | `patterns/yara` |
 | Acquisition | `acquire/images` (`acquire/avml-and-preserve`) |
 
-**Eight tools.** `mem_profile` says what a memory file's header shows before
+**Nine tools.** `mem_profile` says what a memory file's header shows before
 anything is run against it (a crash dump's physical-memory runs with their file
 offsets, checked for order, overlap and payload; a LiME file's ranges; an ELF core's
 byte order) and answers "unrecognised" for anything else, because a flat capture and
@@ -55,12 +55,14 @@ exercised here. On a host or image without `/dev/fuse` or a `fusermount3`/`fuser
 
 `isf_intake` turns the debug material an operator supplies for a Linux kernel (a vmlinux or debug-symbols file, or a System.map) into an ISF with `dwarf2json`, and says `ready` only when the table's own `linux_banner` is, character for character, a banner `vol` finds in the image and the stated build identity agrees (a near release is no match; a System.map has no banner and cannot be ready). It records the converter's version and argv, keeps a table only when it is ready, and promises nothing beyond the match; macOS is not handled. `dwarf2json` 0.9.0 is declared in `requires/host.json` as a pinned download for amd64 (the project publishes no arm64 build, so an arm64 image records it as not installed); where it is not on PATH the tool fails with verdict `blocked`. Run against stand-ins in this review, not against the real converter.
 
+`minidump_map` reads a Windows process dump (a minidump, `MDMP`: what procdump, Task Manager or WerFault writes of one process), which is not a memory image and which no framework of this pack reads. It parses the header and the directory from the published layouts (standard library only, no program started) and answers one `view` a call: `summary` (flags and the kind of dump, system, process, exception, the writer's comment, handle counts, the command line through the PEB, mapped bytes), `modules`, `memory` (ranges with the protection the MemoryInfoList records, or the regions themselves), `threads` (x86 and x64 register values), `va` (address to file offset, or "not in the dump"), `read`, `module` and `find`. Three rules are built in: an address that is not in the dump is never read as zero; a module or range with gaps is written only with `allow_gaps`, then zero-filled, named `.gaps`, mapped in a file beside it and answered `partial`, with `coverage_percent` in every answer; and a search (`find`, a text needle as UTF-8 and UTF-16LE or a hex needle) reads the dump in 8 MiB pieces and reports the virtual address and file offset of each hit, bounded by `max_hits` and its own clock with a resume address. A truncated or malformed dump gives a `partial` that names the stream and the file offset. `read` and `module` write memory content only with `write_values` in a job run as secret output (`$OUT/minidump_map`, 0700/0600, digests in `manifest.jsonl`); strings from the dump go through the same SHOWN rules as the other tools. It does no symbol resolution, stack walk or disassembly. Skill: `triage/process-dumps`.
+
 **Sensitive output.** Memory holds whatever the machine held. `mem_fs` writes file
 content only when it runs as a job, only on `write_values: true`, and only under
 `$OUT/mem_fs`; its answer carries the locator of each file, never its content or a
 digest of it (the one digest it names is that of a file's ranges file, which holds offsets and lengths; `recovery_key_scan` of the encrypted-containers pack is the reference
-implementation of that pattern). `mem_fs`, `mem_carve`, `mem_registry`, `carve_handoff` and `vol_views` declare `secret_output`
-for `write_values`, so the harness seals the job as sensitive, and all five check
+implementation of that pattern). `mem_fs`, `mem_carve`, `mem_registry`, `carve_handoff`, `vol_views` and `minidump_map` declare `secret_output`
+for `write_values`, so the harness seals the job as sensitive, and all six check
 `SECRET_OUTPUT=1` and refuse as JSON otherwise. `mem_carve` cuts slices out of an image
 (credential hives included, deliberately: a cracking tool downstream stays available)
 only with `write_values: true`, into a directory with mode 0700 (at most 1,000 slices a call; the slices count toward `max_results_bytes`, and the clock is looked at before each). What the tools print

@@ -1,7 +1,7 @@
 ---
 id: processes/injection
 title: Process anomalies and candidate code modification
-when: You need what was running, or are asked whether code was injected into a process.
+when: You need what was running, or are asked if code was injected into a process.
 needs: []
 tools: [mem_fs]
 requires_host: []

@@ -1,7 +1,7 @@
 ---
 id: triage/no-framework
 title: A memory image no framework can read
-when: The job image lacks a usable framework, symbols or dependencies; or you want an answer first.
+when: The job image lacks a usable framework, symbols or dependencies, or you want an answer first.
 needs: []
 tools: [ioc_scan, chunk_needles, mem_carve]
 requires_host: [strings, yara]

@@ -1,0 +1,114 @@
+{
+  "name": "minidump_map",
+  "description": "Map a Windows process dump (a minidump: the file begins with MDMP; Task Manager, procdump, WerFault or an intruder's tool wrote it) from its own streams. A minidump is ONE process and is not a memory image: it has no kernel, no other process and no page tables, so Volatility, MemProcFS and the other tools of this pack do not read it, and this tool reads nothing else (a kernel crash dump, which begins with PAGE, is refused and goes to mem_profile). THREE RULES. (1) An address that is not in the dump is not zero: the dump holds the ranges its writer chose, every other address is absent and its content unknown, and the answer says `not in the dump`. (2) A module read from a dump can have gaps (pages never loaded or left out): `module` and `read` always give bytes_present, bytes_absent and coverage_percent, write nothing for a range with gaps unless allow_gaps is true, and then write zeros for the gaps, name the file .gaps, list every gap in the map file beside it and say status partial; a zero in such a file is not the process's byte. (3) A search for a constant or a string over a dump is done with view `find` (or with the ransomware pack's cipher_state_scan when that tool is loaded), not with strings or grep on the file: `find` gives the virtual address and the file offset of each hit, and only memory the dump holds was searched, so no hit is not absence from the process. VIEWS (`view`, default summary). summary: the header, its flags and what kind of dump it is (full-memory: the WithFullMemory flag and a Memory64List; partial: stacks and what the writer chose; or no memory at all), every stream of the directory, system and Windows version, process id, creation time and integrity level, the exception record, the comment the dump's writer left (procdump puts its own command line there), a count of handles by type, the image path, current directory and command line when the PEB can be reached (TEB, PEB, process parameters; each step that is not in the dump is said), and mapped_bytes. modules: loaded and unloaded modules with base, size, name, path, timestamp, checksum, file version, the PDB record (GUID, age, path) and how much of each image the dump holds. memory: the ranges the dump holds with file offset and the protection, state and type the MemoryInfoList records (`list: regions` lists the regions themselves, in the dump or not; `protect` and `type` filter, e.g. protect execute_write with type private). threads: id, TEB, stack, the register values of an x86 or x64 context (other architectures are located, not decoded), start address, times, name, and which module the instruction pointer is in (null: in no module, a lead and not a finding). va: `addresses` (up to 256, integers or hexadecimal strings) or `va`, each translated to a file offset or said to be absent, with the nearest ranges. read: `va` and `length` (at most 64 MiB) to a file. module: one module by `module` (a name as view modules prints it) or `base`, its image as it lay in memory (offset N is base + N; not the file that was on disk, and it will not hash like it), with the PE sections and how much of each is present; at most 512 MiB. find: exactly one of `needle` (text, searched as UTF-8 and UTF-16LE; `encodings` narrows, `ignore_case` folds ASCII letters) or `needle_hex`; hits in address order with va, file_offset, module and protection; a needle across two ranges adjacent in the address space is found. It reads the dump in 8 MiB pieces, so memory use does not grow with the dump (measured 2026-11-13 on an Apple-silicon laptop, Python 3.12: 200 MB of random bytes in 0.1 s for an exact needle and 0.16 s with ignore_case, 1.3 to 2.4 GB/s, peak memory 53 MB, 78 MB in the test over a 200 MB sparse dump; a real 21 MB procdump file in 0.02 s), stops at `max_hits` (default 200, at most 1000) or `max_seconds` (default 120, at most 240, inside the manifest's 300) with status partial and page.resume_va, the address to pass as va_start for the rest; `va_start` and `va_end` bound it. CONTRACT. status complete only when every record and byte the view covers was read; a stream that runs past the end of the file, declares more entries than it holds or is not laid out as the format says is named in `problems` (stream, file offset, what) and the status is partial with what could be read; a file that is not a minidump, or whose version word is not 0xA793, is refused as JSON. Lists are paged by `offset` and `limit` (default 100, at most 1000; threads 500): page says total, returned and next_offset, and a page is also cut at 256 KiB of JSON. A page of a list also ends at max_seconds. At most 250,000 ranges, 250,000 regions, 16,384 modules, 65,536 threads and 250,000 handles are read (and 64 MiB of any one table), and more is said. Overlapping ranges are read from the one that starts first and counted. Addresses are printed as hexadecimal strings, file offsets as integers. SENSITIVE: the files `read` and `module` write are memory content (a credential can be in any page), so writing needs write_values: true in a job run as secret output (this manifest declares it for write_values and the tool checks SECRET_OUTPUT=1; anywhere else it is refused as JSON before the dump is read): $OUT/minidump_map, directory 0700, files 0600, created exclusively, never replacing an earlier file, sizes and sha256 in manifest.jsonl beside them and never in the answer. Without write_values both views still report coverage and write nothing. Memory content is never printed: `find` gives positions only. Strings read from the dump (module and PDB paths, thread names, the service pack string, the command line) go through the shared SHOWN rules: a part shaped like a secret is replaced by a placeholder with its length, a module whose name is withheld is named by `base`, and withholding is by shape, so a plain password in a command line is printed; a handle's object name is counted, not printed. NOT DONE: no symbol resolution, no stack walk, no disassembly, no heap or handle-name listing, no decoding of ARM contexts, no reading of kernel dumps or full images; the timestamp and checksum of a module are the loader's copy of fields the file's author sets; the command line is what the process's own memory said, and a process can rewrite it. A stop (SIGTERM, SIGINT, SIGHUP) ends the call with one JSON document, status failed, interrupted true, exit 128 plus the signal, and removes a file that was being written.",
+  "params": {
+    "path": {
+      "type": "string",
+      "required": true,
+      "description": "The process dump (a minidump; often *.dmp or *.mdmp) under the run directory"
+    },
+    "view": {
+      "type": "string",
+      "description": "summary (default), modules, memory, threads, va, read, module or find"
+    },
+    "offset": {
+      "type": "integer",
+      "description": "First row of a paged list (modules, memory, threads); default 0. Pass page.next_offset of the answer before"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Rows a page (default 100, 1 to 1000; threads at most 500). A page is also cut at 256 KiB of JSON, and says so"
+    },
+    "list": {
+      "type": "string",
+      "description": "view memory: ranges (default: the memory the dump holds) or regions (the MemoryInfoList: the process's regions, in the dump or not)"
+    },
+    "protect": {
+      "type": "string",
+      "description": "view memory: any (default), execute, write or execute_write, by the protection the MemoryInfoList records; refused when the dump has no MemoryInfoList"
+    },
+    "type": {
+      "type": "string",
+      "description": "view memory: any (default), private, mapped or image, by the type the MemoryInfoList records"
+    },
+    "addresses": {
+      "type": "array",
+      "description": "view va: 1 to 256 virtual addresses, each an integer or a hexadecimal string such as \"0x7ff6a1b20000\""
+    },
+    "va": {
+      "type": "string",
+      "description": "view va: one address. view read: the first address of the range. An integer or a hexadecimal string"
+    },
+    "length": {
+      "type": "integer",
+      "description": "view read: how many bytes from va (1 to 67108864)"
+    },
+    "module": {
+      "type": "string",
+      "description": "view module: the module's file name or whole path as view modules prints it (any case). A module whose name is withheld is named by base"
+    },
+    "base": {
+      "type": "string",
+      "description": "view module: the module's base address (an integer or a hexadecimal string), instead of module"
+    },
+    "allow_gaps": {
+      "type": "boolean",
+      "description": "views read and module: write the file although part of the range is not in the dump (default false: refused). The absent bytes are zeros in the file, its name ends in .gaps, every gap is in the map file beside it and the status is partial"
+    },
+    "write_values": {
+      "type": "boolean",
+      "description": "views read and module: write the bytes to a file under $OUT/minidump_map (default false: the answer reports coverage and writes nothing). Memory content: refused unless the tool runs as a job run as secret output, which the harness does because the manifest declares it; refused before the dump is read otherwise. The answer never carries the content or its digest"
+    },
+    "needle": {
+      "type": "string",
+      "description": "view find: text to search for (at most 1024 bytes encoded), as UTF-8 and UTF-16LE unless encodings narrows it"
+    },
+    "needle_hex": {
+      "type": "string",
+      "description": "view find: bytes to search for, as hexadecimal digits (\"657870616e642033\"; spaces and colons are ignored), at most 1024 bytes; instead of needle"
+    },
+    "encodings": {
+      "type": "array",
+      "description": "view find with needle: one or both of \"utf-8\" and \"utf-16le\" (default both)"
+    },
+    "ignore_case": {
+      "type": "boolean",
+      "description": "view find with needle: match ASCII letters in either case (default false). Other characters are matched exactly"
+    },
+    "va_start": {
+      "type": "string",
+      "description": "view find: search from this address (default 0); pass page.resume_va of a partial answer to continue. An integer or a hexadecimal string"
+    },
+    "va_end": {
+      "type": "string",
+      "description": "view find: search below this address (default: the end of the address space). A hit lies wholly below it"
+    },
+    "max_hits": {
+      "type": "integer",
+      "description": "view find: stop after this many hits (default 200, 1 to 1000); the answer is then partial and page.resume_va says where to continue"
+    },
+    "max_seconds": {
+      "type": "integer",
+      "description": "The tool's own clock (default 120, 1 to 240, inside the manifest's 300). find answers partial with page.resume_va; read and module keep nothing and say so; a paged list ends its page there and says next_offset"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 300,
+  "example": "{\"path\": \"inputs/payload.dmp\", \"view\": \"find\", \"needle\": \"expand 32-byte k\"}",
+  "by": "maintainer",
+  "at": "2026-11-13T12:00:00.000Z",
+  "version": 1,
+  "sha256": "2080afd81f0b8b52fe0aeda54ba6ac2a738ecd713b96b73fc82956b1b42abcb8",
+  "use": {
+    "extensions": [
+      ".dmp",
+      ".mdmp"
+    ]
+  },
+  "secret_output": {
+    "when_args": [
+      "write_values"
+    ]
+  }
+}

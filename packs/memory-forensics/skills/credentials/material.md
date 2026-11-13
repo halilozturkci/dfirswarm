@@ -1,7 +1,7 @@
 ---
 id: credentials/material
 title: Credential material in memory, and reporting it
-when: Memory may expose credentials, keys or tokens; say whether any were exposed or taken.
+when: Memory may expose credentials, keys or tokens; say whether any were taken.
 needs: []
 tools: [mem_fs, mem_carve, ioc_scan]
 requires_host: [memprocfs, vol, aeskeyfind]

@@ -1,7 +1,7 @@
 ---
 id: triage/volatility
 title: Volatility, offline, with the right symbols
-when: Selecting Volatility plugins, or diagnosing an unsatisfied symbol or translation requirement.
+when: Selecting Volatility plugins, or diagnosing an unmet symbol or translation requirement.
 needs: []
 tools: [mem_profile, vol_readiness, vol_views, isf_intake]
 requires_host: [vol]

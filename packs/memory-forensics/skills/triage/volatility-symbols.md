@@ -1,6 +1,6 @@
 ---
 id: triage/volatility-symbols
-title: Which symbol tables the image holds, and a missing one
+title: The image's symbol tables, and a missing one
 when: The error names a PDB, GUID and age, or you say which kernels the image reads.
 needs: []
 tools: [isf_intake]

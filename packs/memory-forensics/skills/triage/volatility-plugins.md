@@ -1,7 +1,7 @@
 ---
 id: triage/volatility-plugins
 title: Volatility plugins by operating system
-when: Choosing Windows, Linux or macOS plugins, or the option that writes a region to disk.
+when: Choosing Windows, Linux or macOS plugins, or the option that writes a region out.
 needs: []
 tools: [mem_registry, isf_intake]
 requires_host: [vol]

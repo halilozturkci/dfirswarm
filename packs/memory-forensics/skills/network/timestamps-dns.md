@@ -1,7 +1,7 @@
 ---
 id: network/timestamps-dns
 title: Timestamps and DNS cache entries from memory
-when: A network object carries a time, or you read a DNS cache entry from an image.
+when: A network object carries a time, or you read a DNS cache entry.
 needs: []
 tools: []
 requires_host: []

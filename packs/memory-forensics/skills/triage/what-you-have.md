@@ -1,7 +1,7 @@
 ---
 id: triage/what-you-have
 title: Classify a memory capture first
-when: A memory image, crash dump, saved VM state, paging or hibernation file is in the evidence.
+when: A memory image, crash or process dump, VM state, paging or hibernation file is in the evidence.
 needs: [evidence/verify]
 tools: [mem_profile, check_inputs]
 requires_host: []
@@ -22,6 +22,7 @@ acquisition record, and run `check_inputs`. Then run `mem_profile`.
     hiberfil.sys                HIBR or WAKE, or a zeroed header: a saved state, compressed as a rule
     LiME / AVML                 Linux, with their own framing
     ELF core                    a hypervisor's guest-memory dump, or one process's core
+    process dump (MDMP)         one Windows process, not an image: `triage/process-dumps`
 
 `mem_profile` is a heuristic first pass over the header and a sample. Its
 "unrecognised" is not a finding that the file is RAM (a flat capture and a file that

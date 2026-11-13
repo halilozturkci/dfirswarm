@@ -1,7 +1,7 @@
 ---
 id: triage/coverage
 title: What a memory search covered
-when: Before writing "not in memory", or when a plugin or scan returned nothing, stopped early or counted.
+when: Before writing "not in memory", or a plugin or scan returned nothing, stopped early or counted.
 needs: [evidence/coverage]
 tools: [mem_carve, mem_profile]
 requires_host: [vol]

@@ -1,7 +1,7 @@
 ---
 id: patterns/yara
 title: YARA over an image or a dumped region
-when: You have case rules or a precise byte pattern to test against an image or a dumped process region.
+when: You have case rules or a precise byte pattern to test against an image or a dumped region.
 needs: []
 tools: [vol_readiness]
 requires_host: [yara, vol]

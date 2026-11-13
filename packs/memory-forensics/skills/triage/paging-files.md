@@ -1,7 +1,7 @@
 ---
 id: triage/paging-files
 title: The page file and the hibernation file
-when: pagefile.sys, swap or hiberfil.sys is in the evidence next to, or instead of, a RAM capture.
+when: pagefile.sys, swap or hiberfil.sys is in the evidence, with or without a RAM capture.
 needs: []
 tools: [ioc_scan]
 requires_host: []

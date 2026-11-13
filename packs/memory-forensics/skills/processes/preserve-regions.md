@@ -1,6 +1,6 @@
 ---
 id: processes/preserve-regions
-title: Preserving a process region before you rely on it
+title: Preserving a process region before relying on it
 when: You will argue from a process's memory, or read a MemProcFS tree with mem_fs.
 needs: []
 tools: [mem_fs]

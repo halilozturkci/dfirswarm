@@ -1,7 +1,7 @@
 ---
 id: timeline/memory
 title: Times in a memory capture and what each one dates
-when: A time from a memory image goes on a timeline, or is ordered against disk or logs.
+when: A time from memory goes on a timeline, or is ordered against disk or logs.
 needs: [timeline/clocks]
 tools: [mem_profile]
 requires_host: []

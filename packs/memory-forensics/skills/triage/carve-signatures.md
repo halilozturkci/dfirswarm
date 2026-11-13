@@ -1,7 +1,7 @@
 ---
 id: triage/carve-signatures
-title: Carving structures from an image by signature
-when: Using mem_carve or sig_carve to find hives, event logs, Prefetch or PE headers in a raw image.
+title: Carving structures by signature
+when: Using mem_carve or sig_carve to find hives, event logs, Prefetch or PE headers in an image.
 needs: []
 tools: [mem_carve, sig_carve, carve_handoff]
 requires_host: []
