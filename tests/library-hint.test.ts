@@ -10,7 +10,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { commandNames, extensionOf, libraryHint, matchTool } from "../scripts/library-hint.ts";
+import { commandNames, extensionOf, HINT_REPEAT_MS, HINT_TOOLS_MAX, libraryHint, matchTool, oneLine, shortHint } from "../scripts/library-hint.ts";
 import { resolveScope } from "../scripts/job-scope.ts";
 import { boardTable } from "../scripts/vm-hub.ts";
 import { JobService } from "../scripts/job-service.ts";
@@ -93,6 +93,9 @@ test("the hub's admission answer carries the hint for a command job that declare
   const all = await call("jobSubmit", { command: "ls inputs", inputs: ["all"] });
   assert.equal(all.ok, true);
   assert.equal(all.library, undefined, "a job that could read everything gets no hint: what it reads is not declared");
+  assert.ok(JSON.stringify(declared.library).length < 1500, "the hint is a few lines, never the manifests");
+  const again = await call("jobSubmit", { command: "sqlite3 inputs/phone/sms.db .schema > \"$OUT/s.txt\"", inputs: ["input:phone/sms.db"] });
+  assert.equal(again.library, undefined, "the same seat is not told of the same tool again at once");
   const runs = await call("jobSubmit", { command: "python3 tools/sqlite_reader/run.py", inputs: ["input:phone/sms.db"] });
   assert.equal(runs.library, undefined, "the tool it runs is not offered again");
   await svc.stop("test over");
@@ -145,4 +148,22 @@ test("the hint is bounded and reuses the cached manifest across admissions, and 
   // A deadline of zero gives what it has (here, nothing matched yet), never hangs.
   const past = await libraryHint(S, objects, { deadlineMs: 0 });
   assert.ok(past === null || past.tools.length === 0);
+});
+
+test("the hint an answer carries: at most three tools, one line each, no description-only match, not repeated to a seat", () => {
+  const tool = (name: string, by: "extension" | "description", n: number) => ({ tool: name, description: `Reads ${name} files. ${"More words. ".repeat(200)}`, matched: Array.from({ length: n }, (_, i) => ({ input: `input:f${i}`, by, what: ".x" })), example: "x".repeat(5000) });
+  const full = { note: "n", tools: [tool("a", "extension", 1), tool("b", "extension", 9), tool("c", "description", 50), tool("d", "extension", 3), tool("e", "extension", 2)], examined: 9, of: 9 };
+  const seen = new Map<string, number>();
+  const h = shortHint(full, seen, 1000)!;
+  assert.deepEqual(h.tools.map((t) => t.tool), ["b", "d", "e"], "the tools that matched the most inputs, and never the one its description alone matched");
+  assert.equal(h.tools.length, HINT_TOOLS_MAX);
+  assert.equal(h.more_tools, 1);
+  assert.equal(h.tools[0]!.more_inputs, 8);
+  assert.equal(h.tools[0]!.about, "Reads b files.");
+  assert.ok(JSON.stringify(h).length < 1200);
+  assert.deepEqual(shortHint(full, seen, 2000)!.tools.map((t) => t.tool), ["a"], "what was said is not said again; the rest is");
+  assert.equal(shortHint(full, seen, 3000), null);
+  assert.equal(shortHint(full, seen, 1000 + HINT_REPEAT_MS + 1)!.tools.length, 3, "after a while it is said again");
+  assert.equal(shortHint({ ...full, tools: [tool("c", "description", 5)] }), null);
+  assert.equal(oneLine("x".repeat(400)).length, 160);
 });

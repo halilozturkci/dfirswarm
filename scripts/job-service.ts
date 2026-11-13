@@ -1701,12 +1701,20 @@ export class JobService {
       job.write_refused = refused;
       await this.journal.append({ type: "job_write_refused", job: job.id, attempt: job.attempt, exit, ...refused });
     }
-    const status: NonNullable<JobRecord["status"]> = cancelled ? "cancelled" : stopped ? "stopped" : exit === 124 || exit === 137 ? "timed_out" : exit === 0 ? "ok" : "failed";
+    // 124 is the limit. 137 is the limit only when the limit had come (timeout's own kill after it); before it the program
+    // was killed by something else, most often the worker's memory (the run s082123: three jobs killed after 3 to 17 s
+    // were said to have stopped at limits of 900 and 1200 s, and the seat raised the limit).
+    const elapsedS = (Date.now() - started) / 1000;
+    const killedEarly = exit === 137 && elapsedS < job.spec.timeout_seconds;
+    const atLimit = exit === 124 || (exit === 137 && !killedEarly);
+    const status: NonNullable<JobRecord["status"]> = cancelled ? "cancelled" : stopped ? "stopped" : atLimit ? "timed_out" : exit === 0 ? "ok" : "failed";
     const reason =
       cancelled ??
       stopped ??
-      (exit === 124 || exit === 137
+      (atLimit
         ? `stopped at its limit of ${job.spec.timeout_seconds}s`
+        : killedEarly
+          ? `exit 137: killed (signal 9) after ${Math.max(1, Math.round(elapsedS))}s, before its limit of ${job.spec.timeout_seconds}s: not a timeout. The worker has ${this.o.workerMemoryMib} MiB of memory, and a program that outgrows it is ended this way; a longer limit does not help`
         : exit === 0 && unexecuted
           ? `exit 0, but ${execRefusedWords(unexecuted, { job: job.id, out: this.outPath(job), cwd: this.S })}`
         : exit === null

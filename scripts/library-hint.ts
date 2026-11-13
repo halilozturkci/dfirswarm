@@ -220,3 +220,42 @@ export async function libraryHint(sandbox: string, objects: HintObject[], o: { s
 export function commandNames(command: string, tool: string): boolean {
   return command.includes(`tools/${tool}/`) || new RegExp(`(?<![\\w-])${tool.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w-])`).test(command);
 }
+
+/** How many tools one admission answer names, and how long before a seat is told of the same tool again. */
+export const HINT_TOOLS_MAX = 3;
+export const HINT_REPEAT_MS = 30 * 60 * 1000;
+
+/** The hint as an answer carries it: a tool is one line, with one input it matched and how many more. */
+export type ShortHint = { note: string; tools: Array<{ tool: string; about: string; matched: HintMatch; more_inputs: number }>; more_tools: number; examined: number; of: number };
+
+/** A description's first sentence, bounded: what a tool is for in one line. */
+export function oneLine(description: string, max = 160): string {
+  const first = description.replace(/\s+/g, " ").trim().split(/(?<=[.:;])\s/)[0] ?? "";
+  return first.length > max ? `${first.slice(0, max - 1)}…` : first;
+}
+
+/**
+ * The hint bounded for an answer (the runs sf4406b and s68ce47: the whole hint was three quarters of all job_run result
+ * text, 12 M characters in one run, and a hinted tool was run 4 times in 237). A tool matched only by its description
+ * naming an extension is left out (every extraction writes a .json); at most HINT_TOOLS_MAX tools, the ones that
+ * matched the most inputs first; each as its name, one line, one matched input and a count of the rest. `seen` (tool to
+ * the time it was last named to this seat) keeps a tool from being named again within HINT_REPEAT_MS; it is updated.
+ * Null when nothing is left to say.
+ */
+export function shortHint(full: Awaited<ReturnType<typeof libraryHint>>, seen?: Map<string, number>, now = Date.now()): ShortHint | null {
+  if (!full) return null;
+  const fresh = full.tools
+    .map((t) => ({ t, own: t.matched.filter((m) => m.by !== "description") }))
+    .filter((x) => x.own.length && !(seen && now - (seen.get(x.t.tool) ?? -Infinity) < HINT_REPEAT_MS))
+    .sort((a, b) => new Set(b.own.map((m) => m.input)).size - new Set(a.own.map((m) => m.input)).size || a.t.tool.localeCompare(b.t.tool));
+  if (!fresh.length) return null;
+  const said = fresh.slice(0, HINT_TOOLS_MAX);
+  for (const x of said) seen?.set(x.t.tool, now);
+  return {
+    note: "A hint, not a rule: library tools whose manifest says they read these inputs. Run one as job_run tool=<name> (tools(name) gives its arguments) instead of writing a parser.",
+    tools: said.map((x) => ({ tool: x.t.tool, about: oneLine(x.t.description), matched: x.own[0]!, more_inputs: new Set(x.own.map((m) => m.input)).size - 1 })),
+    more_tools: fresh.length - said.length,
+    examined: full.examined,
+    of: full.of,
+  };
+}

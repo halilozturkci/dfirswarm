@@ -94,7 +94,7 @@ import { similarView } from "./job-reuse.ts";
 import { bindJobGrants, checkJobGrants, fetchForSeat, netTick, netViewFor, requestAccess } from "./net-broker.ts";
 import { readCasePolicy } from "./case-policy.ts";
 import { resolveScope, scopeKindOf } from "./job-scope.ts";
-import { commandNames, libraryHint } from "./library-hint.ts";
+import { commandNames, libraryHint, shortHint, type ShortHint } from "./library-hint.ts";
 import { sensitiveIndex } from "./output-hygiene.ts";
 import { ACCESS_RULES, apiPageHit, classifyTraceRow, type AccessHit } from "./sensitive-access.ts";
 
@@ -104,10 +104,15 @@ import { ACCESS_RULES, apiPageHit, classifyTraceRow, type AccessHit } from "./se
  * run's library whose manifest `use` (or description) matches the files the
  * job declared, the ones its command already runs left out (library-hint.ts).
  */
-async function admissionHint(S: string, spec: JobSpec): Promise<Awaited<ReturnType<typeof libraryHint>>> {
+/** The tools each seat was last told of, by run and seat: a tool is not named to the same seat again for a while (shortHint). */
+const hintSeen = new Map<string, Map<string, number>>();
+async function admissionHint(S: string, spec: JobSpec, who = ""): Promise<ShortHint | null> {
   const r = await resolveScope(S, spec.inputs, {});
   if (!r.ok) return null;
-  return libraryHint(S, r.objects, { skip: (tool) => commandNames(spec.command ?? "", tool) });
+  const key = `${S}\u0000${who}`;
+  const seen = hintSeen.get(key) ?? new Map<string, number>();
+  hintSeen.set(key, seen);
+  return shortHint(await libraryHint(S, r.objects, { skip: (tool) => commandNames(spec.command ?? "", tool) }), seen);
 }
 
 const NO_JOBS = "this run has no job service (a host run, or --no-jobs): run the work in your own shell";
@@ -942,7 +947,7 @@ export function boardTable(hub: {
       const coverage = r.job.requester.agent === who ? await L.jobAdmissionHint(S, who, attached?.ok ? attached.lead : raw.lead, r.job.spec.inputs ?? []).catch(() => null) : null;
       // Library visibility (docs/adr/0016): a command job that declared what it
       // reads is told which library tools say they read that kind of file. A hint.
-      const library = r.job.spec.kind === "command" && scopeKindOf(r.job.spec) === "declared" ? await admissionHint(S, r.job.spec).catch(() => null) : null;
+      const library = r.job.spec.kind === "command" && scopeKindOf(r.job.spec) === "declared" ? await admissionHint(S, r.job.spec, who).catch(() => null) : null;
       return {
         ok: true,
         job: await shown(who, "jobSubmit", r.job),

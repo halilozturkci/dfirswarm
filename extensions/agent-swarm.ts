@@ -211,6 +211,7 @@ import { evidenceCodeNote, evidenceCodeRun, withOwnJobOutputs } from "./evidence
 import { registerPlaywrightTool, runBrowserCheck } from "./playwright-tool.ts";
 import { readToolchainAt, TOOLCHAIN_DIR } from "./toolchain.ts";
 import { installChunkedEgress } from "./vm-egress.ts";
+import { toolsListing } from "./tools-view.ts";
 
 type ToolCtx = { cwd: string };
 
@@ -3360,19 +3361,18 @@ export default function (pi: ExtensionAPI) {
     pi.registerTool({
       name: "tools",
       label: "Tools",
-      description: "List the tools this swarm has forged: name, what it does, its params, who wrote it and which version. Also loads any you have not seen yet.",
-      promptSnippet: "See the tools peers have forged",
-      parameters: Type.Object({}),
-      async execute(_id, _params, _signal, _onUpdate, toolCtx: ToolCtx) {
+      description: "The tools this run has. With no argument: every tool's name and one line on what it does, the packs' tools by pack and the ones forged in this run apart (a short answer). With name: that one tool whole (what it does, its params, an example, how to call it). Also loads any you have not seen yet.",
+      promptSnippet: "See the run's tools (one line each), or one tool whole by name",
+      parameters: Type.Object({ name: Type.Optional(Type.String({ description: "A tool's name, for its parameters, example and how to call it. Leave out for the list." })) }),
+      async execute(_id, params, _signal, _onUpdate, toolCtx: ToolCtx) {
         const started = Date.now();
         const fresh = await loadForgedTools(toolCtx.cwd);
         const all = await listForgedTools(toolCtx.cwd);
-        await logEvent(toolCtx.cwd, agentId, "tools", {}, { ok: true, n: all.length, loaded: fresh.length }, Date.now() - started);
-        return okResult({
-          forged: all.map((m) => ({ name: m.name, description: m.description, params: paramSummary(m), runtime: m.runtime, by: m.by, version: m.version, ...(m.example ? { example: m.example } : {}), ...(runsAsJob(m) ? { call: `job_run(tool: "${m.name}", args: {...})` } : {}) })),
-          ...newToolsNote(fresh),
-          hint: all.length ? "Call a forged tool by its name, like any other tool." : "Nothing forged yet. make_tool writes one and shares it.",
-        });
+        const rows = all.map((m) => ({ name: m.name, description: m.description, params: paramSummary(m), runtime: m.runtime, by: m.by, version: m.version, pack: (m as { pack?: string | null }).pack ?? null, ...(m.example ? { example: m.example } : {}), ...(runsAsJob(m) ? { call: `job_run(tool: "${m.name}", args: {...})` } : {}) }));
+        const listing = toolsListing(rows, params.name);
+        await logEvent(toolCtx.cwd, agentId, "tools", params.name ? { name: params.name } : {}, { ok: listing.ok, n: all.length, loaded: fresh.length }, Date.now() - started);
+        if (!listing.ok) return { content: [{ type: "text" as const, text: `tools: ${listing.reason}${listing.nearest ? ` (nearest: ${listing.nearest.join(", ")})` : ""}` }], details: listing, isError: true };
+        return okResult({ ...listing, ...newToolsNote(fresh) });
       },
     });
   }

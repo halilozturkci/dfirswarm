@@ -192,6 +192,13 @@ test("a failed job keeps what it wrote, a timed-out one says so, and a peer cann
   const slow = await svc.submit("a1", { kind: "command", command: "exit 124", inputs: [] });
   assert.ok(slow.ok);
   assert.equal((await until(svc, slow.job.id)).status, "timed_out");
+  // Exit 137 long before the limit is a kill, not a timeout: the reason says so and never names the limit as what stopped it.
+  const killed = await svc.submit("a1", { kind: "command", command: "exit 137", inputs: [] });
+  assert.ok(killed.ok);
+  const k = await until(svc, killed.job.id);
+  assert.equal(k.status, "failed");
+  assert.match(k.reason ?? "", /killed \(signal 9\) after \d+s, before its limit/);
+  assert.doesNotMatch(k.reason ?? "", /stopped at its limit/);
   // A queued job: the worker is busy with a long one.
   const long = await svc.submit("a1", { kind: "command", command: "sleep 1", inputs: [] });
   const queued = await svc.submit("a1", { kind: "command", command: "echo never", inputs: [] });
