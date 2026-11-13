@@ -478,6 +478,34 @@ export async function toolNotes(packs: readonly PackIndex[]): Promise<Map<string
 }
 
 /** The tool a call is of, as the notes name tools: a job's tool for job_run, else the call's own name. */
+const NOTE_STOP = new Set("the a an and or of to in on for from with by is are was were be it its this that what which when where how who why answer question find recover lead work data file files evidence image case".split(" "));
+const noteWords = (t: string): string[] => [...new Set(t.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3 && !NOTE_STOP.has(w)))];
+
+/**
+ * The notes of the run's packs that fit a piece of work, by the words its title and reason share with a note's id,
+ * title and "when" line: at most `n`, the best first, each sharing at least two words. For a lead a seat opens or
+ * claims: the notes reached the open-weight seats only after a tool was called (a card), and a seat that never calls
+ * the tool never sees its note. A router is never offered (it is in the prompt).
+ */
+export function notesForText(packs: readonly PackIndex[], text: string, n = 3): Array<{ ref: string; when: string; score: number }> {
+  const want = new Set(noteWords(text));
+  if (want.size < 2) return [];
+  const ids = new Map<string, number>();
+  for (const p of packs) for (const e of p.entries) ids.set(e.id, (ids.get(e.id) ?? 0) + 1);
+  const out: Array<{ ref: string; when: string; score: number }> = [];
+  for (const p of packs) {
+    for (const e of p.entries) {
+      if (e.id === p.router) continue;
+      // An index line is the note's id and when it applies.
+      const when = e.line.replace(/^[-*\s]*/, "").replace(e.id, "").replace(/^[`:\s—-]+/, "").trim();
+      const have = noteWords(`${e.id.replace(/[/_-]/g, " ")} ${when}`);
+      const score = have.filter((w) => want.has(w)).length;
+      if (score >= 2) out.push({ ref: (ids.get(e.id) ?? 0) > 1 ? `${p.id}:${e.id}` : e.id, when, score });
+    }
+  }
+  return out.sort((a, b) => b.score - a.score || a.ref.localeCompare(b.ref)).slice(0, n);
+}
+
 export function cardToolOf(name: string, input: Record<string, unknown> | undefined): string | null {
   if (name === "skill" || name === "skill_done") return null;
   if (name === "job_run") return typeof input?.tool === "string" && input.tool.trim() ? input.tool.trim() : null;
@@ -1735,6 +1763,24 @@ export function registerSkills(pi: ExtensionAPI, deps: SkillsDeps): SkillsHandle
     if (cardsMode === "off") return undefined;
     const ev = event as unknown as { toolName?: string; input?: Record<string, unknown> };
     const content = Array.isArray(event.content) ? event.content : [];
+    // A lead taken: the notes that fit its work, by name, once a lead (notesForText).
+    if ((ev.toolName === "lead_open" || ev.toolName === "lead_claim") && !(event as unknown as { isError?: boolean }).isError) {
+      try {
+        const said = content.map((c) => (c as { text?: string }).text ?? "").join(" ");
+        const lead = /\bL-\d+\b/.exec(`${String(ev.input?.lead ?? "")} ${said}`)?.[0] ?? "";
+        const about = `${String(ev.input?.title ?? "")} ${String(ev.input?.why ?? "")} ${/"title":\s*"([^"]{0,300})"/.exec(said)?.[1] ?? ""}`;
+        const key = `lead:${lead || about.slice(0, 80)}`;
+        if (cardsEver.has(key)) return undefined;
+        const notes = notesForText(await packIndexes(), about).filter((x) => !ledger.get(x.ref) && !cardsHeld.has(x.ref));
+        if (!notes.length) return undefined;
+        cardsEver.add(key);
+        const words = `Notes of this run's packs that fit this lead (each is a page of method: load the one you need with skill(id) before the work, not after): ${notes.map((x) => `${x.ref}${x.when ? ` (${x.when.length > 110 ? `${x.when.slice(0, 109)}\u2026` : x.when})` : ""}`).join("; ")}.`;
+        await deps.trace((ctx as unknown as { cwd: string }).cwd, "skill_card", { lead, ids: notes.map((x) => x.ref) }, { ok: true, kind: "lead", tokens: estimateTokens(words), turn: deps.turns() }).catch(() => undefined);
+        return { content: [...content, { type: "text" as const, text: words }] };
+      } catch {
+        return undefined;
+      }
+    }
     const tool = cardToolOf(ev.toolName ?? "", ev.input);
     if (!tool) return undefined;
     try {

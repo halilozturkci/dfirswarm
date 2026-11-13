@@ -1080,3 +1080,25 @@ test("seat_prompt_args: the run's file and then the seat's, as explicit sources;
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("the notes that fit a lead are named when it is opened or claimed: by shared words, the best first, never a router, never on few words", async () => {
+  const { notesForText } = await import("../extensions/skills.ts");
+  const packs = [
+    { id: "windows-forensics", dir: "/x", version: "1", router: "windows-forensics/router", tokens: 0, entries: [
+      { id: "windows-forensics/router", line: "- `windows-forensics/router`: start here for a Windows host", tokens: 1 },
+      { id: "browser/credentials", line: "- `browser/credentials`: a saved browser login or password in a Chromium profile", tokens: 1 },
+      { id: "execution/prefetch", line: "- `execution/prefetch`: whether and when a program ran, from Prefetch", tokens: 1 },
+      { id: "registry/overview", line: "- `registry/overview`: a registry hive, its keys and time zone", tokens: 1 },
+    ] },
+    { id: "ransomware-response", dir: "/y", version: "1", router: null, tokens: 0, entries: [
+      { id: "identify/family", line: "- `identify/family`: an encrypted file family, its extension, footer and note", tokens: 1 },
+    ] },
+  ] as never;
+  const browser = notesForText(packs, "Q-8: recover the saved login password from the browser profile (Chromium)");
+  assert.equal(browser[0]!.ref, "browser/credentials");
+  assert.match(browser[0]!.when, /a saved browser login or password/);
+  assert.deepEqual(notesForText(packs, "decrypt the encrypted family: footer and extension of the .azr files").map((x) => x.ref), ["identify/family"]);
+  assert.deepEqual(notesForText(packs, "start Windows host triage").map((x) => x.ref), [], "a router is in the prompt already, and one shared word is not a fit");
+  assert.deepEqual(notesForText(packs, "ok"), []);
+  assert.ok(notesForText(packs, "program ran prefetch registry hive keys password browser login saved", 2).length <= 2);
+});
