@@ -3,6 +3,7 @@ id: evidence/ad1
 title: An AD1 image is a collection in a container
 when: Evidence is an FTK Imager logical image (.ad1).
 core: 1
+card: ad1_extract takes image (the first segment; the job gets the rest of the set from it) and members, a list of locators ("ad1:item=<address>", the locator column) OR item numbers as numbers (1234, the n column); never ad1:item=<n>. catalog_search which=members lists both.
 tools: [ad1_extract, catalog_search]
 requires_host: [target-query]
 ---
@@ -17,14 +18,17 @@ version, needs a separately validated reader. The catalogue lists every item
 (`members.tsv` of the `ad1-items` generation: `n`, its `locator`, the path under
 the data source name, size, the image's own times with no zone recorded, the
 recorded digests, the SHA-256 of the content and `check`). Find what you need with
-`catalog_search which=members`, then write it out as a job:
+`catalog_search which=members`, then write it out as a job, by locator or by number:
 
     job_run tool=ad1_extract args={"image": "inputs/case.ad1", "members": ["ad1:item=<address>"]} inputs=["input:case.ad1"]
+    job_run tool=ad1_extract args={"image": "inputs/case.ad1", "members": [<n>]} inputs=["input:case.ad1"]
 
-`members` takes the locator or `n`; a folder takes its subtree; none takes
-everything. Use the locator when the listing was partial (a segment missing, an
-item that could not be read): after a break the numbers are not a whole read's, the
-locators are. Declare every segment in the job's `inputs`. The files land in the
+`members` takes a locator (the text `ad1:item=<address>`, the `locator` column) OR
+the item's number `n` (a number, the `n` column); never `ad1:item=<n>`. A folder takes its subtree; none
+takes everything. Use the locator when the listing was partial (a segment missing,
+an item that could not be read): after a break the numbers are not a whole read's,
+the locators are. Name the first segment only, in `image` and in `inputs`: the job
+is given the image's whole segment set from it. The files land in the
 store, cited as `job:<id>/<path>`, and the derived catalogue takes an archive or
 a disk image inside in turn. Keep `image.json`, `attributes.tsv`, the generation's
 coverage and the extraction manifest. Data the tree does not lead to (a lost pointer; the format has no item count) makes the answer `partial`, and so does unreached data it could not read to its end (a long run of zeros before the lost items). A completed job is not proof the digests

@@ -402,7 +402,7 @@ HELD = _Held()             # the hidden file of the match list being written
 PAGES.append(HELD)
 
 
-TOOL = {"name": "catalog_search", "version": 20}
+TOOL = {"name": "catalog_search", "version": 21}
 PATTERN_MAX = 4096
 LINE_MAX = 1 << 20
 BUDGET_SECONDS = 25
@@ -410,6 +410,11 @@ BUDGET_SECONDS = 25
 INDEX_PROBLEMS = {}
 # A refusal lists the names it could have taken (catalogues, revisions, filesystems): at most this many, with the count.
 LISTED_MAX = 200
+# The list's own coverage record (coverage.json beside it) is read up to this size; a generation's reasons are said up to WHY_MAX
+# of them, each up to WHY_CHARS characters, with their count (the record holds the whole).
+COVERAGE_MAX_BYTES = 4 << 20
+WHY_MAX = 5
+WHY_CHARS = 400
 
 
 def _status(result):
@@ -417,22 +422,42 @@ def _status(result):
     partial when the clock, an unsearchable line or a match file that could not be written left something undone; complete otherwise."""
     if result.get("ok") is False or "error" in result:
         return "failed", "the tool stopped with an error and read no result (see error)"
+    # The list searched is itself partial, or its coverage is not known (list_partial, from the generation's record): whatever else is
+    # true of the search, matched is a lower bound over the object and no match is not an absence.
+    short = result.get("list_partial")
+    also = ("; and %s" % short) if short else ""
     if result.get("interrupted"):
         return "partial", ("the search stopped at its time budget (see interrupted): matched is a lower bound, and the matches found up to there "
-                           "are counted and paged%s" % (", with every one in the file all_matches names" if result.get("all_matches") else ""))
+                           "are counted and paged%s%s" % (", with every one in the file all_matches names" if result.get("all_matches") else "", also))
     if result.get("lines_not_searched"):
         return "partial", ("%d line(s) were longer than the tool reads and were not searched (lines_not_searched); every other line was, "
-                           "so matched is a lower bound" % result["lines_not_searched"])
+                           "so matched is a lower bound%s" % (result["lines_not_searched"], also))
     if result.get("all_matches_error"):
         return "partial", ("the search finished and this page is right, but the file that should hold every match could not be written "
-                           "(all_matches_error): the rest is reached only by paging with offset=")
+                           "(all_matches_error): the rest is reached only by paging with offset=%s" % also)
+    if short:
+        return "partial", ("%s. Every line of the list was searched (this page holds %d of the %d matches%s), so matched is a lower bound "
+                           "over the object and 0 matches is not an absence"
+                           % (short, result.get("returned", 0), result.get("matched", 0),
+                              ", every one in the file all_matches names" if result.get("all_matches") else ""))
     if result.get("which") == "generations":
         return "complete", "every generation the revision lists was checked against the pattern; matched counts all of them and this page holds %d" % result.get("returned", 0)
     if result.get("all_matches"):
         return "complete", ("every line of the catalogue file was searched; matched counts all of them, this page holds %d, and every match is in the "
-                            "file all_matches names" % result.get("returned", 0))
-    return "complete", ("every line of the catalogue file was searched; matched counts all of them and this page holds %d%s"
-                        % (result.get("returned", 0), "" if result.get("next_offset") is None else ", the rest by next_offset"))
+                            "file all_matches names%s" % (result.get("returned", 0), _list_said(result.get("generation"))))
+    return "complete", ("every line of the catalogue file was searched; matched counts all of them and this page holds %d%s%s"
+                        % (result.get("returned", 0), "" if result.get("next_offset") is None else ", the rest by next_offset",
+                           _list_said(result.get("generation"))))
+
+
+def _list_said(state):
+    """What a complete answer says of the list it searched: the list is what its generation covers, and no more."""
+    if not isinstance(state, dict):
+        return ""
+    if state.get("status") == "complete":
+        return ". The list is complete as its coverage record says (generation); what the list does not cover is in generation.not_covered"
+    return (". Nothing records whether the list itself is whole (no coverage.json beside it and no generation of the revision read): "
+            "the search is complete over the list's text, not over the object")
 
 
 def _answer(result, code=0):
@@ -725,6 +750,115 @@ def _this_generation():
 named_part = ""
 if re.fullmatch(r"p\d+", os.path.basename(base)):
     base, named_part = os.path.dirname(base), os.path.basename(base)
+
+
+def _cut(values):
+    """A generation's reasons, as many as WHY_MAX and each as long as WHY_CHARS: (the ones said, how many there are)."""
+    texts = [str(v) for v in values if v not in (None, "", [], {})]
+    return [t if len(t) <= WHY_CHARS else t[:WHY_CHARS] + "..." for t in texts[:WHY_MAX]], len(texts)
+
+
+def _coverage_beside(directory):
+    """The coverage record a recipe wrote beside the list (coverage.json): (the object, None), (None, None) when there is none, or
+    (None, why) when there is one that cannot be read. Opened without waiting and without following a link, and read only if it is a
+    regular file of at most COVERAGE_MAX_BYTES."""
+    path = os.path.join(directory, "coverage.json")
+    if not os.path.lexists(path):
+        return None, None
+    fd = None
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0))
+        st = os.fstat(fd)
+        if (st.st_mode & 0o170000) != 0o100000:
+            return None, "%s is not a regular file" % path
+        if st.st_size > COVERAGE_MAX_BYTES:
+            return None, "%s is %d bytes, more than the %d this tool reads" % (path, st.st_size, COVERAGE_MAX_BYTES)
+        with os.fdopen(fd, "rb") as fh:
+            fd = None
+            record = json.loads(fh.read(COVERAGE_MAX_BYTES + 1).decode("utf-8", "replace"))
+        if not isinstance(record, dict):
+            return None, "%s is not a JSON object" % path
+        return record, None
+    except (OSError, ValueError, RecursionError) as e:
+        return None, "%s: %s" % (path, getattr(e, "strerror", None) or e.__class__.__name__)
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
+def _list_state():
+    """What the list searched is, for every answer that searched it: the generation `base` is in the revision read (by its directory
+    under catalog/gen/, or by the name the revision links it at, alias), and the coverage record beside the list. status is the
+    generation's: complete, partial, failed, unknown (a record that says none, or cannot be read), or "not recorded" when there is no
+    record at all. Two records that disagree give the one that is not complete."""
+    out = {"status": "not recorded"}
+    real = os.path.realpath(base)
+    gid = _generation_of(base)
+    listed = _index(revision)
+    record = None
+    if gid:
+        if os.path.relpath(real, os.path.realpath(os.path.join("catalog", "gen"))) == gid:
+            record = next((g for g in listed if g["id"] == gid), None)
+    else:
+        named = [g for g in listed if isinstance(g.get("alias"), str) and g["alias"] and os.path.realpath(g["alias"]) == real]
+        record = named[-1] if named else None
+    statuses, reasons, sources = [], [], []
+    covers = []
+    if record is not None:
+        about = _about(record)
+        out.update({k: about[k] for k in ("id", "recipe", "object", "made_by_job", "readable_form") if about.get(k) is not None})
+        statuses.append(str(record.get("status") or "unknown"))
+        if isinstance(record.get("coverage"), dict):
+            covers.append(record["coverage"])
+        sources.append("catalog/revisions/%s/index.json" % revision)
+    beside, problem = _coverage_beside(base)
+    if beside is not None:
+        statuses.append(str(beside.get("status") or "unknown"))
+        covers.append(beside)
+        sources.append(os.path.join(base, "coverage.json"))
+        if "recipe" not in out and isinstance(beside.get("recipe"), str):
+            out["recipe"] = beside["recipe"]
+    elif problem:
+        statuses.append("unknown")
+        reasons.append("the list's coverage record could not be read (%s)" % problem)
+    if statuses:
+        out["status"] = next((s for s in statuses if s != "complete"), "complete")
+    for cov in covers:
+        for key in ("covered", "not_covered", "withheld"):
+            if key not in out and isinstance(cov.get(key), str) and cov[key]:
+                out[key] = cov[key] if len(cov[key]) <= 4 * WHY_CHARS else cov[key][:4 * WHY_CHARS] + "..."
+        if out["status"] != "complete":
+            for key in ("errors", "limits_hit", "segments_missing"):
+                if isinstance(cov.get(key), list):
+                    reasons += ["%s: %s" % (key, v) if key != "errors" else str(v) for v in cov[key]]
+            if cov.get("why"):
+                reasons.append(str(cov["why"]))
+            if isinstance(cov.get("status_basis"), str) and cov["status_basis"]:
+                reasons.append(cov["status_basis"])
+    if out["status"] != "complete" and out["status"] != "not recorded":
+        seen = []
+        for r in reasons:
+            if r not in seen:
+                seen.append(r)
+        out["why"], total = _cut(seen)
+        if total > len(out["why"]):
+            out["why_total"] = total
+    if sources:
+        out["read_from"] = sources
+    return out
+
+
+def _list_partial(state):
+    """The one sentence a search over a list that is not complete carries (None for a complete list, or one with no record)."""
+    if state["status"] in ("complete", "not recorded"):
+        return None
+    name = "generation %s" % state["id"] if state.get("id") else "its coverage record"
+    if state["status"] == "unknown":
+        head = "whether the list searched is whole is not known (%s gives no status that can be read)" % name
+    else:
+        head = "the list searched is %s (%s%s)" % (state["status"], name, ", %s" % state["recipe"] if state.get("recipe") else "")
+    why = state.get("why") or []
+    return "%s%s: what the object holds beyond the list was not searched" % (head, ": %s" % why[0] if why else "")
 # The catalog keeps one directory per filesystem, named by its first sector
 # (p0 for an image with no partition table, p2048 for a usual first
 # partition): the one there is, or the one the caller names.
@@ -742,6 +876,12 @@ elif len(parts) == 1:
     part = parts[0]
 elif not parts:
     about = _this_generation()
+    if os.path.isfile(os.path.join(base, "members.tsv")):
+        # An archive's or an AD1 image's catalogue is a member list, and the default which (filelist) is a disk's: the refusal names the call that reads it.
+        _answer({"ok": False, "error": ("the catalogue %s holds no filesystem listing: it is a member list (members.tsv, an archive's or an AD1 image's), "
+                                        "and which=%s reads a disk's. Pass which: \"members\" to search it" % (base, which)),
+                 "which_asked": which, "which_defaulted": args.get("which") in (None, ""), "try": {"which": "members"},
+                 **({"generation": about} if about else {})}, 1)
     _answer({"ok": False, "error": "the catalogue %s holds no filesystem listing (see its partitions.txt and README.md)" % base, **({"generation": about} if about else {})}, 1)
 else:
     _answer({"ok": False, "error": "several filesystems in %s; pass partition= one of these" % base, "partitions": parts}, 1)
@@ -759,7 +899,9 @@ if not os.path.isfile(path):
     have = sorted(os.listdir(os.path.dirname(path))) if os.path.isdir(os.path.dirname(path)) else []
     # A partial generation says why, and where its readable form is.
     about = _this_generation()
-    _answer({"ok": False, "error": "%s is not in the catalogue" % path, **({"generation": about} if about else {}), "there": have}, 1)
+    other = {"try": {"which": "members"}} if which != "members" and os.path.isfile(os.path.join(base, "members.tsv")) else {}
+    _answer({"ok": False, "error": "%s is not in the catalogue%s" % (path, "; it holds a member list: pass which: \"members\"" if other else ""),
+             **({"generation": about} if about else {}), **other, "there": have}, 1)
 # Every match goes to a file as it is found; the call returns one page of
 # them. When that page is not all of them, the file is kept and named, so the
 # rest is read from it (or paged with offset=) instead of searched for again
@@ -862,6 +1004,14 @@ if stopped_at is not None:
 if too_long:
     result["lines_not_searched"] = too_long
     result["lines_not_searched_why"] = "longer than %d bytes: not a catalogue row" % LINE_MAX
+# What the list is: its generation's status and what it does not cover go with every answer, and a list that is not complete (or
+# whose status cannot be read) makes the answer partial, however completely its text was searched.
+state = _list_state()
+result["generation"] = state
+short = _list_partial(state)
+if short:
+    result["list_partial"] = short
+    result["complete"] = False
 if INDEX_PROBLEMS.get(revision):
     result["revision_index_problem"] = INDEX_PROBLEMS[revision]
 more = offset + len(hits) < total

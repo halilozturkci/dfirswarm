@@ -197,7 +197,7 @@ import sys
 import time
 from pathlib import Path
 
-TOOL = {"name": "browser_storage", "version": 6}
+TOOL = {"name": "browser_storage", "version": 7}
 PARSER = "browser_storage/1"
 READER = "0.3.18"                        # the one ccl_chromium_reader this tool is written against; any other is refused
 STARTED = time.monotonic()               # the run's clock starts with the tool
@@ -2950,6 +2950,17 @@ def shown(text, limit=200):
     return out if len(out) <= limit else out[:limit] + "..."
 
 
+OWN_PATH_CHARS = 4096
+
+
+def own_path(text):
+    """The caller's own path argument as the answer repeats it: invisible characters removed and control characters escaped, and NOT
+    run through the withholding. It is the caller's text, not the evidence's (the job's record holds it as given), and a long path of
+    a run (store/jobs/<id>/out/.../User Data/...) is token-shaped to the shape rules, which hid the one clue to a wrong path."""
+    out = cell(visible(text))
+    return out if len(out) <= OWN_PATH_CHARS else out[:OWN_PATH_CHARS] + "..."
+
+
 def optional_id(args, key):
     value = args.get(key)
     if value is None:
@@ -2971,22 +2982,23 @@ def kind_of(mode):
             "a device" if stat.S_ISBLK(mode) or stat.S_ISCHR(mode) else "a socket" if stat.S_ISSOCK(mode) else "not a regular file")
 
 
-def list_directory(path):
-    """What the directory holds that the reader reads, and what it refuses: the data files (regular only), the highest MANIFEST."""
+def list_directory(path, given):
+    """What the directory holds that the reader reads, and what it refuses: the data files (regular only), the highest MANIFEST.
+    `path` is the directory as it is opened (absolute), `given` the caller's argument, which is what an answer repeats."""
     try:
         st = os.lstat(path)
     except OSError as exc:
-        fail("path cannot be looked at: %s" % describe(exc), path=shown(path))
+        fail("path cannot be looked at: %s" % describe(exc), path=own_path(given))
     if stat.S_ISLNK(st.st_mode):
-        fail("path is a symbolic link: give the directory itself, since this tool follows no link", path=shown(path))
+        fail("path is a symbolic link: give the directory itself, since this tool follows no link", path=own_path(given))
     if not stat.S_ISDIR(st.st_mode):
-        fail("path is not a directory: give the LevelDB directory (the one that holds the NNNNNN.log and NNNNNN.ldb files)", path=shown(path))
+        fail("path is not a directory: give the LevelDB directory (the one that holds the NNNNNN.log and NNNNNN.ldb files)", path=own_path(given))
     found = {"files": [], "manifest": None, "refused": [], "other_entries": 0, "bytes": 0, "entries": 0, "entries_cut": False}
     best = -1
     try:
         scan = os.scandir(path)
     except OSError as exc:
-        fail("path cannot be listed: %s" % describe(exc), path=shown(path))
+        fail("path cannot be listed: %s" % describe(exc), path=own_path(given))
     with scan:
         for entry in scan:
             found["entries"] += 1
@@ -3210,16 +3222,24 @@ def main():
     if py is None:
         fail("the ccl_indexeddb_dump venv is not installed in this image, so ccl_chromium_reader cannot be run: no inventory was made, and this is not an empty store",
              unavailable=True, status_detail="unavailable", needs="/opt/dfir/src/ccl_indexeddb_dump/.venv/bin/python (the base pack's ccl_indexeddb_dump)")
-    listing = list_directory(path)
+    # The reader's process runs with / as its working directory, so the directory is named to it (and listed here) by an absolute
+    # path: a path relative to the caller's working directory, which is what a job gives, is joined to that directory first. The
+    # join is textual (no "..", no link is resolved), so the directory opened is the one the caller's path names from where it stands.
+    try:
+        opened = path if os.path.isabs(path) else os.path.join(os.getcwd(), path)
+    except OSError as exc:
+        fail("the working directory cannot be named (%s), so a relative path cannot be made absolute for the reader: give an absolute path" % describe(exc),
+             path=own_path(path))
+    listing = list_directory(opened, path)
     if not listing["files"]:
         fail("the directory holds no LevelDB data file (NNNNNN.log, NNNNNN.ldb or NNNNNN.sst): there is nothing to inventory, and a LevelDB that holds no record "
-             "cannot be told here from a directory that is not one", unsupported="no LevelDB data files", path=shown(path),
+             "cannot be told here from a directory that is not one", unsupported="no LevelDB data files", path=own_path(path),
              refused=[{"name": r["name"], "why": r["why"]} for r in listing["refused"][:20]] or None)
     if listing["bytes"] > INPUT_MAX:
         fail("the data files are %d bytes, over the %d bytes this tool reads (the reader holds every record in memory): nothing was read" % (listing["bytes"], INPUT_MAX),
-             input_bytes=listing["bytes"], input_limit=INPUT_MAX, path=shown(path))
+             input_bytes=listing["bytes"], input_limit=INPUT_MAX, path=own_path(path))
     if len(listing["files"]) > MAX_FILES:
-        fail("the directory holds %d data files, over the %d this tool reads: nothing was read" % (len(listing["files"]), MAX_FILES), path=shown(path))
+        fail("the directory holds %d data files, over the %d this tool reads: nothing was read" % (len(listing["files"]), MAX_FILES), path=own_path(path))
 
     values = None
     if write_values:
@@ -3235,7 +3255,7 @@ def main():
                           "values_file": values.shown if values else None, "process_notes": process_notes() or None}), flush=True)
     STATE["last_word"] = last_word
 
-    spec = {"path": path, "files": [[name, name.rsplit(".", 1)[1]] for name, _size in listing["files"]], "manifest": listing["manifest"],
+    spec = {"path": opened, "files": [[name, name.rsplit(".", 1)[1]] for name, _size in listing["files"]], "manifest": listing["manifest"],
             "preview_records": preview_records, "db_id": db_id, "store_id": store_id, "write_fd": values.fd if values else None,
             "seconds": seconds, "expected_reader": READER, "parser": PARSER,
             "limits": {"memory_bytes": MEMORY_BYTES, "max_records": MAX_RECORDS, "max_store_ids": MAX_STORE_IDS, "max_listed": MAX_LISTED,
@@ -3270,7 +3290,7 @@ def main():
             extra["reader"] = doc.get("versions")
             if doc.get("error_class"):
                 extra["error_class"] = shown(doc["error_class"], 60)
-        say({"ok": False, "tool": TOOL, "parser": PARSER, "status": "failed", "complete": False, "path": shown(path),
+        say({"ok": False, "tool": TOOL, "parser": PARSER, "status": "failed", "complete": False, "path": own_path(path),
              "status_basis": "no inventory was made: %s" % basis, "failure": fatal or "no_document",
              "unavailable": True if fatal in ("reader_version", "reader_not_importable") else None,
              "values_file": None if dropped or values is None else values.shown, "process_notes": process_notes() or None, **extra}, 1)
@@ -3293,7 +3313,7 @@ def main():
         reasons.append("the IndexedDB metadata could not be read (%s): the directory is reported as a plain LevelDB or without some databases" % shown(doc["indexeddb_error_class"], 60))
     all_failed = bool(files) and all(f["status"] == "failed" for f in files)
 
-    answer = {"ok": True, "tool": TOOL, "parser": PARSER, "path": shown(path), "reader": doc.get("versions"), "format": doc.get("format"),
+    answer = {"ok": True, "tool": TOOL, "parser": PARSER, "path": own_path(path), "reader": doc.get("versions"), "format": doc.get("format"),
               "memory_limit_bytes": doc.get("memory_limit_bytes"),
               "files": [{k: f[k] for k in ("name", "kind", "size", "records", "put", "delete", "unknown", "records_in_compressed_blocks", "status", "stage", "reason",
                                            "error_class", "errno", "problem", "problem_offset") if k in f and f[k] is not None} for f in files],

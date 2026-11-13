@@ -19,7 +19,7 @@ An empty result has five readings. Name which one you have:
 
 **Define the search before you run it:** the objects and areas (live files, deleted entries, unallocated space, slack, secondary copies such as snapshots, backups and a second log of the same thing), the time range, the literal forms a hit would take (name, id, address) in each encoding the source uses (UTF-8, UTF-16LE), the case and separator rules, and whether the artefact stores the name at all or only an id or hash.
 
-**Read the whole result.** A page is not the result: when `catalog_search` returns `all_matches`, read that file or page with `offset`. `matched` is a lower bound when the answer says the search was interrupted by its time budget. Keep the query, exclusions, catalogue `revision` and generation with the finding (a partial one describes the preparation, not the exhibit).
+**Read the whole result.** A page is not the result: when `catalog_search` returns `all_matches`, read that file or page with `offset`. `matched` is a lower bound when the search was interrupted or its list is partial (`list_partial`). Keep the query, exclusions, catalogue `revision` and generation with the finding (a partial one describes the preparation, not the exhibit).
 
 **Check what the parser did** (`evidence/tool-validation`). Exit 0 and `complete` mean the engine finished, not that every parser read every source. Read its counts (parsed, empty, unsupported, failed, not attempted) and first failures; run the search over a source known to hold the answer.
 

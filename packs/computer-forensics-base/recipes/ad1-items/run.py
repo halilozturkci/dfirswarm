@@ -1251,6 +1251,56 @@ def label(key):
     return LABELS.get(key, "")
 
 
+NOT_IN_ANY_AD1 = ("anything the imager did not put in the image (a logical image holds no unallocated space, and slack only where it was taken as an item); "
+                  "files inside the files; an encrypted (ADCRYPT) image")
+
+
+def covered_words(cov, whole):
+    """coverage.json's covered, written from what this run read and never from what a whole run would have: how many items were
+    listed, whether that is the whole tree (`whole`: the walk reached its end with no limit, no missing segment and no item that
+    broke), and how many files' content was inflated and compared with the digests the image records."""
+    if not cov["items"]:
+        return "no item of the image's tree: none was listed"
+    counts = "%d: %d files, %d folders" % (cov["items"], cov["files"], cov["folders"])
+    if whole:
+        head = "every item of the image's tree (%s), with its metadata" % counts
+    else:
+        head = "the %d item(s) of the image's tree that this run listed (%d files, %d folders), with their metadata, which is not the whole tree (see not_covered)" % (cov["items"], cov["files"], cov["folders"])
+    files, read = cov["files"], cov["checked"]
+    compared = read - cov["no_stored_hash"]
+    if not files:
+        return head
+    if read == files and not cov["no_stored_hash"]:
+        tail = "each of those files' content inflated and checked against the digests the image records"
+    else:
+        tail = "the content of %d of those %d file(s) inflated, %d of them compared with the digests the image records" % (read, files, compared)
+        if cov["no_stored_hash"]:
+            tail += " (%d have no stored digest)" % cov["no_stored_hash"]
+    if cov["mismatches"]:
+        tail += "; %d do not match (mismatches)" % len(cov["mismatches"])
+    return "%s, and %s" % (head, tail)
+
+
+def not_covered_words(cov, listing_cut, broken_items):
+    """coverage.json's not_covered: first what this run did not read of this image, then what no AD1 image holds."""
+    own = []
+    if cov["segments_missing"]:
+        own.append("the items and the content that lie in the %d segment(s) that are not there (segments_missing), and the siblings listed after an item that lies in one"
+                   % len(cov["segments_missing"]))
+    if listing_cut:
+        own.append("every item after the %d listed, in the image's order (the listing stopped at a limit: limits_hit)" % cov["items"])
+    if broken_items:
+        own.append("%d item(s) that could not be read, and the siblings after each (errors)" % broken_items)
+    unread = cov["files"] - cov["checked"]
+    if unread > 0:
+        own.append("the content of %d listed file(s), which was not inflated or not inflated to its end (check not-read; %d of them at the time limit)" % (unread, cov["unread_at_limit"]))
+    if cov.get("unaccounted"):
+        own.append("data of the image that no listed item leads to (unreferenced_bytes, unreferenced_gaps)")
+    if cov.get("interrupted"):
+        own.append("every item after the %d listed when the recipe was stopped" % cov["items"])
+    return ("of this image: %s. Of any AD1 image: %s" % ("; ".join(own), NOT_IN_ANY_AD1)) if own else NOT_IN_ANY_AD1
+
+
 def run(target, paths, out_dir):
     seconds = limits()
     deadline = time.monotonic() + seconds * 0.9       # past this, no further file's content is inflated
@@ -1264,9 +1314,13 @@ def run(target, paths, out_dir):
     _probe_out(out_dir)
     cov = {"recipe": "ad1-items", "target": paths[0], "format": "AD1", "items": 0, "files": 0, "folders": 0, "checked": 0,
            "mismatches": [], "no_stored_hash": 0, "unread_at_limit": 0, "segments_missing": [],
-           "covered": "every item of the image's tree, with its metadata, and each file's content inflated and checked against the digests the image records",
-           "not_covered": "anything the imager did not put in the image (a logical image holds no unallocated space, and slack only where it was taken as an item); files inside the files; an encrypted (ADCRYPT) image",
+           "covered": "nothing yet: the run had started and had listed no item",
+           "not_covered": "every item of the image, until the run lists it. Of any AD1 image: " + NOT_IN_ANY_AD1,
            "limits_hit": [], "errors": []}
+    read = {"listing_cut": False, "broken_items": 0, "ended": False}      # how far the walk got and what it left out, for covered and not_covered
+
+    def whole_tree():
+        return read["ended"] and not read["broken_items"] and not cov["segments_missing"] and not cov.get("interrupted")
 
     def write_cov():
         _write_json_whole(os.path.join(out_dir, "coverage.json"), cov, indent=2)
@@ -1277,6 +1331,9 @@ def run(target, paths, out_dir):
                                "partial": "a limit was hit, a segment is missing, an item broke, or the tree does not account for all of the image's data (see limits_hit and errors)",
                                "failed": "no item could be listed (see errors)",
                                "unsupported": "this is not an AD1 image this recipe reads (see why)"}.get(status, status)
+        # covered and not_covered say what this run read, whatever the status: a partial read is never described as the whole tree.
+        cov["covered"] = covered_words(cov, whole_tree())
+        cov["not_covered"] = not_covered_words(cov, read["listing_cut"], read["broken_items"])
         if "integrity_status" not in cov:
             cov["integrity_status"] = "mismatch" if cov["mismatches"] else "unverified" if cov["files"] > cov["checked"] or cov["no_stored_hash"] or cov.get("unaccounted") else "verified" if cov["files"] else "not_applicable"
         write_cov()
@@ -1296,6 +1353,8 @@ def run(target, paths, out_dir):
         cov["signal"] = signum
         cov["status_basis"] = "the recipe was stopped by signal %d: the items listed before the stop are in members.tsv, and nothing is claimed about the rest" % signum
         cov["integrity_status"] = "unverified"
+        cov["covered"] = covered_words(cov, False)
+        cov["not_covered"] = not_covered_words(cov, read["listing_cut"], read["broken_items"])
         try:
             write_cov()
         except OSError:
@@ -1329,9 +1388,11 @@ def run(target, paths, out_dir):
             for item in img.walk():
                 if cov["items"] >= MAX_ITEMS:
                     cov["limits_hit"].append("items: the listing stopped after %d items; every item after it in the image's order is not listed" % cov["items"])
+                    read["listing_cut"] = True
                     break
                 if cov["items"] and time.monotonic() > list_deadline:
                     cov["limits_hit"].append("seconds: the listing stopped after %d items; every item after it in the image's order is not listed" % cov["items"])
+                    read["listing_cut"] = True
                     break
                 row_of(img, item, w, deadline, cov, escapes)
                 # attributes.tsv: a metadata chain is written once, for the first item that has it; an item sharing the whole
@@ -1356,8 +1417,10 @@ def run(target, paths, out_dir):
                         a.write("%d\t%d\t0x%x\t%s\t%s\n" % (item["n"], cat, key, label(key), esc(text)))
                 cov["items"] += 1
             else:
+                read["ended"] = True
                 walked_all = not img.walk_errors
         cov["errors"] += img.walk_errors
+        read["broken_items"] = len(img.walk_errors)
         if walked_all and not cov["limits_hit"]:
             # The data nothing led to is read to its end under the listing's clock; the gaps that hold non-zero bytes or were not read
             # to their end are all in unreferenced-gaps.jsonl (at most GAPS_FILE_MAX of them), the first AD1_GAPS_LISTED in the coverage.
