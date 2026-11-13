@@ -8524,7 +8524,7 @@ start_vm_hub() { # <sandbox> <hub dir> <run id> <collector socket> <agent ids...
   [[ "${vm_snapshot:-1}" -eq 1 ]] || hub_args+=(--no-snapshot)
   # The inbox page bound is read by readInbox, which for a VM runs here.
   # The custody the hub takes at the finish has the operator's deadline.
-  printf '%s' "$input" | SWARM_RUNS_DIR="$RUNS_DIR" SWARM_INBOX_PAGE_CHARS="${inbox_page_chars:-}" SWARM_VM_IMAGE_DIGEST="${vm_image_digest:-}" SWARM_CUSTODY_TIMEOUT="${custody_timeout:-${SWARM_CUSTODY_TIMEOUT:-14400}}" detach_exec node --experimental-strip-types --no-warnings --heapsnapshot-near-heap-limit=1 --diagnostic-dir="$dir" "$script" \
+  printf '%s' "$input" | SWARM_RUNS_DIR="$RUNS_DIR" SWARM_INBOX_PAGE_CHARS="${inbox_page_chars:-}" SWARM_VM_IMAGE_DIGEST="${vm_image_digest:-}" SWARM_CUSTODY_TIMEOUT="${custody_timeout:-${SWARM_CUSTODY_TIMEOUT:-14400}}" detach_exec node --experimental-strip-types --no-warnings --max-old-space-size="${SWARM_HUB_HEAP_MB:-8192}" --heapsnapshot-near-heap-limit=1 --diagnostic-dir="$dir" "$script" \
     "$sandbox" --dir "$dir" --run "$run" "${hub_args[@]}" --quiet >"$sandbox/traces/vm-hub.log" 2>&1 &
   local hub_pid=$!
   echo "$hub_pid" > "$sandbox/hub.pid"

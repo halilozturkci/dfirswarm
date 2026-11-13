@@ -96,6 +96,7 @@ import { readCasePolicy } from "./case-policy.ts";
 import { resolveScope, scopeKindOf } from "./job-scope.ts";
 import { commandNames, freshCoverage, libraryHint, shortHint, type CoverageHint, type ShortHint } from "./library-hint.ts";
 import { boundRpcAnswer } from "./reply-bound.ts";
+import { loopMonitor, sampleHealth, snapshotAt, snapshotDue } from "./hub-health.ts";
 import { sensitiveIndex } from "./output-hygiene.ts";
 import { ACCESS_RULES, apiPageHit, classifyTraceRow, type AccessHit } from "./sensitive-access.ts";
 
@@ -1079,6 +1080,8 @@ export class Hub {
   private transferTimer: ReturnType<typeof setInterval> | null = null;
   /** Its own memory, read each minute: written to status.json, and said once on the trace past three quarters of the heap's limit. */
   private memoryTimer: ReturnType<typeof setInterval> | null = null;
+  private healthTimer?: ReturnType<typeof setInterval>;
+  private snapshotTaken = false;
   private memoryHigh = false;
   /** The sockets a seat's VM holds, and whose: every line written on one is checked against P.WIRE_LINE_MAX. */
   private seatSockets = new WeakMap<Socket, string>();
@@ -1387,6 +1390,23 @@ export class Hub {
     // launchers start it with --heapsnapshot-near-heap-limit, so a hub that dies of it leaves a snapshot in its own directory.
     this.memoryTimer = setInterval(() => void this.checkMemory(), 60_000);
     this.memoryTimer.unref();
+    // Each minute, what the hub and the host look like, on the trace (hub-health.ts); and one heap snapshot while it can still be written.
+    const loop = loopMonitor();
+    this.healthTimer = setInterval(() => {
+      const h = sampleHealth(loop.read(), { transfers: this.transfers.size, seats_linked: [...this.status.values()].filter((a) => a.connected).length, queued_prompts: [...this.queued.values()].reduce((n, q) => n + q.length, 0), jobs: this.jobService?.jobs.size ?? 0 });
+      void this.event("hub_health", {}, { ok: true, ...h }).catch(() => undefined);
+      if (snapshotDue(h, this.snapshotTaken)) {
+        this.snapshotTaken = true;
+        try {
+          const file = v8.writeHeapSnapshot(join(this.cfg.dir, `Heap.at-${Math.round(snapshotAt() * 100)}pct.${process.pid}.heapsnapshot`));
+          void this.event("hub_heap_snapshot", {}, { ok: true, file, heap_used_mb: h.heap_used_mb, heap_limit_mb: h.heap_limit_mb }).catch(() => undefined);
+          this.log(`memory: heap snapshot written at ${h.heap_used_mb} of ${h.heap_limit_mb} MB: ${file}`);
+        } catch (err) {
+          void this.event("hub_heap_snapshot", {}, { ok: false, reason: (err as Error).message }).catch(() => undefined);
+        }
+      }
+    }, 60_000);
+    this.healthTimer.unref();
     // A Unix socket path the kernel takes is 103 bytes and its NUL (104 on
     // macOS): past it `listen` fails with a bare EINVAL, which said nothing
     // about why (measured: a 3-byte run id under macOS's TMPDIR made 105).
@@ -1561,6 +1581,7 @@ export class Hub {
     if (this.backstopTimer) clearInterval(this.backstopTimer);
     if (this.transferTimer) clearInterval(this.transferTimer);
     if (this.memoryTimer) clearInterval(this.memoryTimer);
+    if (this.healthTimer) clearInterval(this.healthTimer);
     for (const key of [...this.transfers.keys()]) this.dropTransfer(key, false);
     await this.flushRefusals().catch(() => undefined);
     // Its link to the collector closes below: a harness line written after it goes the CLI's way.

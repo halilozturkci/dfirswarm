@@ -725,10 +725,10 @@ ensure_hub() {
   # hub's own pid.
   (
     if nohup true >/dev/null 2>&1; then
-      exec nohup node --experimental-strip-types --no-warnings --heapsnapshot-near-heap-limit=1 --diagnostic-dir="$HUB_DIR" "$script" --resume "$HUB_DIR"
+      exec nohup node --experimental-strip-types --no-warnings --max-old-space-size="${SWARM_HUB_HEAP_MB:-8192}" --heapsnapshot-near-heap-limit=1 --diagnostic-dir="$HUB_DIR" "$script" --resume "$HUB_DIR"
     fi
     trap '' HUP
-    exec node --experimental-strip-types --no-warnings --heapsnapshot-near-heap-limit=1 --diagnostic-dir="$HUB_DIR" "$script" --resume "$HUB_DIR"
+    exec node --experimental-strip-types --no-warnings --max-old-space-size="${SWARM_HUB_HEAP_MB:-8192}" --heapsnapshot-near-heap-limit=1 --diagnostic-dir="$HUB_DIR" "$script" --resume "$HUB_DIR"
   ) >>"$SANDBOX/traces/vm-hub.log" 2>&1 </dev/null &
   echo $! > "$SANDBOX/hub.pid"
   local i
