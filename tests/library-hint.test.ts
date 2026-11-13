@@ -10,7 +10,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { commandNames, extensionOf, HINT_REPEAT_MS, HINT_TOOLS_MAX, libraryHint, matchTool, oneLine, shortHint } from "../scripts/library-hint.ts";
+import { commandNames, extensionOf, freshCoverage, HINT_REPEAT_MS, HINT_TOOLS_MAX, libraryHint, matchTool, oneLine, shortHint } from "../scripts/library-hint.ts";
 import { resolveScope } from "../scripts/job-scope.ts";
 import { boardTable } from "../scripts/vm-hub.ts";
 import { JobService } from "../scripts/job-service.ts";
@@ -166,4 +166,15 @@ test("the hint an answer carries: at most three tools, one line each, no descrip
   assert.equal(shortHint(full, seen, 1000 + HINT_REPEAT_MS + 1)!.tools.length, 3, "after a while it is said again");
   assert.equal(shortHint({ ...full, tools: [tool("c", "description", 5)] }), null);
   assert.equal(oneLine("x".repeat(400)).length, 160);
+});
+
+test("the overlap hint is said once to a seat: what it was told is left out, and nothing new sends nothing", () => {
+  const seen = new Map<string, number>();
+  const hint = { overlaps: [{ lead: "L-3", holder: "a2", answers: ["question:5"], since: null }], objects: ["job:j000008/tree is read by L-4 (a3)"], jobs: ["j000011 (a3, running) declared input:x.ad1 too"] };
+  assert.deepEqual(freshCoverage(hint, seen, 1000), hint);
+  assert.equal(freshCoverage(hint, seen, 2000), null, "the same hint again");
+  const more = { ...hint, overlaps: [...hint.overlaps, { lead: "L-9", holder: "a5", answers: ["question:6"], since: null }] };
+  assert.deepEqual(freshCoverage(more, seen, 3000), { overlaps: [more.overlaps[1]], objects: [], jobs: [] }, "only what is new");
+  assert.deepEqual(freshCoverage(hint, seen, 1000 + HINT_REPEAT_MS + 1), hint, "after a while it is said again");
+  assert.equal(freshCoverage(null, seen), null);
 });

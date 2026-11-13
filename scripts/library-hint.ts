@@ -259,3 +259,22 @@ export function shortHint(full: Awaited<ReturnType<typeof libraryHint>>, seen?: 
     of: full.of,
   };
 }
+
+/**
+ * The overlap hint a job's admission carries (who else works these questions or objects), said once: the items a seat
+ * was told within HINT_REPEAT_MS are left out, and a hint with nothing new is not sent. It rode on 73 to 92% of all job
+ * answers in two runs, the same leads and holders each time. `seen` maps an item's words to when it was last said.
+ */
+export type CoverageHint = { overlaps: Array<{ lead: string; holder: string; answers: string[]; since: string | null }>; objects: string[]; jobs: string[] };
+export function freshCoverage(hint: CoverageHint | null, seen: Map<string, number>, now = Date.now()): CoverageHint | null {
+  if (!hint) return null;
+  const fresh = (key: string): boolean => {
+    if (now - (seen.get(key) ?? -Infinity) < HINT_REPEAT_MS) return false;
+    seen.set(key, now);
+    return true;
+  };
+  const overlaps = hint.overlaps.filter((o) => fresh(`lead:${o.lead}:${o.holder}`));
+  const objects = hint.objects.filter((o) => fresh(`object:${o}`));
+  const jobs = hint.jobs.filter((j) => fresh(`job:${j.split(" ")[0]}`));
+  return overlaps.length || objects.length || jobs.length ? { overlaps, objects, jobs } : null;
+}

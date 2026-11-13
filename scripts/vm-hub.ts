@@ -94,7 +94,7 @@ import { similarView } from "./job-reuse.ts";
 import { bindJobGrants, checkJobGrants, fetchForSeat, netTick, netViewFor, requestAccess } from "./net-broker.ts";
 import { readCasePolicy } from "./case-policy.ts";
 import { resolveScope, scopeKindOf } from "./job-scope.ts";
-import { commandNames, libraryHint, shortHint, type ShortHint } from "./library-hint.ts";
+import { commandNames, freshCoverage, libraryHint, shortHint, type CoverageHint, type ShortHint } from "./library-hint.ts";
 import { boundRpcAnswer } from "./reply-bound.ts";
 import { sensitiveIndex } from "./output-hygiene.ts";
 import { ACCESS_RULES, apiPageHit, classifyTraceRow, type AccessHit } from "./sensitive-access.ts";
@@ -945,7 +945,12 @@ export function boardTable(hub: {
       if (!r.ok) return r;
       const attached = r.job.requester.agent === who ? await L.attachJob(S, who, r.job.id, raw.lead).catch(() => null) : null;
       // The coverage hint at admission (A1): who else works these questions or these objects now.
-      const coverage = r.job.requester.agent === who ? await L.jobAdmissionHint(S, who, attached?.ok ? attached.lead : raw.lead, r.job.spec.inputs ?? []).catch(() => null) : null;
+      const coverageAll = r.job.requester.agent === who ? await L.jobAdmissionHint(S, who, attached?.ok ? attached.lead : raw.lead, r.job.spec.inputs ?? []).catch(() => null) : null;
+      // Said once to a seat, not with every job (library-hint.ts freshCoverage).
+      const coverageKey = `${S}\u0000cov\u0000${who}`;
+      const coverageSeen = hintSeen.get(coverageKey) ?? new Map<string, number>();
+      hintSeen.set(coverageKey, coverageSeen);
+      const coverage = freshCoverage(coverageAll as CoverageHint | null, coverageSeen);
       // Library visibility (docs/adr/0016): a command job that declared what it
       // reads is told which library tools say they read that kind of file. A hint.
       const library = r.job.spec.kind === "command" && scopeKindOf(r.job.spec) === "declared" ? await admissionHint(S, r.job.spec, who).catch(() => null) : null;
