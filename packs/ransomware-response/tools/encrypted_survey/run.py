@@ -18,7 +18,7 @@ survives whole, who the family is, or when anything ran. What it does:
     either heuristic": it is no statement about the file's content;
   * profiles the first `sample` candidates of more than 4096 bytes: entropy of three
     64 KiB windows (head, middle, end) with their offsets and lengths, and the last
-    `tail_bytes` bytes. Windows can overlap in a small file, and intermittent
+    `tail_bytes` bytes (measured, not printed). Windows can overlap in a small file, and intermittent
     encryption can fall between them;
   * counts modification times by hour twice, for every regular file and for the
     candidates. The clock is the filesystem's mtime as collected, which an extraction
@@ -216,7 +216,7 @@ import tempfile
 import unicodedata
 from pathlib import Path
 
-PARSER = "encrypted_survey/4"
+PARSER = "encrypted_survey/5"
 WINDOW = 65536
 SMALL = 4096                 # a file of at most this many bytes has no entropy measurement
 HEAD_THRESHOLD = 7.5         # bits per byte in the head window
@@ -1904,6 +1904,14 @@ class Budget:
         self.read += n
 
 
+def tail_measure(tail):
+    """What is said of a file's last bytes instead of the bytes: how many, how many distinct values, and their entropy."""
+    counts = collections.Counter(tail)
+    entropy = -sum(n / len(tail) * math.log2(n / len(tail)) for n in counts.values())
+    return {"bytes": len(tail), "distinct_byte_values": len(counts), "entropy_bits_per_byte": round(entropy, 2),
+            "entropy_ceiling_for_this_length": round(math.log2(min(len(tail), 256)), 2)}
+
+
 def common_suffix(a, b):
     n, i = min(len(a), len(b)), 0
     while i < n and a[-1 - i] == b[-1 - i]:
@@ -1996,7 +2004,7 @@ def main():
     # What points at the encryption scheme (parser 4): the smallest member, the size a member gained over a same-name plaintext twin,
     # and whether the last bytes are unique per file. A member here is a candidate by its name (an extension after a known one).
     scheme = {"members": 0, "smallest": None, "twins": 0, "overheads": collections.Counter(), "examples": [], "tails": set(), "tails_read": 0,
-              "small_read": 0, "small_failed": 0, "small_bytes_read": 0, "pooled": collections.Counter(), "distinct": []}
+              "small_read": 0, "small_failed": 0, "small_budget": 0, "small_bytes_read": 0, "pooled": collections.Counter(), "distinct": []}
 
     def tail_seen(tail):
         scheme["tails"].add(tail)
@@ -2130,8 +2138,10 @@ def main():
                             row["windows"] = windows
                             row["windows_overlap"] = overlap(windows)
                             if tail:
-                                row["tail_hex"] = tail.hex()
-                                tails[tail.hex()] += 1
+                                # The last bytes are where per-file key material is usually kept (scheme_pointers says so): they are
+                                # measured here and not printed. Only bytes that every sampled tail shares are (shared_tail_suffix).
+                                row["tail"] = tail_measure(tail)
+                                tails[tail] += 1
                                 if reasons:
                                     tail_seen(tail)
                                 shared = tail if shared is None else common_suffix(shared, tail)
@@ -2151,11 +2161,15 @@ def main():
                 row["profile_skipped"] = unmeasured
                 not_profiled[unmeasured] += 1
                 # A small member has no entropy windows, and its last bytes are still where a trailer is: they are measured, not printed.
-                if unmeasured == "too_small_for_entropy" and reasons and size and scheme["small_read"] < sample_size:
+                if unmeasured == "too_small_for_entropy" and reasons and size and scheme["small_read"] < sample_size and not budget.allows(min(size, SMALL)):
+                    scheme["small_budget"] += 1                   # a small member is read whole: that read is in the budget too
+                    row["small_profile_skipped"] = "read_budget_spent"
+                elif unmeasured == "too_small_for_entropy" and reasons and size and scheme["small_read"] < sample_size:
                     small_fd = None
                     try:
                         small_fd, _small_st = open_regular(path)
                         data = pread_full(small_fd, SMALL, 0)
+                        budget.spend(len(data))
                         scheme["small_read"] += 1
                         scheme["small_bytes_read"] += len(data)
                         small_tail = data[-tail_bytes:] if tail_bytes else b""
@@ -2201,9 +2215,10 @@ def main():
     for ext, n in sorted(appended.items(), key=lambda kv: (-kv[1], kv[0])):
         ext_page.add({"extension": ext, "files": n}, appended_from.get(ext))
     tail_page = NoReplacePage("encrypted_survey", [real, "repeated tails"], limit)
-    for tail, n in sorted(tails.items(), key=lambda kv: (-kv[1], kv[0])):
+    for tail, n in sorted(tails.items(), key=lambda kv: (-kv[1], len(kv[0]), len(set(kv[0])))):
         if n > 1:
-            tail_page.add({"tail_hex": tail, "files": n, "basis": "observation"})
+            tail_page.add({"files": n, **tail_measure(tail), "basis": "observation",
+                           "bytes_printed": "no: the same last bytes in several files can be one file copied after it was encrypted"})
     shared_out = None
     if sum(tails.values()) > 1 and shared is not None and len(shared) >= 4:
         shared_out = {"suffix_hex": shared.hex(), "bytes": len(shared), "across_files": sum(tails.values()), "basis": "observation",
@@ -2248,12 +2263,13 @@ def main():
                             "twin": "a regular file beside the member whose name is the member's without its last extension; sizes only, "
                                     "its content is not compared"},
         "tails": {"tail_bytes": tail_bytes, "members_read": scheme["tails_read"], "small_members_read": scheme["small_read"],
-                  "small_members_not_read": scheme["small_failed"], "small_members_bytes_read": scheme["small_bytes_read"],
+                  "small_members_not_read": scheme["small_failed"], "small_members_not_read_budget": scheme["small_budget"],
+                  "small_members_bytes_read": scheme["small_bytes_read"],
                   "distinct_tails": len(scheme["tails"]), "unique_per_file": unique_tails,
                   "pooled_entropy_bits_per_byte": pooled_entropy, "pooled_bytes": pooled_bytes,
                   "distinct_byte_values_per_tail": {"least": min(scheme["distinct"]), "most": max(scheme["distinct"])} if scheme["distinct"] else None,
-                  "scope": "the profiled members of more than 4096 bytes, and the first `sample` members of 4096 bytes or less (read whole; their "
-                           "tails are measured and not printed)"},
+                  "scope": "the profiled members of more than 4096 bytes, and the first `sample` members of 4096 bytes or less (read whole, "
+                           "within read_budget_bytes); no member's tail is printed, each is measured (its row's `tail` or `small_profile`)"},
         "trailer_seen": trailer_seen,
         "reading": pointer,
         "rules": ["measure what the encryptor added", "read the routine to the last use of the per-file secret: where is it written?",
@@ -2263,6 +2279,8 @@ def main():
 
     c = counters
     reasons = []
+    if scheme["small_budget"]:
+        reasons.append("the read budget (%d bytes) was spent: %d members of 4096 bytes or less were not read for their tails" % (budget.total, scheme["small_budget"]))
     if scheme["small_failed"]:
         reasons.append("%d members of 4096 bytes or less could not be read for their tails" % scheme["small_failed"])
     if c["read_failed_files"]:
@@ -2370,8 +2388,8 @@ def main():
         "truncated": any(p["truncated"] for p in pages.values()),
         **({"unrecognised_parameters": unknown} if unknown else {}),
         "note": "Candidates are leads. Entropy of three windows does not say what part of a file was encrypted, and an "
-                "intermittent layout can fall between them; the sampled tails are bytes of the files and say nothing about a "
-                "family until a reference matches. Take the questions this cannot answer (extent, recoverability, family, "
+                "intermittent layout can fall between them; a file's last bytes are measured and not printed, and what the sampled tails "
+                "share says nothing about a family until a reference matches. Take the questions this cannot answer (extent, recoverability, family, "
                 "timing) to file-format validation, a known-good counterpart or a documented layout. coverage and complete say "
                 "what was and was not read; a file in read_failed or unmeasured was not shown to be anything.",
     })

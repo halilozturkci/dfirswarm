@@ -280,6 +280,12 @@ def where_it_failed(exc):
     return "line %s of the tool" % line if line else "an unknown line"
 
 
+def as_given(path, most=1024):
+    """A path as the answer prints it: as it was given, whatever its characters (the answer is JSON, which escapes what is not ASCII
+    and every control character), cut at `most` characters with the count."""
+    return path if len(path) <= most else path[:most] + "...(%d characters)" % len(path)
+
+
 def printable(text, most=200):
     """A caller's string as the answer repeats it: bounded, and with nothing a terminal or a JSON reader would trip on."""
     text = text if isinstance(text, str) else repr(text)
@@ -758,9 +764,27 @@ def detect_type(head, magics):
     return None
 
 
-def list_members(args, max_files):
+def carries_suffix(name, suffix):
+    """Whether a file name ends in a family's suffix, in any case (".LOCKED" and ".locked" are one suffix) and with something before it."""
+    return len(name) > len(suffix) and name.lower().endswith(suffix.lower())
+
+
+def member_keys(args, paths):
+    """How a recipe names each member: its path below `dir`, or, for `files`, below the directory all of them share, with slashes. Two
+    members of one name in two directories are two names (a base name alone would be one)."""
+    if not paths:
+        return []
+    if args.get("dir") is not None:
+        root = os.path.abspath(args["dir"])
+    else:
+        root = os.path.commonpath([os.path.dirname(os.path.abspath(path)) for path in paths])
+    return [os.path.relpath(os.path.abspath(path), root).replace(os.sep, "/") for path in paths]
+
+
+def list_members(args, max_files, suffix=None):
     """The files a call names: `files` (paths), or `dir` with `glob` (a pattern on the file's name) and `recursive`. Regular files only,
-    no link followed, in the order of their names. Returns (paths, how many more there were past max_files, what was skipped)."""
+    no link followed, in the order of their names. With `suffix` and no glob, the files of dir whose name carries that suffix (in any
+    case). Returns (paths, how many more there were past max_files, what was skipped)."""
     files, directory = args.get("files"), args.get("dir")
     if (files is None) == (directory is None):
         raise Refused("give either files (a list of paths) or dir (a directory, with glob and recursive), not both and not neither")
@@ -771,7 +795,9 @@ def list_members(args, max_files):
         paths = [path_param(f, "an entry of files") for f in files]
         return paths[:max_files], max(0, len(paths) - max_files), skipped
     directory = path_param(directory, "dir")
-    pattern = args.get("glob", "*")
+    pattern = args.get("glob")
+    by_suffix = suffix if pattern is None and suffix else None
+    pattern = "*" if pattern is None else pattern
     if not isinstance(pattern, str) or not pattern or len(pattern) > 200 or "\x00" in pattern or "/" in pattern:
         raise Refused("glob is a pattern on a file's name (*.locked), 1 to 200 characters, without a slash")
     recursive = bool_param(args, "recursive")
@@ -804,7 +830,7 @@ def list_members(args, max_files):
                         below.append(entry.path)
                 elif not entry.is_file(follow_symlinks=False):
                     skipped["not_regular"] += 1
-                elif fnmatch.fnmatchcase(entry.name, pattern):
+                elif carries_suffix(entry.name, by_suffix) if by_suffix else fnmatch.fnmatchcase(entry.name, pattern):
                     if len(found) < max_files:
                         found.append(entry.path)
                     else:
@@ -816,8 +842,8 @@ def list_members(args, max_files):
 # FAMILY: end
 
 TOOL = "family_decrypt"
-VERSION = 1
-PARSER = "family_decrypt/1"
+VERSION = 2
+PARSER = "family_decrypt/2"
 DEFAULT_SECONDS, MAX_SECONDS = 1500, 1740
 PIECE = 1 << 20
 MAX_SLICE = 4096
@@ -973,17 +999,20 @@ def main():
     max_bytes = int_param(args, "max_bytes", 2 << 30, 1, 64 << 30)
     max_seconds = int_param(args, "max_seconds", DEFAULT_SECONDS, 1, MAX_SECONDS)
     limit = int_param(args, "limit", 200, 1, 5000)
-    key_source, variants, assignments, header, trailer, suffix = read_recipe(args)
-    if args.get("glob") is None and args.get("dir") is not None and suffix:
-        args = {**args, "glob": "*" + suffix.replace("[", "[[]")}
-    set_deadline(max_seconds)
-    paths, more, skipped = list_members(args, max_files)
+    # Refused first, before the recipe is read or a directory listed: outside a secret-output job this tool opens nothing.
     directory, shown, in_job, secret = job_place()
     if not (in_job and secret):
         fail("family_decrypt writes decrypted content and is refused outside a job run as secret output: %s. Run it as job_run "
-             "tool=family_decrypt (its manifest makes the job secret output). Nothing was written"
+             "tool=family_decrypt (its manifest makes the job secret output). Nothing was read and nothing was written"
              % ("this run is not a job (JOB_ID and OUT are not set), so a file written here would not be sealed" if not in_job else
                 "SECRET_OUTPUT is not 1 in this job, so its files would be sealed as ordinary output"), written=False)
+    key_source, variants, assignments, header, trailer, suffix = read_recipe(args)
+    set_deadline(max_seconds)
+    paths, more, skipped = list_members(args, max_files, suffix)
+    names_in_recipe = member_keys(args, paths)
+    by_base = {}                    # a base name -> the variants of the recipe's members of that name
+    for assigned_name, variant_number in assignments.items():
+        by_base.setdefault(assigned_name.rsplit("/", 1)[-1], []).append(variant_number)
     out_dir = directory / "decrypted"
     if out_dir.is_symlink() or (out_dir.exists() and not out_dir.is_dir()):
         fail("$OUT/decrypted is there and is not a directory of this job (a link or a file): nothing was written", written=False)
@@ -995,16 +1024,23 @@ def main():
     rows = []
     spent = 0
     defaulted = 0
-    counts = {"decrypted_type_confirmed": 0, "decrypted_type_not_confirmed": 0, "failed": 0, "not_decrypted_budget": 0, "not_decrypted_time": 0}
+    counts = {"decrypted_type_confirmed": 0, "decrypted_type_not_confirmed": 0, "failed": 0, "not_decrypted_budget": 0, "not_decrypted_time": 0,
+              "not_decrypted_not_a_member": 0}
     started = time.monotonic()
     for number, path in enumerate(paths, 1):
         name = os.path.basename(path)
-        row = {"member": number, "file": printable(path, 1024), "bytes": None, "payload_bytes": None, "cipher": None, "counter": None,
+        row = {"member": number, "file": as_given(path), "bytes": None, "payload_bytes": None, "cipher": None, "counter": None,
                "sha256_ciphertext": None, "output": None, "detected_type": None, "expected_type": expected_type(name, magics), "verdict": None}
         rows.append(row)
         if out_of_time():
             row["verdict"], row["failure"] = "not decrypted", "the time limit (max_seconds %d) was reached before this member" % max_seconds
             counts["not_decrypted_time"] += 1
+            continue
+        if suffix and not carries_suffix(name, suffix):
+            # A file that does not carry the family's suffix is not a member (a ransom note, a plaintext twin): it is not "decrypted".
+            row["verdict"], row["failure"] = "not decrypted", ("not a member: its name does not end in the recipe's member_suffix (compared in any "
+                                                               "case). A recipe whose member_suffix is null takes every file named")
+            counts["not_decrypted_not_a_member"] += 1
             continue
         fd = None
         out_fd = None
@@ -1027,7 +1063,11 @@ def main():
                 raise ValueError("the file is too short to hold the key the recipe reads from it")
             head = pread_full(fd, min(64, payload), header)
             wanted = magics.get(row["expected_type"]) if row["expected_type"] else None
-            chosen, how = assignments.get(name), "the recipe's assignment for this name"
+            chosen, how = assignments.get(names_in_recipe[number - 1]), "the recipe's assignment for this member"
+            if chosen is None and len(set(by_base.get(name, ()))) == 1:
+                # Listed from another directory than the recipe was made from (or an older recipe, keyed by base name): the name decides
+                # only when every member of that name in the recipe has the same variant.
+                chosen, how = by_base[name][0], "the recipe's assignment for this name (every member of that name in the recipe has this variant)"
             if chosen is None:
                 chosen, how = 0, "the recipe's only variant" if len(variants) == 1 else None
                 if len(variants) > 1:
@@ -1055,7 +1095,7 @@ def main():
             out_fd, out_name = create_new(out_dir, out_name)
             WRITING._tmp = str(out_dir / out_name)
             both = hashlib.sha256(), hashlib.sha256()
-            both[0].update(pread_full(fd, header, 0))
+            _hash_range(fd, 0, header, both[0])
             at, first, timed_out = header, None, False
             end = header + payload
             while at < end:
@@ -1081,7 +1121,7 @@ def main():
                                                                    "partial output was removed" % (max_seconds, at - header))
                 counts["not_decrypted_time"] += 1
                 continue
-            both[0].update(pread_full(fd, trailer, end))
+            _hash_range(fd, end, trailer, both[0])
             os.fsync(out_fd)
             os.close(out_fd)
             out_fd = None
@@ -1133,6 +1173,9 @@ def main():
         reasons.append("%d members were not decrypted: max_bytes (%d)" % (counts["not_decrypted_budget"], max_bytes))
     if counts["not_decrypted_time"]:
         reasons.append("%d members were not decrypted: the time limit (max_seconds %d)" % (counts["not_decrypted_time"], max_seconds))
+    if counts["not_decrypted_not_a_member"]:
+        reasons.append("%d files named are not members and were not decrypted: their names do not end in the recipe's member_suffix"
+                       % counts["not_decrypted_not_a_member"])
     if promised_unconfirmed:
         reasons.append("%d members were decrypted and do not start with the bytes of the type their name promises: for them the recipe is not "
                        "confirmed, and what was written may be noise" % promised_unconfirmed)
@@ -1170,6 +1213,17 @@ def main():
         "files": rows[:limit], "truncated": len(rows) > limit, **({"files_not_listed": len(rows) - limit} if len(rows) > limit else {}),
         "rules": RULES, **({"unrecognised_parameters": unknown} if unknown else {}),
     }, indent=2)
+
+
+def _hash_range(fd, at, length, digest):
+    """`length` bytes of a file from `at` into a digest, a piece at a time (a header or a trailer may be large)."""
+    end = at + length
+    while at < end:
+        block = pread_full(fd, min(PIECE, end - at), at)
+        if not block:
+            raise ValueError("the file ended at byte %d, before its size" % at)
+        digest.update(block)
+        at += len(block)
 
 
 def _write_all(fd, data):

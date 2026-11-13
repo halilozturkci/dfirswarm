@@ -44,8 +44,8 @@ Neither one alone shows that a file was encrypted.
 only) writes the values to `ransom-note-values.jsonl` under `$OUT`. Cite a
 value by note id and offset. Never write one into a post, the ledger or the report,
 and never write a hash of one. `encrypted_survey` prints the last `tail_bytes` bytes
-of sampled files; where key material is expected there, run it with
-`secret_output: true` too.
+of sampled files only where every sampled tail shares them, and measures the rest;
+where key material is expected there, run it with `secret_output: true` too.
 
 **Does not show.** A candidate count does not show how much was encrypted or
 that the rest is whole; a note name does not show a note; a histogram does not show

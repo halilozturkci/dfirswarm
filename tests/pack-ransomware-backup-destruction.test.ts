@@ -156,6 +156,15 @@ test("service configuration: a Start value that changes between two complete rea
     const { a } = await run(cwd, { service_keys: [{ host: "h1", file: a1, collected_utc: "2026-10-01T09:00:00Z" }, { host: "h1", file: a2, collected_utc: "2026-10-01T11:00:00Z" }] });
     const ob = (a.observations as J[]).find((o) => o.class === "inventory_change_observed")!;
     assert.deepEqual([ob.object, ob.start_before, ob.start_after, ob.disabled_after], ["service_configuration", 3, 4, true]);
+    // regkv/5 answers are read the same way, alone and beside a regkv/4 answer of the same service.
+    const k5 = (start: number) => ({ ...k(start), parser: "regkv/5" });
+    const b1 = await put(cwd, "k5a.json", k5(2));
+    const b2 = await put(cwd, "k5b.json", k5(4));
+    for (const [first, second, before] of [[b1, b2, 2], [a1, b2, 3]] as const) {
+      const next = await run(cwd, { service_keys: [{ host: "h1", file: first, collected_utc: "2026-10-01T09:00:00Z" }, { host: "h1", file: second, collected_utc: "2026-10-01T11:00:00Z" }] });
+      const seen = (next.a.observations as J[]).find((o) => o.class === "inventory_change_observed")!;
+      assert.deepEqual([seen.object, seen.start_before, seen.start_after, seen.disabled_after], ["service_configuration", before, 4, true]);
+    }
   });
 });
 
@@ -404,7 +413,7 @@ test("the manifest's claims hold and the shared blocks are the survey's", async 
   const max = /DEFAULT_SECONDS, MAX_SECONDS = (\d+), (\d+)/.exec(source)!;
   assert.ok(Number(max[2]) <= manifest.timeout_seconds - 60);
   assert.match(manifest.params.max_seconds!.description, new RegExp(`default ${max[1]}, at most ${max[2]}`));
-  for (const p of ["evtx_query/4", "vss_stores/5", "regkv/4", "backup_audit_normalise/2", "snapshot_chain_check/2", "shell_history/14", "cloudtrail_parse/6"]) {
+  for (const p of ["evtx_query/4", "vss_stores/5", "regkv/4", "regkv/5", "backup_audit_normalise/2", "snapshot_chain_check/2", "shell_history/14", "cloudtrail_parse/6"]) {
     assert.ok(manifest.description.includes(p), p);
     assert.ok(source.includes(`"${p}"`), p);
   }

@@ -231,11 +231,14 @@ test("ransom_note_scan's manifest names the five listed residual classes, with o
   assert.match(d, /more than 64 distinct 8-character windows/);
 });
 
-test("encrypted_survey's manifest says the raw tail bytes are the file's, and the skills say to run it as secret output where key material is expected", async () => {
-  const manifest = JSON.parse(await readFile(join(PACK_DIR, "tools", "encrypted_survey", "manifest.json"), "utf8")) as { params: Record<string, { description: string }> };
-  assert.match(manifest.params.tail_bytes.description, /They are raw bytes of the file/);
+test("encrypted_survey's manifest says a file's last bytes are measured and not printed, and what is still printed of them; the skills say the same", async () => {
+  const manifest = JSON.parse(await readFile(join(PACK_DIR, "tools", "encrypted_survey", "manifest.json"), "utf8")) as { description: string; params: Record<string, { description: string }> };
+  assert.match(manifest.params.tail_bytes.description, /their count, distinct values and entropy are reported and the bytes are not; what every sampled tail shares is printed in shared_tail_suffix/);
+  assert.match(manifest.description, /the last `tail_bytes` bytes, which are measured and, from version 13 \(parser encrypted_survey\/5\), not printed/);
+  assert.match(manifest.description, /they are the only tail bytes printed \(shared_tail_suffix[^)]*\), so a key that is the same in every sampled file and kept unmasked at the very end would be printed there/);
+  assert.doesNotMatch(await readFile(join(PACK_DIR, "tools", "encrypted_survey", "run.py"), "utf8"), /"tail_hex"\]|\{"tail_hex"/, "no row carries a file's last bytes");
   const triage = await readFile(join(PACK_DIR, "skills", "scope", "triage-tools.md"), "utf8");
-  assert.match(triage.replace(/\s+/g, " "), /prints the last `tail_bytes` bytes of sampled files; where key material is expected there, run it with `secret_output: true` too/);
+  assert.match(triage.replace(/\s+/g, " "), /prints the last `tail_bytes` bytes of sampled files only where every sampled tail shares them, and measures the rest; where key material is expected there, run it with `secret_output: true` too/);
   const family = await readFile(join(PACK_DIR, "skills", "identify", "family.md"), "utf8");
   assert.match(family.replace(/\s+/g, " "), /returns the last `tail_bytes` bytes, 32 by default/);
 });

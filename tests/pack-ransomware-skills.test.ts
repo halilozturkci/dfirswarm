@@ -437,7 +437,8 @@ test("scope/triage-tools gave its Names paragraph to a second-level leaf, kept t
   }
   assert.match(tt, /Only if you say what a withheld path hides, or quote `paths_withheld`:\s*`scope\/triage-tools-names`/);
   // what must survive the move (RAN-04): key material is expected in the survey's tails, so the job runs with secret_output: true
-  assert.match(tt, /`encrypted_survey` prints the last `tail_bytes` bytes of sampled files; where key material is expected there, run it with `secret_output: true` too\./);
+  // (from encrypted_survey 13 a file's own last bytes are measured and only what every sampled tail shares is printed)
+  assert.match(tt, /`encrypted_survey` prints the last `tail_bytes` bytes of sampled files only where every sampled tail shares them, and measures the rest; where key material is expected there, run it with `secret_output: true` too\./);
   for (const id of ["scope/triage-tools", "scope/triage-tools-names"]) assert.ok(TOKENS(skills.get(id)!.text) <= 800, id);
   assert.deepEqual(skills.get("scope/triage-tools-names")!.meta.needs, []);
   assert.doesNotMatch(skills.get("scope/triage-tools-names")!.text, /operator/i);

@@ -191,7 +191,7 @@ from pathlib import Path
 PARSER = "backup_destruction_correlate/1"
 WORK = "correlation"
 TOOL = "backup_destruction_correlate"
-ACCEPTED = {"events": ("evtx_query/4",), "vss_inventories": ("vss_stores/5",), "service_keys": ("regkv/4",),
+ACCEPTED = {"events": ("evtx_query/4",), "vss_inventories": ("vss_stores/5",), "service_keys": ("regkv/4", "regkv/5"),
             "backup_audits": ("backup_audit_normalise/2", "backup_audit_normalise/3"), "chain_checks": ("snapshot_chain_check/2",),
             "shell_histories": ("shell_history/14",), "cloud_trails": ("cloudtrail_parse/6",)}
 KINDS = ("events", "vss_inventories", "service_keys", "backup_audits", "chain_checks", "shell_histories", "cloud_trails")

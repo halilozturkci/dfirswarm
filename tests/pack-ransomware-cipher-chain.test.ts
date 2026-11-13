@@ -168,8 +168,8 @@ test("the chain: survey, scan, known-plaintext check and decrypt return the nonc
   assert.equal(kpa.members.with_a_crib, N);
   assert.deepEqual(kpa.members.by_verdict, { head_is_plaintext: 1, match: N, no_crib: 1 }, "the twin is plaintext and the note has no crib");
   assert.equal(kpa.derived_rules.length, 1);
-  assert.deepEqual([kpa.derived_rules[0].region, kpa.derived_rules[0].skip, kpa.derived_rules[0].length, kpa.derived_rules[0].mask_all_zero, kpa.derived_rules[0].explains],
-    ["tail", 0, 32, false, N]);
+  assert.deepEqual([kpa.derived_rules[0].region, kpa.derived_rules[0].skip, kpa.derived_rules[0].length, kpa.derived_rules[0].explains], ["tail", 0, 32, N]);
+  assert.equal("mask_all_zero" in kpa.derived_rules[0], false, "whether the mask is all zero states its bytes: it is in the recipe file only");
   assert.match(kpa.derived_rules[0].from_file, /\.jpg\.crypted$/);
   assert.match(kpa.recipe.key, /the last 32 bytes of each file XOR a 32-byte constant/);
   assert.deepEqual(kpa.recipe.variants.map((v: Doc) => [v.cipher, v.counter, v.members]).sort(), [["aes-ctr", 0, N / 2], ["chacha20-ietf", 0, N / 2]]);
@@ -180,6 +180,7 @@ test("the chain: survey, scan, known-plaintext check and decrypt return the nonc
   const recipe = JSON.parse(await readFile(join(fam.cwd, kpa.recipe_file), "utf8")) as Doc;
   assert.equal(recipe.key.xor_hex, fam.mask.toString("hex"), "the rule: the mask, in the sealed recipe");
   assert.ok(recipe.variants.every((v: Doc) => v.nonce.hex === fam.nonce.toString("hex")), "the nonce, in the sealed recipe");
+  assert.equal(recipe.key_mask_all_zero, false);
   // Every row: a crib length, the trials made and the false positives to expect from them.
   for (const row of kpa.files.filter((r: Doc) => r.verdict === "match")) {
     assert.ok(row.crib_bytes >= 3 && row.trials > 0 && row.expected_false_positives >= 0, JSON.stringify(row));

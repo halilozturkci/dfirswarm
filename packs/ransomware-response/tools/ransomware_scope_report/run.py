@@ -192,7 +192,7 @@ from pathlib import Path
 PARSER = "ransomware_scope_report/1"
 WORK = "report"
 TOOL = "ransomware_scope_report"
-ACCEPTED = {"censuses": ("encrypted_survey/3", "encrypted_survey/4"), "extents": ("encryption_extent/1",), "recovery_checks": ("recovery_validate/1",)}
+ACCEPTED = {"censuses": ("encrypted_survey/3", "encrypted_survey/4", "encrypted_survey/5"), "extents": ("encryption_extent/1",), "recovery_checks": ("recovery_validate/1",)}
 KINDS = ("censuses", "extents", "recovery_checks", "timelines", "coverage")
 DEFAULT_SECONDS, MAX_SECONDS = 780, 840    # the manifest allows 900
 MAX_INPUTS = 100000

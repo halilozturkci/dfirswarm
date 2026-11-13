@@ -290,6 +290,12 @@ def where_it_failed(exc):
     return "line %s of the tool" % line if line else "an unknown line"
 
 
+def as_given(path, most=1024):
+    """A path as the answer prints it: as it was given, whatever its characters (the answer is JSON, which escapes what is not ASCII
+    and every control character), cut at `most` characters with the count."""
+    return path if len(path) <= most else path[:most] + "...(%d characters)" % len(path)
+
+
 def printable(text, most=200):
     """A caller's string as the answer repeats it: bounded, and with nothing a terminal or a JSON reader would trip on."""
     text = text if isinstance(text, str) else repr(text)
@@ -401,8 +407,8 @@ def answered(main, cleanup=None):
         fail("unexpected failure: %s" % (describe(exc) if isinstance(exc, OSError) else "%s at %s" % (type(exc).__name__, where_it_failed(exc))))
 
 TOOL = "cipher_state_scan"
-VERSION = 1
-PARSER = "cipher_state_scan/1"
+VERSION = 2
+PARSER = "cipher_state_scan/2"
 CHUNK = 16 << 20
 OVERLAP = 4096
 MAX_HITS = 20000                  # hits kept (each is a few hundred bytes of JSON); past it they are counted and the answer is partial
@@ -455,6 +461,15 @@ def aes_expand_key(key):
             t = bytes(AES_SBOX[b] for b in t)
         words.append(bytes(a ^ b for a, b in zip(words[i - nk], t)))
     return b"".join(words)
+
+
+def first_word_fits(region, key_bytes, swapped):
+    """Whether word Nk of a region is w[0] XOR SubWord(RotWord(w[Nk-1])) XOR 01000000, the first step of the FIPS-197 expansion."""
+    first, last, made = region[:4], region[key_bytes - 4:key_bytes], region[key_bytes:key_bytes + 4]
+    if swapped:
+        first, last, made = first[::-1], last[::-1], made[::-1]
+    return (made[0] == first[0] ^ AES_SBOX[last[1]] ^ 1 and made[1] == first[1] ^ AES_SBOX[last[2]]
+            and made[2] == first[2] ^ AES_SBOX[last[3]] and made[3] == first[3] ^ AES_SBOX[last[0]])
 
 
 def _root(n, k):
@@ -522,8 +537,10 @@ LOOKED_FOR = {
 NOT_LOOKED_FOR = [
     "a state or a key with no constant beside it (a raw 32-byte key on a stack or a heap is not found: random bytes have no shape)",
     "ChaCha or Salsa20 constants stored as big-endian words, or built in registers and never stored",
-    "AES decryption schedules (the equivalent inverse cipher), bit-sliced or AES-NI-only key forms that are not the FIPS-197 words, and a "
-    "schedule that holds a run of 16 zero bytes",
+    "AES decryption schedules (the equivalent inverse cipher), bit-sliced or AES-NI-only key forms that are not the FIPS-197 words, a "
+    "schedule only part of which is in the file, and a schedule in which the key expansion's own step gives a zero word (SubWord(RotWord(w)) "
+    "equal to the round constant, or for AES-256 SubWord(w) of all zero bytes: about one random key in 2^29). Zero bytes in or around a "
+    "schedule do not hide it: the schedule of the all-zero key is found, and so is one that ends or begins with zero bytes among zero pages",
     "an RC4 state kept as 32-bit integers (OpenSSL's RC4_KEY), and the i and j of a byte state",
     "any cipher not listed (HC-128, Sosemanuk, Rabbit, XTEA, RSA or elliptic-curve private keys), and anything inside compressed, "
     "encrypted or paged-out content: the bytes are read as they are in the file",
@@ -541,11 +558,12 @@ def chacha_state(buf, at):
         "key_distinct_byte_values": distinct,
         "key_shape": ("looks random" if distinct >= (12 if short else 20) else
                       "low variety (zeros, text or code): more likely the bare constant in a binary than a keyed state"),
-        "counter_32bit": int.from_bytes(state[48:52], "little"), "bytes_52_to_56_zero": state[52:56] == bytes(4),
+        "counter_32bit": int.from_bytes(state[48:52], "little"),
     }
     if short:
         shown["key_halves_equal"] = state[16:32] == state[32:48]
-    values = {"key_hex": key.hex(),
+    # Whether the four bytes after the 32-bit counter are zero says four bytes of the IETF nonce when it is true: it goes with the values.
+    values = {"key_hex": key.hex(), "bytes_52_to_56_zero": state[52:56] == bytes(4),
               "layouts": {"ietf": {"counter": int.from_bytes(state[48:52], "little"), "nonce_hex": state[52:64].hex()},
                           "original": {"counter": int.from_bytes(state[48:56], "little"), "nonce_hex": state[56:64].hex()}}}
     return shown, values
@@ -598,19 +616,25 @@ def scan_buffer(buf, own, shapes, emit, counts):
     if not ("aes-schedule" in shapes or "rc4" in shapes) or len(buf) < 176:
         return
     size = len(buf)
-    number = int.from_bytes(buf.replace(bytes(16), b"\xa5" * 16), "little")       # a zero page satisfies every XOR relation: take it out
+    number = int.from_bytes(quiet_zero_runs(buf), "little")
     if "aes-schedule" in shapes:
         for key_bytes, length, near, far, pattern in AES_SHAPES:
             relation = (number ^ (number >> (8 * near)) ^ (number >> (8 * far))).to_bytes(size, "little")
-            for match in pattern.finditer(relation):
+            # Every place the pattern holds, the overlapping ones too: among zero bytes the relation of a schedule's first words also holds
+            # a few bytes early, and a search that went on after the end of that early match would step over the schedule itself.
+            match = pattern.search(relation)
+            while match is not None:
                 at = match.start() - 4
+                match = pattern.search(relation, at + 5)
                 if not 0 <= at < own or at + length > size:
                     continue
                 region = buf[at:at + length]
                 order = None
-                if aes_expand_key(region[:key_bytes]) == region:
+                # The first word the expansion makes is checked before the whole schedule is: data that only repeats the relation
+                # (a table of words 16 bytes apart) is then refused in a few operations per place, not by a whole key expansion.
+                if first_word_fits(region, key_bytes, False) and aes_expand_key(region[:key_bytes]) == region:
                     order = "as FIPS-197 writes them"
-                else:
+                elif first_word_fits(region, key_bytes, True):
                     swapped = b"".join(region[i:i + 4][::-1] for i in range(0, length, 4))
                     if aes_expand_key(swapped[:key_bytes]) == swapped:
                         order, region = "byte-swapped words (a 32-bit big-endian load on a little-endian machine)", swapped
@@ -645,7 +669,9 @@ def scan_buffer(buf, own, shapes, emit, counts):
                 slide = 0
                 while slide < 255 and at + 256 + slide < size and buf[at + 256 + slide] == buf[at + slide]:
                     slide += 1
-                if not any(buf[at + k:at + k + 256] in (TABLES[0][1], TABLES[1][1]) for k in range(slide + 1)):
+                if any(buf[at + k:at + k + 256] in (TABLES[0][1], TABLES[1][1]) for k in range(slide + 1)):
+                    counts["aes_sbox_permutations"] += 1                          # the AES S-box or its inverse: a table, named under "tables"
+                else:
                     emit(at, {"kind": "rc4-permutation", "matched": "a permutation of 0..255", "bytes": 256,
                               "also_a_permutation_at_the_next_offsets": slide,
                               "note": "an RC4 state kept as bytes has this shape, and so has any substitution table; the key is not "
@@ -662,6 +688,20 @@ def scan_buffer(buf, own, shapes, emit, counts):
 
 RC4_ONES = {}
 RAMPS = bytes(range(256)) * 2
+ZERO_KEEP = 64                    # zero bytes left as they are at each end of a long zero run (a schedule holds 50 in a row at most)
+
+
+def quiet_zero_runs(buf):
+    """A copy of the bytes for the two whole-buffer searches, with the INSIDE of long zero runs made non-zero: over a zero page every XOR
+    relation holds and no two bytes differ, and the pattern search would crawl over it. Only bytes that lie in a run of 256 or more zero
+    bytes and at least ZERO_KEEP bytes from each of its ends are changed. A key schedule cannot hold such a byte: its words satisfy
+    w[i] = w[i-Nk] ^ f(w[i-1]) and f of a zero word is not zero where a round begins, so it has at most 11 zero words in a row (44 bytes,
+    and up to 3 zero bytes of the word on each side: 50). A zero run that begins in a schedule's last word or ends in its first is
+    therefore left as it is for at least the bytes the schedule has in it; a permutation holds one zero byte. Every candidate is
+    checked against the file's own bytes, never against this copy."""
+    for block in (4096, 256):
+        buf = buf.replace(bytes(block), bytes(ZERO_KEEP) + b"\xa5" * (block - 2 * ZERO_KEEP) + bytes(ZERO_KEEP))
+    return buf
 RC4_MISSES = 200000               # near-permutations checked and refused per piece before the search of that piece is given up
 
 
@@ -685,7 +725,7 @@ def control(shapes):
     """Plant every shape in random bytes and find it again with the code that reads the file. The pieces are small (64 KiB), so that
     plants sit at a piece's edge and in its overlap too."""
     chunk = 1 << 16
-    data = bytearray(os.urandom(5 * chunk + 999))
+    data = bytearray(os.urandom(8 * chunk + 999))
     planted = []
 
     def plant(at, blob, kind, shape):
@@ -703,6 +743,30 @@ def control(shapes):
         plant(where, aes_expand_key(os.urandom(n)), "aes-%d-key-schedule" % (8 * n), "aes-schedule")
     swapped = aes_expand_key(os.urandom(32))
     plant(4 * chunk + 2000, b"".join(swapped[i:i + 4][::-1] for i in range(0, 240, 4)), "aes-256-key-schedule", "aes-schedule")
+    # Zero bytes around a schedule (the unused words of a key structure, a zeroed page) must not hide it. Planted: a schedule whose LAST
+    # byte is zero with zero bytes after it and before it, for 128 and 256-bit keys, as stored and byte-swapped; one whose FIRST bytes
+    # are zero after zero bytes; the schedule of the all-zero key between zero pages; and a 192-bit one between zero bytes.
+    at = 5 * chunk + 2000
+    if "aes-schedule" in shapes:
+        def ending_in_zero(n, last):
+            for _try in range(20000):
+                made = aes_expand_key(os.urandom(n))
+                if made[last] == 0:
+                    return made
+            raise Refused("the control could not draw an AES key whose schedule ends in a zero byte")
+
+        def swap(made):
+            return b"".join(made[i:i + 4][::-1] for i in range(0, len(made), 4))
+
+        leading = aes_expand_key(bytes(3) + os.urandom(13))
+        for blob, bits in ((ending_in_zero(16, -1), 128), (ending_in_zero(32, -1), 256), (swap(ending_in_zero(16, -4)), 128),
+                           (swap(ending_in_zero(32, -4)), 256), (leading, 128), (swap(aes_expand_key(os.urandom(15) + bytes(1) + os.urandom(16))), 256),
+                           (aes_expand_key(bytes(16)), 128), (aes_expand_key(bytes(32)), 256), (aes_expand_key(os.urandom(24)), 192)):
+            for before, after in ((700, 700), (15, 15), (16, 4500)):
+                data[at:at + before] = bytes(before)
+                plant(at + before, blob, "aes-%d-key-schedule" % bits, "aes-schedule")
+                data[at + before + len(blob):at + before + len(blob) + after] = bytes(after)
+                at += before + len(blob) + after + 64
     perm = list(range(256))
     for i in range(255, 0, -1):
         j = int.from_bytes(os.urandom(2), "little") % (i + 1)
@@ -712,7 +776,7 @@ def control(shapes):
     plant(5 * chunk + 100, TABLES[0][1], "constant-table", "tables")
     data = bytes(data)
     found = set()
-    counts = {"aes_like_not_a_schedule": 0, "identity_tables": 0, "permutation_search_cut_pieces": 0}
+    counts = {"aes_like_not_a_schedule": 0, "identity_tables": 0, "aes_sbox_permutations": 0, "permutation_search_cut_pieces": 0}
 
     def note(at, shown, _values):
         # A permutation whose neighbours make the window before or after it one too is found at any of those offsets.
@@ -722,8 +786,9 @@ def control(shapes):
     scan(lambda at, n: data[at:at + n], len(data), shapes, chunk, note, counts, {})
     missed = [{"offset": at, "kind": kind} for at, kind in planted if (at, kind) not in found]
     return {"planted": len(planted), "found_at_planted_offset": len(planted) - len(missed), "passed": not missed, "missed": missed,
-            "how": "each shape asked for is planted in %d random bytes (at the edge of a piece, in its overlap and inside it) and searched "
-                   "with the code and the piece logic that read the file" % len(data)}
+            "how": "each shape asked for is planted in %d random bytes (at the edge of a piece, in its overlap and inside it; AES schedules also "
+                   "with a last or a first byte of zero among zero bytes, as stored and byte-swapped, and the schedule of the all-zero key "
+                   "between zero pages) and searched with the code and the piece logic that read the file" % len(data)}
 
 
 class Values:
@@ -791,6 +856,8 @@ def last_word(signum):
 def write_hits(hits, key):
     directory, shown, _in_job, _secret = job_place()
     directory = directory / "tool-output"
+    if directory.is_symlink() or (directory.exists() and not directory.is_dir()):
+        raise OSError(errno.ENOTDIR, "tool-output is there and is not a directory of this run (a link or a file): nothing was written through it")
     name = "cipher_state_scan-hits-%s.jsonl" % hashlib.sha256(json.dumps(key, sort_keys=True).encode("utf-8")).hexdigest()[:16]
     fd, name = create_new(directory, name, 0o644)
     with os.fdopen(fd, "w", encoding="ascii") as fh:
@@ -836,7 +903,7 @@ def main():
     try:
         fd, size = open_regular(path)
     except (OSError, ValueError) as exc:
-        fail("the file could not be opened: %s" % (describe(exc) if isinstance(exc, OSError) else "not a usable path"), file=printable(path), **common)
+        fail("the file could not be opened: %s" % (describe(exc) if isinstance(exc, OSError) else "not a usable path"), file=as_given(path), **common)
     start = int_param(args, "offset", 0, 0, 1 << 62)
     if start > size:
         os.close(fd)
@@ -844,10 +911,10 @@ def main():
     head = pread_full(fd, 16, 0)
     container = next((name for at, magic, name in CONTAINERS if head[at:at + len(magic)] == magic), None)
     values = Values()
-    hits, counts, kinds = [], {"aes_like_not_a_schedule": 0, "identity_tables": 0, "permutation_search_cut_pieces": 0}, {}
+    hits, counts, kinds = [], {"aes_like_not_a_schedule": 0, "identity_tables": 0, "aes_sbox_permutations": 0, "permutation_search_cut_pieces": 0}, {}
     over = [0]
     candidates = [0]
-    shown_path = printable(path, 1024)
+    shown_path = as_given(path)
 
     def emit(offset, shown, secret):
         kinds[shown["kind"]] = kinds.get(shown["kind"], 0) + 1
