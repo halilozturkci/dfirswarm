@@ -765,6 +765,44 @@ test("a zeroed next pointer does not leave a complete, verified answer: the data
   assert.equal(JSON.parse(whole.stdout).processing_status, "complete");
 });
 
+test("the parent folder's address FTK Imager writes after each item's name is accounted for, and a wrong one is left to the unreferenced-data check", async () => {
+  // Nested folders, so the parent fields are not zero (a top-level item's is, and reads as padding): before the reader took them,
+  // every nested item left 8 non-zero bytes "reached by no item" and a whole, verified image came out partial and unverified.
+  const nested = (): Ad1Node[] => [{ name: "C:", folder: true, children: [
+    { name: "Users", folder: true, children: [
+      { name: "bob", folder: true, children: [{ name: "a.txt", content: B("first") }, { name: "b.txt", content: B("second") }] },
+    ] },
+    { name: "top.txt", content: B("third") },
+  ] }];
+  const good = ad1Data(nested());
+  const d = dir("ad1-parent-");
+  writeFileSync(join(d, "good.ad1"), ad1Segments(good.data)[0]);
+  const ok = runRecipe([join(d, "good.ad1")]);
+  assert.equal(ok.cov.status, "complete", ok.cov.errors.join("\n"));
+  assert.equal((ok.cov as Record<string, unknown>).unreferenced_nonzero_bytes, 0);
+  const cwd = runDir();
+  writeFileSync(join(cwd, "inputs", "good.ad1"), ad1Segments(good.data)[0]);
+  const r = await runPy(TOOL, cwd, { image: "inputs/good.ad1" }, undefined, { AGENT_ID: "s1" });
+  const res = JSON.parse(r.stdout);
+  assert.deepEqual([r.code, res.processing_status, res.integrity_status, res.files], [0, "complete", "verified", 3], r.stdout);
+  // One nested item says another folder is its parent: those 8 bytes are not taken as the parent field, so the check names them.
+  const t = nested();
+  const bob = t[0].children![0].children![0];
+  const first = ad1Data(t);
+  const liar = { ...bob.children![0], parentField: first.addr.get(t[0])! };
+  bob.children![0] = liar;
+  const bad = ad1Data(t);
+  const at = bad.addr.get(liar)! + 48 + Buffer.from("a.txt").length;
+  writeFileSync(join(cwd, "inputs", "bad.ad1"), ad1Segments(bad.data)[0]);
+  const b = await runPy(TOOL, cwd, { image: "inputs/bad.ad1", out_dir: "work/s1/bad" }, undefined, { AGENT_ID: "s1" });
+  const bres = JSON.parse(b.stdout);
+  assert.deepEqual([bres.processing_status, bres.integrity_status], ["partial", "unverified"], b.stdout);
+  assert.deepEqual(bres.unreferenced_data.listed.map((g: { from: number; to: number }) => [g.from, g.to]), [[at, at + 8]], "the one wrong parent field, and nothing else");
+  const { cov } = runRecipe([join(cwd, "inputs", "bad.ad1")]);
+  assert.equal(cov.status, "partial");
+  assert.equal((cov as Record<string, unknown>).unreferenced_nonzero_bytes, Buffer.from(bad.data.subarray(at, at + 8)).filter((x) => x !== 0).length);
+});
+
 /** Four file items f0..f3 after `pad` zero bytes, linked f1 -> f2 -> f3 and f0 left without a next pointer (a zeroed one): f1..f3 are lost with no error. */
 function paddedCutImage(pad: number, linked: boolean): Buffer {
   const data = ad1Logical((put) => {

@@ -880,11 +880,15 @@ class AD1:
         children, then its next sibling), numbered from 0, with its path
         (names joined by "/"). A node that cannot be read ends its chain,
         and is named in walk_errors: a numbering after it is not the
-        numbering of a whole read, and an item's address (locator) is."""
+        numbering of a whole read, and an item's address (locator) is.
+        FTK Imager writes the address of the item's parent folder (0 for a
+        top-level item) as 8 bytes after its name: those count as reached
+        when they hold that address, and are left to the unreferenced-data
+        check (non-zero bytes nothing accounts for) when they do not."""
         seen, n = set(), 0
-        stack = [(self.first_item, b"", None, 0)] if self.first_item else []
+        stack = [(self.first_item, b"", None, 0, 0)] if self.first_item else []
         while stack:
-            addr, parent, parent_n, depth = stack.pop()
+            addr, parent, parent_n, depth, parent_addr = stack.pop()
             if addr in seen:
                 self.walk_errors.append("the tree loops back to item address %d under %s: not followed" % (addr, ad1_where(parent)))
                 continue
@@ -899,6 +903,8 @@ class AD1:
                 name = self.read(addr + 48, name_len)
                 meta = self.metadata(meta)
                 self._reach(addr, 48 + name_len)
+                if addr + 56 + name_len <= self.end and _struct.unpack("<Q", self.read(addr + 48 + name_len, 8))[0] == parent_addr:
+                    self._reach(addr + 48 + name_len, 8)
                 if table:
                     self._reach_table(table, size)
             except AD1Error as e:
@@ -909,9 +915,9 @@ class AD1:
                     "size": size, "table": table, "meta": meta}
             n += 1
             if nxt:
-                stack.append((nxt, parent, parent_n, depth))
+                stack.append((nxt, parent, parent_n, depth, parent_addr))
             if child:
-                stack.append((child, path, item["n"], depth + 1))
+                stack.append((child, path, item["n"], depth + 1, addr))
             yield item
 
     def chunks(self, item):
