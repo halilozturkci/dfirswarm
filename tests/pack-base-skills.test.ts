@@ -76,7 +76,7 @@ const ROUTER_MAX = 500; // scripts/skill-budgets.json: the base router opens wit
 
 test("every skill is a leaf within the budget, opens with Use when ... Not for ..., and has a short index entry", async () => {
   const skills = await load(SKILLS);
-  assert.equal(skills.size, 30);
+  assert.equal(skills.size, 35);
   for (const s of skills.values()) {
     assert.ok(TOKENS(s.text) <= (s.id === ROUTER ? ROUTER_MAX : LEAF_MAX), `${s.id} is ${Math.round(TOKENS(s.text))} tokens`);
     assert.ok(TOKENS(s.text) <= 1000, `${s.id} is over the 1,000 a skill may have`);
@@ -95,7 +95,7 @@ test("every skill is a leaf within the budget, opens with Use when ... Not for .
   for (const id of skills.keys()) assert.ok(index.includes(`\`${id}\``), `${id} is in the index`);
   // The pack budget is the harness's own count of the index entries (extensions/skills.ts), not the file's size: past it a pack shows its router only.
   const parsed = await readPackIndex(PACK);
-  assert.equal(parsed.entries.length, 30);
+  assert.equal(parsed.entries.length, 35);
   assert.ok(parsed.tokens <= SKILL_BUDGET.pack, `the pack index is ${Math.round(parsed.tokens)} tokens of entries`);
 });
 

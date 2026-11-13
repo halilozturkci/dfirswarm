@@ -1,7 +1,7 @@
 ---
 id: evidence/coverage
 title: What a search did and did not cover
-when: Before writing "not found", "none", or a count of "all"; when a search returned nothing.
+when: Before writing "not found", "none" or "all".
 core: 3
 needs: []
 tools: [catalog_search]

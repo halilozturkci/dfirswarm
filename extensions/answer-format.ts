@@ -4,7 +4,7 @@
  *
  * A case's questions often say how the answer is graded: "Format:
  * *Name_md5(file)*", "Format: *DD-MM-YYYY-HH-MM*", "Format: *ip:port*". On the
- * Batman III runs answers that were right lost their marks for the form (a
+ * runs of one case answers that were right lost their marks for the form (a
  * date as 2024-03-12 14:02 where DD-MM-YYYY-HH-MM was asked, a hash with no
  * name, a name and time zone as a sentence). The format is read from the
  * question's words into a pattern; an answer whose value holds no line in that

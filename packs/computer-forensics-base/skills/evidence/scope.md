@@ -1,7 +1,7 @@
 ---
 id: evidence/scope
 title: What the examination may answer
-when: At the start, before widening a search, using a secret the evidence holds, or asking for evidence.
+when: At the start, or before widening a search or using a secret.
 needs: []
 tools: []
 requires_host: []

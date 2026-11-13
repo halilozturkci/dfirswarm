@@ -1,7 +1,7 @@
 ---
 id: evidence/catalog
 title: Use the catalogue with coverage and revision
-when: At the start, before repeating preparation or reporting a catalogue search.
+when: At the start, or before reporting a catalogue search.
 needs: []
 tools: [catalog_search]
 requires_host: [fls, mmls, fsstat, istat, mactime]

@@ -1,6 +1,6 @@
 ---
 id: filesystem/extract
-title: Get a file out of an image, and say which record it came from
+title: Get a file out of an image and name its record
 when: You need the bytes of something the listing names.
 needs: []
 tools: [icat_extract, catalog_search, byte_range_extract]

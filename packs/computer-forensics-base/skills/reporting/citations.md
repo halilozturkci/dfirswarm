@@ -1,7 +1,7 @@
 ---
 id: reporting/citations
 title: Connect each answer to inspectable evidence and its limits
-when: Recording a material claim, reviewing an answer, or preparing the report.
+when: Recording a claim, reviewing an answer, or the report.
 needs: []
 tools: []
 requires_host: []

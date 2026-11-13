@@ -22,7 +22,7 @@
  * bound to the coverage record by its hash. A record with looked_for and no
  * sweep line is pending. The gate (protocol.ts ledgerGate) reads them.
  *
- * Passes (Batman III, the runs D, E1 and s17fdfe): the search runs in a
+ * Passes (one case, the runs D, E1 and s17fdfe): the search runs in a
  * process of its own (scripts/sweep-pass.ts), one pass at a time for a run,
  * and a pass serves every coverage record waiting when it starts: the store
  * is listed once and each object read once, for the union of their strings

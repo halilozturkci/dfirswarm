@@ -1178,7 +1178,7 @@ def selector(text):
 
 def parse_members(members, adjusted):
     """The item numbers and the item addresses a members list names. A string of digits ("52330") is taken as the item number it spells,
-    and said in `adjusted`: it was refused, and a seat sent the same call again with the number (the Batman III runs, eight jobs)."""
+    and said in `adjusted`: it was refused, and a seat sent the same call again with the number (the runs of one case, eight jobs)."""
     if members is None:
         return set(), set()
     if not isinstance(members, list) or not members:
@@ -1568,7 +1568,7 @@ def main():
         adjusted.append("out_dir %r is relative: in a job it is taken under $OUT, as $OUT/%s (job:%s/%s once the job is sealed)" % (out_arg, out_arg, os.environ["JOB_ID"], out_arg))
         out_arg = os.path.join(os.environ["OUT"], out_arg)
     # In a job the bytes written are held to the room where $OUT is, less a margin: a whole-image call that ran into a full disk
-    # stopped part way through a file with an error (three jobs of the Batman III runs); held here it stops by its budget, between
+    # stopped part way through a file with an error (three jobs of the runs of one case); held here it stops by its budget, between
     # items, keeping what it wrote, and says so.
     if in_job:
         try:
@@ -1607,7 +1607,7 @@ def main():
         fail("cannot read %s: %s" % (image, e.strerror or e))
     # A call that names nothing would write every item. On a small image it does; on a large one (more than whole_guard_items items or
     # whole_guard_bytes bytes of content) that is hours and the image's size again on disk, asked for by leaving a parameter out: the
-    # call answers with the list instead, and says that whole: true writes the tree (the Batman III runs: six seats each walked and
+    # call answers with the list instead, and says that whole: true writes the tree (the runs of one case: six seats each walked and
     # wrote the whole 400,000-item image).
     guarded = None
     if not sel.any and not list_mode and not whole:
@@ -1813,7 +1813,7 @@ def main():
                 if not take:
                     if sel.done() and not subtree[0]:
                         # Every item named was met and written, and none of them has a subtree: nothing after this item in the image's
-                        # order was asked for. The walk stops here (a one-member call walked all 399,836 items of the Batman III image).
+                        # order was asked for. The walk stops here (a one-member call walked all 399,836 items of the one case image).
                         early[0] = (n, esc(item["path"]))
                         break
                     continue

@@ -9,7 +9,7 @@
 # where it has one, passes a probe that does the work (zbarimg reads a PNG).
 # toolbox.json gains "requires": [{capability, met, by, wanted, use}]; one not
 # met is a WARN line before anything starts, a BLOCKER with --required. On
-# Batman III three questions closed not determinable for want of a video
+# one case three questions closed not determinable for want of a video
 # decoder and a QR reader nobody had asked the image for.
 #
 # Writes <sandbox>/toolbox.json: {"preset", "checked_at", "present": [{name,

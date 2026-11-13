@@ -1,0 +1,2462 @@
+#!/usr/bin/env python3
+"""Look at every frame of a video: contact sheets with the frame number and time on each tile, a change score that makes a short
+run of differing frames stand out without a scene cut, frames at native size, and a checked repair of a container that will not open.
+
+The decoder is ffmpeg (with ffprobe for the stream's shape), run as a program: this tool has no decoder of its own, and where the
+two are not on PATH every mode but the container diagnosis answers `failed` and says so. survey decodes the first video stream to
+small frames on a pipe, tiles them on numbered sheets and compares each frame with the one before it in a grid of blocks: a cut
+changes most blocks at once, a caption or an overlay changes a few and, when it ends, the same few again, and that pair is reported
+as a run. extract writes a range of frames at native size as PNG. repair reads the container's own structure (an MP4's boxes, an
+AVI's chunks), says what is missing or cut, has the decoder remux what it can read into a copy, and counts the frames the copy
+decodes: that count, not the remux's exit code, is what the answer claims.
+
+One JSON answer always; the tool's clock (max_seconds) is checked for every frame; a sampled or capped survey is partial and says
+what it skipped.
+"""
+
+# BEGIN SHARED ENDS
+# The same text is in every pack tool and recipe and in their tool-library twins, before the file's own imports (tests/shared-blocks-census.test.ts
+# holds the copies equal): the two ends of a call, where a stop signal (SIGTERM, SIGINT, SIGHUP) found no handler, or one that did harm.
+# * The start. From here a stop is answered by ONE JSON document and exit 128 + the signal, until the tool installs its own handlers (which then
+#   answer it), and for good for a signal the tool never takes. Only the start of the interpreter and the compiling of the file come before
+#   it: a stop there ends the process with no answer, before anything was read. answer_a_stop() is that document: a handler whose own last word
+#   wrote nothing on standard output calls it before it ends the process, so that a stop is never answered by silence.
+# * The end. The interpreter's own teardown resets the handlers to their defaults before it frees what the call held, and a stop that landed
+#   there killed a process that had printed its whole answer; a handler that raises, writes a last word or ends the process, run once the
+#   answer was decided, wrote a second document, a traceback, or nothing at all. Python runs a handler on the main thread whichever thread the
+#   signal reached, so a mask of the main thread alone holds nothing while another thread runs. hold_stop_signals() holds the stop signals for
+#   good: blocked in this thread and given a handler that does nothing, which is the hold whatever thread the signal reaches; an error Python
+#   can only report from then on (a file left open whose last write the file system refuses, closed when the frame that held it is freed) is
+#   not printed (3.11 and 3.12 say nothing of it, 3.14 a traceback). A handler that was due runs on the way in: what it raises reaches the
+#   writer that asked (the tool's own handling then answers the stop, before any byte of the answer), or, quietly, is dropped (the end of a
+#   call, an error branch). Every writer of a final answer calls it before it commits to writing, every error branch at the end calls it
+#   quietly, and, when the file runs as a program, standard output is wrapped so that its first write calls it too. _code(stop) is a
+#   SystemExit's exit code (its text, if it has one, goes to standard error as the interpreter puts it), and _leave(code) ends the call: both
+#   hold the signals first, quietly; _leave flushes
+#   standard output (a write that fails there makes a 0 an exit 120, as the interpreter does) and standard error, runs the atexit hooks (a hook
+#   that removes a temporary file), each step on its own and none able to raise, and ends the process with os._exit, never through the teardown.
+# The modules are imported here, as the file is loaded, never inside the ending (an import there ran a due handler inside the import system).
+import atexit
+import json
+import os
+import signal
+import sys
+
+_ENDING = {"held": False, "program": __name__ == "__main__"}      # imported (a test that loads the file as a module), the block holds nothing
+_ENDING_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+
+
+def answer_a_stop(signum, when="before it had answered"):
+    """The one document of a stop that ends the call before any answer was begun (nothing once one has): status failed, interrupted, and
+    no claim about what was read or written. A handler whose own last word printed nothing calls it before it ends the process. It writes
+    only when the file runs as a program: its wrapped standard output is what knows whether an answer was begun."""
+    if _ENDING["held"] or not isinstance(sys.stdout, _AnswerStream):
+        return
+    _ENDING["held"] = True
+    name = {signal.SIGTERM: "SIGTERM", signal.SIGINT: "SIGINT", signal.SIGHUP: "SIGHUP"}.get(signum, "signal %d" % signum)
+    text = json.dumps({"error": "the tool was stopped by %s %s" % (name, when), "status": "failed", "interrupted": name,
+                       "status_basis": "stopped by %s %s: no answer was made, and what it had read or written by then is not described" % (name, when)})
+    try:
+        os.write(1, (text + "\n").encode("ascii"))
+    except OSError:
+        pass
+
+
+def _stopped_without_handler(signum, _frame):
+    for other in _ENDING_SIGNALS:
+        try:
+            signal.signal(other, signal.SIG_IGN)
+        except (ValueError, OSError):
+            pass
+    answer_a_stop(signum, "while it was being loaded, or at a point where it has no stop handling of its own")
+    os._exit(128 + signum)
+
+
+def _ending_nothing(*_ignored):
+    """The stop signals' handler, and sys.unraisablehook, once the answer has begun: nothing."""
+
+
+def hold_stop_signals(quietly=False):
+    """Hold the stop signals for good. A handler that was due runs on the way in, before the hold and before any byte of the answer, and what
+    it raises is raised here, so that the tool's own handling of a stop answers it; quietly (the end of a call, an error branch, where nothing
+    may escape) it is dropped and the hold is made all the same. Called by a thread that is not the main one, it blocks the signals there and
+    leaves the rest to the main thread's next call."""
+    for _attempt in range(len(_ENDING_SIGNALS) + 2):
+        if _ENDING["held"] or not _ENDING["program"]:
+            return
+        try:
+            try:
+                signal.pthread_sigmask(signal.SIG_BLOCK, _ENDING_SIGNALS)
+            except (AttributeError, ValueError, OSError):
+                pass                  # no pthread_sigmask here: the handler below is the hold
+            main_thread = True
+            for signum in _ENDING_SIGNALS:
+                try:
+                    signal.signal(signum, _ending_nothing)
+                except (ValueError, OSError):
+                    main_thread = False
+            sys.unraisablehook = _ending_nothing
+            _ENDING["held"] = main_thread
+            return
+        except BaseException:  # noqa: BLE001 - a handler that was due ran on the way in, and raised
+            if not quietly:
+                raise
+
+
+
+class _AnswerStream:
+    """Standard output of a call: the first write holds the stop signals (above); everything else is the stream's own."""
+
+    def __init__(self, stream):
+        self._stream = stream
+
+    def write(self, text):
+        if not _ENDING["held"]:
+            hold_stop_signals()
+        return self._stream.write(text)
+
+    def writelines(self, lines):
+        if not _ENDING["held"]:
+            hold_stop_signals()
+        return self._stream.writelines(lines)
+
+    def __getattr__(self, name):
+        if name == "_stream":
+            raise AttributeError(name)
+        return getattr(self._stream, name)
+
+
+def _code(stop):
+    hold_stop_signals(quietly=True)
+    code = getattr(stop, "code", 1)
+    if isinstance(code, int):
+        return code
+    if code is not None:
+        try:
+            sys.stderr.flush()
+            os.write(2, ("%s\n" % (code,)).encode("utf-8", "backslashreplace"))
+        except BaseException:  # noqa: BLE001
+            pass
+    return 0 if code is None else 1
+
+
+def _leave(code):
+    hold_stop_signals(quietly=True)
+    code = code if isinstance(code, int) else 1
+    try:
+        sys.stdout.flush()
+    except BaseException:  # noqa: BLE001 - a reader that is gone: the answer did not reach it
+        code = code or 120
+    try:
+        sys.stderr.flush()
+    except BaseException:  # noqa: BLE001
+        pass
+    try:
+        atexit._run_exitfuncs()
+    except BaseException:  # noqa: BLE001 - a hook that fails is not a failure of the answer
+        pass
+    os._exit(code)
+
+
+if __name__ == "__main__":
+    if sys.stdout is not None and not isinstance(sys.stdout, _AnswerStream):
+        sys.stdout = _AnswerStream(sys.stdout)
+    for _signum in _ENDING_SIGNALS:
+        signal.signal(_signum, _stopped_without_handler)
+# END SHARED ENDS
+
+
+import errno
+import hashlib
+import re
+import shutil
+import stat
+import struct
+import subprocess
+import time
+import zlib
+
+
+# BEGIN SHARED PROCESS
+# The same text is in pcap_extract, zeek_run, suricata_run, the network-capture recipe and computer-forensics-base's
+# archive_extract; tests/pack-network-withholding.test.ts holds the four network copies equal and tests/pack-base-shared.test.ts
+# holds archive_extract's to them. A program an engine tool runs is started in THIS tool's process group, never in a session of
+# its own: the harness ends a tool that runs too long, or is aborted, by killing the tool's group (process.kill(-pid,
+# SIGKILL)), and an engine in a group of its own goes on writing into the output directory after the tool is gone. On
+# Linux the kernel is also asked to kill it if the tool dies. A deadline kills the program and what it started by
+# walking the process tree, and SIGTERM, SIGINT and SIGHUP do the same and then give the tool a last word. Only what is
+# below a program this tool started and has not yet waited for is ever signalled: the walk starts at that program's pid
+# and nowhere else, and a program that has been waited for (its pid may be another process's by now) is left alone. The
+# walk is bounded (MAX_ROUNDS and WALK_SECONDS, below). A stop signal is the one case that reaches further: it also
+# ends everything below the tool itself (a program that was forked a moment before it was entered in ACTIVE is among it) and what
+# the tool started and lost (reap_orphans): a process that was seen below the tool, in the tool's own group, and whose parent has since
+# ended. Nothing else is ever ended: a process the tool never saw in its tree (the next stage of a pipeline the tool heads, a process a
+# launcher put in the group) is left alone, whoever leads the group. A program that has ended while something it started still
+# holds its pipes does not hold the tool: communicate_bounded gives the pipes PIPE_GRACE seconds (and POST_EXIT_BYTES bytes) and goes on without them.
+# The walk below a program is bounded: MAX_ROUNDS rounds and WALK_SECONDS seconds. Each process is stopped (SIGSTOP) as the walk finds it,
+# so one that forks fast cannot outrun the walk; the walk is repeated for what the stopped ones had already forked, and the stopped set is
+# then killed. A tree that is still growing at the bound is left, and process_notes() says so.
+# Before a pid other than the program itself is signalled, its identity is read again (same_process(pid, ident)): the start time, from
+# /proc/<pid>/stat (field 22, counted after the last ")") on Linux, from libproc's PROC_PIDTBSDINFO (pbi_start_tvsec, pbi_start_tvusec;
+# written from <sys/proc_info.h>, not run on macOS in this repository's tests) on macOS, and from `ps -o lstart=` (to the second: coarse)
+# where neither answers. The parent is no part of it: a child is re-parented when its parent ends, and is still the process that was
+# listed. A pid that is gone, or whose start time is not the listed one, is left alone; a pid whose start time could not be read when it
+# was listed is signalled only if it can be read now and is in the tool's own group; a ps listing that gave no start time (a minimal ps) is
+# checked only for the pid still being there.
+# A tree that cannot be listed (ps fails, lists nothing or needs more than PS_WAIT seconds, /proc cannot be read or takes more than
+# TABLE_SECONDS) is never taken as an empty one: list_descendants raises TreeNotListed, the program itself is still ended, and a sentence
+# in process_notes() says that the tree could not be listed (communicate_bounded also appends it to the stderr bytes it returns when it
+# ended the program at its deadline). descendants() is list_descendants for a caller that cannot take an exception (a signal handler): its
+# list is empty and has not_listed = True when the tree could not be listed.
+# Open: a pid that ends and is reused between the identity check and the signal (two calls) is signalled; the Linux rule that a member of
+# the tool's own group that holds the tool's pipe is ended; on macOS a daemon that holds the pipes of a finished program is not found (no
+# /proc/<pid>/fd); a tool SIGKILLed between the stop and the kill leaves the program and the stopped set stopped (the harness ends the
+# tool's group, and with it the stopped ones that are in it); a carrier's answer carries program_group (process_verdict, process_notes)
+# only where that carrier's own code calls process_apply (without the call a program's leftovers are ended but not reported); the start of the interpreter, before any handler is in, is a window a signal can land in.
+# What a program leaves behind (settle). A program can exit by itself and leave a process that goes on writing a file the answer then reports:
+# one in a session of its own, or one that holds none of the tool's descriptors, which neither the walk nor the pipes reach. On Linux spawn()
+# makes the tool a subreaper (become_subreaper, PR_SET_CHILD_SUBREAPER): such a process is adopted by the tool, so it is a direct child of the
+# tool, and settle() ends it: when a program leaves ACTIVE after it has ended or been killed (ACTIVE is a list whose remove() does it), and at
+# the end of communicate_bounded and inside kill_all. It ends only a child of the tool that is no program's own: not a program spawn() started
+# (SPAWNED: Popen reaps those, their returncode is never taken), not one kept (KEEP, process_keep(pid), spawn(argv, leaves=True) for a
+# program that leaves a process on purpose) and not a child the tool already had (PRE_KIDS). It stops each one, what it started with it (the
+# walk above), kills and reaps them, for at most LEFTOVER_SECONDS, reading the clock for every process. While another program is running in
+# ACTIVE nothing is ended and the answer says it is unproven. process_verdict() says what was found; process_apply(answer) puts it into an
+# answer as program_group and turns a complete answer partial when a program left something or that could not be ruled out: a carrier
+# calls it once where it prints its answer. Where nothing is adopted (not Linux, or the kernel refuses) settle() ends only what the tool saw
+# below a program whose parent is gone, and the answer is unproven (NONLINUX_UNPROVEN_DOWNGRADE below is the one line that decides whether
+# that alone makes a complete answer partial on a host that is not Linux). Not reached by any of this: a process that is not a descendant of
+# a program (started through a service manager, a socket, another PID namespace), and the tool itself being killed (the harness ends its group).
+# What a program's pipes deliver after it ended (the byte cap). communicate_bounded reads the pipes itself (a selector, not
+# Popen.communicate) and looks at the program after every read. From the moment the program has ended, or been killed at its deadline, it
+# takes at most POST_EXIT_BYTES (1 MiB) more bytes from its two pipes together and at most PIPE_GRACE seconds, whichever comes first; a
+# program's own last words are in the pipe already (a pipe holds far less than the cap), so only what a process that went on holding the
+# pipe wrote can be cut. At the cap the tool stops reading, ends the holder (reap_orphans, settle) and lets the pipes go: PIPE_CUT["cut"]
+# counts the calls cut that way, process_notes() says so, and process_apply turns a complete answer partial. The bytes kept are the ones
+# read, not a whole stream: a caller that parses the output sees the program's output and at most 1 MiB of what a leftover wrote. While the
+# program is still alive nothing is capped here (a program's own output is its caller's to bound); the timing is unchanged.
+import select as _select
+import selectors as _selectors
+import time
+
+try:
+    import ctypes
+except ImportError:  # pragma: no cover
+    ctypes = None
+
+STATE = {"last_word": None}    # what to do, with the signal number, when the tool is stopped by a signal
+class _Active(list):
+    """The programs running now. A program that leaves the list after it has ended or been killed (a carrier removes it when it has waited
+    for it) is followed by settle(): what it left behind is ended before the carrier reads what the program wrote. One that is still
+    running when it is removed is not looked at."""
+
+    def remove(self, proc):
+        list.remove(self, proc)
+        if proc.poll() is not None:
+            settle()
+
+
+ACTIVE = _Active()             # the programs running now
+SPAWNED = {}                   # the programs spawn() started: pid -> identity (Popen reaps them, settle() never does)
+KEEP = {}                      # the processes left on purpose: pid -> identity (settle() leaves them)
+PRE_KIDS = {}                  # the children the tool already had when the first program was spawned: pid -> identity
+LEAVES = {}                    # the programs started with leaves=True that have not ended yet: pid -> Popen
+LEFT = {"left_behind": 0, "unproven": []}   # how many live processes settle() ended, and why nothing-left-behind cannot be proven
+SUB = {"tried": False, "on": False, "note": None}        # whether the subreaper was asked for, and is on
+SETTLING = [False]             # settle() is running (the stop signal's own call goes through)
+LEFTOVER_SECONDS = 3              # the most one settle() works, in seconds; the clock is read for every process it ends, not once per pass
+SETTLE_LOOK = 0.05             # the pause before the look that follows an ending: a fork that was under way when the first process died
+# The one line the owner decides: on a host that cannot adopt orphaned processes (not Linux) a program may have left a process nobody can find.
+# True: that alone is `unproven`, and process_apply turns a complete answer partial. False: the answer only carries a note.
+NONLINUX_UNPROVEN_DOWNGRADE = True
+SEEN = set()                   # the pids seen below a program this tool started: the only ones reap_orphans may end once their parent is gone
+SEEN_IDENT = {}                # what each pid in SEEN was (its start time) when it was seen below the tool: a pid that ended and was reused does not match
+NOTES = []                     # what this block could not do, as sentences for an answer (process_notes())
+MAX_ROUNDS, WALK_SECONDS = 8, 15   # the bound of the walk below a program: rounds, and seconds
+TABLE_SECONDS = 10             # the longest reading of /proc (or of a process table) is given
+SEEN_MAX = 1 << 16             # the most pids SEEN holds
+
+def _die_with_parent():  # runs in the child between fork and exec
+    try:
+        ctypes.CDLL(None).prctl(1, signal.SIGKILL)   # PR_SET_PDEATHSIG
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def spawn(argv, leaves=False, **kwargs):
+    kwargs.setdefault("stdin", subprocess.DEVNULL)
+    become_subreaper()
+    if sys.platform.startswith("linux") and ctypes is not None:
+        kwargs["preexec_fn"] = _die_with_parent
+    proc = subprocess.Popen(argv, **kwargs)
+    SEEN.add(proc.pid)
+    started = _read_ident(proc.pid, "proc" if os.path.isdir("/proc/self") else "libproc")
+    if started is not None:
+        SEEN_IDENT[proc.pid] = started
+    SPAWNED[proc.pid] = started
+    if leaves:
+        LEAVES[proc.pid] = proc     # what this program leaves behind stays (settle() keeps it)
+    return proc
+
+
+class TreeNotListed(Exception):
+    """The processes could not be listed: ps failed, listed nothing or needed more than PS_WAIT seconds, /proc could not be read, or reading
+    it took more than TABLE_SECONDS. It is never to be read as a tree with nothing below it."""
+
+
+class _Listing(list):
+    """The pids below a process, as a list; .ident holds each pid's identity from the same reading, .not_listed says the tree could not be listed."""
+    ident = None
+    not_listed = False
+
+
+class _Table(dict):
+    """{pid: (parent pid, process group)}; .ident holds each pid's identity from the same reading."""
+    ident = None
+
+
+def _note(text):
+    """Record a sentence about what this block could not do (once, at most 20) and return it."""
+    if text not in NOTES and len(NOTES) < 20:
+        NOTES.append(text)
+    return text
+
+
+def process_notes():
+    """What this block could not do so far, as sentences (a tree that could not be listed, a walk that was cut), for an answer."""
+    return list(NOTES)
+
+
+def _libproc_start(pid):
+    """(seconds, microseconds) of the start of `pid` from libproc's PROC_PIDTBSDINFO (macOS), or None. Written from <sys/proc_info.h>
+    (struct proc_bsdinfo, 136 bytes, flavor 3); not run on macOS in this repository's tests."""
+    try:
+        import ctypes.util
+
+        class BsdInfo(ctypes.Structure):
+            _fields_ = [("pbi_flags", ctypes.c_uint32), ("pbi_status", ctypes.c_uint32), ("pbi_xstatus", ctypes.c_uint32),
+                        ("pbi_pid", ctypes.c_uint32), ("pbi_ppid", ctypes.c_uint32), ("pbi_uid", ctypes.c_uint32),
+                        ("pbi_gid", ctypes.c_uint32), ("pbi_ruid", ctypes.c_uint32), ("pbi_rgid", ctypes.c_uint32),
+                        ("pbi_svuid", ctypes.c_uint32), ("pbi_svgid", ctypes.c_uint32), ("rfu_1", ctypes.c_uint32),
+                        ("pbi_comm", ctypes.c_char * 16), ("pbi_name", ctypes.c_char * 32), ("pbi_nfiles", ctypes.c_uint32),
+                        ("pbi_pgid", ctypes.c_uint32), ("pbi_pjobc", ctypes.c_uint32), ("e_tdev", ctypes.c_uint32),
+                        ("e_tpgid", ctypes.c_uint32), ("pbi_nice", ctypes.c_int32), ("pbi_start_tvsec", ctypes.c_uint64),
+                        ("pbi_start_tvusec", ctypes.c_uint64)]
+
+        lib = ctypes.CDLL(ctypes.util.find_library("proc") or "/usr/lib/libproc.dylib", use_errno=True)
+        lib.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+        lib.proc_pidinfo.restype = ctypes.c_int
+        info = BsdInfo()
+        if lib.proc_pidinfo(pid, 3, 0, ctypes.byref(info), ctypes.sizeof(info)) != ctypes.sizeof(info):
+            return None
+        return (int(info.pbi_start_tvsec), int(info.pbi_start_tvusec))
+    except Exception:  # noqa: BLE001 - no library, no symbol, a sandbox: the caller falls back
+        return None
+
+
+def _ps_start(pid):
+    """The start time `ps -o lstart= -p <pid>` prints, to the second (coarse), or None when ps fails, takes more than PS_WAIT seconds or prints none."""
+    try:
+        done = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True, timeout=PS_WAIT)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    text = " ".join(done.stdout.split())
+    return text if done.returncode == 0 and text else None
+
+
+def _read_ident(pid, kind):
+    """The identity of `pid` read the way `kind` ("proc", "libproc" or "ps") says, or None when the process is gone or the way fails."""
+    if kind == "proc":
+        try:
+            with open("/proc/%d/stat" % pid, "rb") as fh:
+                data = fh.read()
+            return ("proc", int(data[data.rindex(b")") + 2:].split()[19]))   # field 22, counted after the last ")": the name may hold one
+        except (OSError, ValueError, IndexError):
+            return None
+    if kind == "libproc":
+        started = _libproc_start(pid)
+        return None if started is None else ("libproc", started)
+    started = _ps_start(pid)
+    return None if started is None else ("ps", started)
+
+
+def process_ident(pid):
+    """What tells the process that has `pid` now from a later one that gets the same pid: its start time. Linux: field 22 of /proc/<pid>/stat;
+    macOS: libproc's pbi_start_tvsec and pbi_start_tvusec; where neither answers, the start time ps prints (to the second). The parent is no
+    part of it: a child is re-parented when its parent ends, and is still the process that was listed. None where the process is gone or
+    cannot be read."""
+    if os.path.isdir("/proc/self"):
+        return _read_ident(pid, "proc")
+    return _read_ident(pid, "libproc") or _read_ident(pid, "ps")
+
+
+def same_process(pid, ident):
+    """Whether `pid` is still the process `ident` was read from (process_ident, or the listing a walk made): a pid that is gone, or that
+    another process has taken since (another start time), is not. An `ident` of None (it could not be read when the process was listed) is
+    not vouched for either: the pid is signalled only if it can be read now and is in this process's own group. A listing by plain ps that
+    gave no start time ("listed") can only be checked for the pid still being there."""
+    if ident is None:
+        try:
+            return process_ident(pid) is not None and os.getpgid(pid) == os.getpgrp()
+        except OSError:
+            return False
+    if ident[0] == "listed":
+        try:
+            os.kill(pid, 0)
+        except PermissionError:
+            return True
+        except OSError:
+            return False
+        return True
+    return _read_ident(pid, ident[0]) == ident
+
+
+def _seen_below(pids, ident):
+    """Enter pids seen below the tool in SEEN, with the identity the listing that showed them gave."""
+    for pid in pids:
+        if pid in SEEN or len(SEEN) < SEEN_MAX:
+            SEEN.add(pid)
+            if ident.get(pid) is not None:
+                SEEN_IDENT[pid] = ident[pid]
+
+
+def _ps_rows(columns):
+    """The rows of `ps -A -o <columns>` as lists of fields. Raises TreeNotListed when ps cannot be run, fails, takes more than PS_WAIT seconds
+    or lists nothing."""
+    try:
+        done = subprocess.run(["ps", "-A", "-o", columns], capture_output=True, text=True, timeout=PS_WAIT)
+    except subprocess.TimeoutExpired as exc:
+        raise TreeNotListed("ps took more than %d seconds" % PS_WAIT) from exc
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise TreeNotListed("ps could not be run: %s" % type(exc).__name__) from exc
+    rows = [line.split() for line in done.stdout.splitlines() if line.split()]
+    if done.returncode != 0 or not rows:
+        raise TreeNotListed("ps %s" % ("exited %d" % done.returncode if done.returncode != 0 else "listed nothing"))
+    return rows
+
+
+def _children_libproc(pid):
+    """The direct children of `pid` on macOS, from libproc (macOS only: proc_listchildpids is not a symbol of the other
+    BSDs; a library call, so no program is started and nothing can be slow); None when the library, the symbol or the
+    call is not there."""
+    try:
+        import ctypes.util
+        lib = ctypes.CDLL(ctypes.util.find_library("proc") or "/usr/lib/libproc.dylib", use_errno=True)
+        lib.proc_listchildpids.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+        lib.proc_listchildpids.restype = ctypes.c_int
+        size = 256
+        while size <= 1 << 16:
+            buf = (ctypes.c_int * size)()
+            if lib.proc_listchildpids(pid, buf, ctypes.sizeof(buf)) < 0:
+                return None
+            found = []
+            for value in buf:
+                if value <= 0:
+                    break
+                found.append(int(value))
+            if len(found) < size:
+                return found
+            size *= 4
+        return found
+    except Exception:  # noqa: BLE001 - no library, no symbol: the caller falls back
+        return None
+
+
+PS_WAIT = 10    # seconds the ps fallback is given: ps is slow on a heavily loaded host, and a tree that is not found is a program left running
+
+
+def _below(kids, pid):
+    """Every process below `pid` in `kids` ({parent: [children]}), a parent before its children."""
+    found, seen, queue = [], {pid}, [pid]
+    for parent in queue:
+        for child in kids.get(parent, []):
+            if child not in seen:
+                seen.add(child)
+                found.append(child)
+                queue.append(child)
+    return found
+
+
+def _libproc_works(pid):
+    """Whether an empty libproc answer for `pid` can be believed: libproc has just listed `pid` as this tool's own child, or, when `pid`
+    is the tool itself, has just listed the tool as its parent's child. A library that lists nothing for a live process is not working
+    (as in a sandbox that denies it)."""
+    if pid in (_children_libproc(os.getpid()) or []):
+        return True
+    return pid == os.getpid() and os.getpid() in (_children_libproc(os.getppid()) or [])
+
+
+def list_descendants(pid):
+    """Every process below `pid` (never one beside it): from /proc where there is one, else from libproc, else from ps (given PS_WAIT
+    seconds). libproc is believed when it lists a child; an empty answer is believed only when libproc has just listed this tool's own child
+    `pid` (a library that answers nothing for a live child is not working, as in a sandbox that denies it), and otherwise ps is asked. The
+    list carries .ident, the identity of each pid from the same reading. Raises TreeNotListed when the processes cannot be listed: that is
+    never an empty list."""
+    kids, ident = {}, {}
+    try:
+        if os.path.isdir("/proc/self"):
+            started = time.monotonic()
+            for entry in os.listdir("/proc"):
+                if time.monotonic() - started > TABLE_SECONDS:
+                    raise TreeNotListed("reading /proc took more than %d seconds" % TABLE_SECONDS)
+                if entry.isdigit():
+                    try:
+                        with open("/proc/%s/stat" % entry, "rb") as fh:
+                            fields = fh.read().rsplit(b")", 1)[1].split()
+                        kids.setdefault(int(fields[1]), []).append(int(entry))
+                        ident[int(entry)] = ("proc", int(fields[19]))
+                    except (OSError, IndexError, ValueError):
+                        continue
+        else:
+            first = _children_libproc(pid)
+            if first:
+                found, seen, stack = list(first), {pid, *first}, list(first)
+                while stack:
+                    for child in _children_libproc(stack.pop()) or []:
+                        if child not in seen:
+                            seen.add(child)
+                            found.append(child)
+                            stack.append(child)
+                listing = _Listing(found)
+                listing.ident = {}
+                for child in found:
+                    started = _libproc_start(child)
+                    if started is not None:
+                        listing.ident[child] = ("libproc", started)
+                return listing
+            if first is not None and _libproc_works(pid):
+                listing = _Listing()
+                listing.ident = {}
+                return listing
+            for row in _ps_rows("pid=,ppid=,lstart="):
+                if len(row) >= 2 and row[0].isdigit() and row[1].isdigit():
+                    kids.setdefault(int(row[1]), []).append(int(row[0]))
+                    ident[int(row[0])] = ("ps", " ".join(row[2:])) if len(row) >= 6 else ("listed", None)
+    except OSError as exc:
+        raise TreeNotListed("the processes could not be read: %s" % type(exc).__name__) from exc
+    listing = _Listing(_below(kids, pid))
+    listing.ident = {child: ident[child] for child in listing if child in ident}
+    return listing
+
+
+def descendants(pid):
+    """list_descendants for a caller that cannot take an exception (a signal handler): the same list, but when the tree cannot be listed the
+    list is empty, has not_listed = True, and process_notes() says so."""
+    try:
+        return list_descendants(pid)
+    except TreeNotListed as exc:
+        _note("the processes below pid %d could not be listed (%s)" % (pid, exc))
+        listing = _Listing()
+        listing.ident = {}
+        listing.not_listed = True
+        return listing
+
+
+def _process_table():
+    """{pid: (parent pid, process group)} for every process, from /proc where there is one, else from ps (given PS_WAIT seconds); .ident holds
+    each pid's identity from the same reading. Raises TreeNotListed when neither answers."""
+    table, ident = _Table(), {}
+    try:
+        if os.path.isdir("/proc/self"):
+            started = time.monotonic()
+            for entry in os.listdir("/proc"):
+                if time.monotonic() - started > TABLE_SECONDS:
+                    raise TreeNotListed("reading /proc took more than %d seconds" % TABLE_SECONDS)
+                if entry.isdigit():
+                    try:
+                        with open("/proc/%s/stat" % entry, "rb") as fh:
+                            fields = fh.read().rsplit(b")", 1)[1].split()
+                        table[int(entry)] = (int(fields[1]), int(fields[2]))
+                        ident[int(entry)] = ("proc", int(fields[19]))
+                    except (OSError, IndexError, ValueError):
+                        continue
+        else:
+            for row in _ps_rows("pid=,ppid=,pgid=,lstart="):
+                if len(row) >= 3 and all(part.isdigit() for part in row[:3]):
+                    table[int(row[0])] = (int(row[1]), int(row[2]))
+                    ident[int(row[0])] = ("ps", " ".join(row[3:])) if len(row) >= 8 else ("listed", None)
+    except OSError as exc:
+        raise TreeNotListed("the processes could not be read: %s" % type(exc).__name__) from exc
+    table.ident = ident
+    return table
+
+
+def _sample(pid):
+    """Remember what is below `pid` now, by the cheap routes only (/proc, or libproc on macOS; never a program): a process that is seen
+    here and later loses its parent is the tool's to end, and one that was never seen is not."""
+    try:
+        if os.path.isdir("/proc/self"):
+            table = _process_table()
+            kids = {}
+            for child, (parent, _group) in table.items():
+                kids.setdefault(parent, []).append(child)
+            _seen_below(_below(kids, pid), table.ident)
+        else:
+            seen, stack = {pid}, [pid]
+            while stack:
+                for child in _children_libproc(stack.pop()) or []:
+                    if child not in seen:
+                        seen.add(child)
+                        stack.append(child)
+            idents = {child: ("libproc", started) for child in seen - {pid} for started in [_libproc_start(child)] if started is not None}
+            _seen_below(seen - {pid}, idents)
+    except Exception:  # noqa: BLE001 - a sample is best effort
+        pass
+
+
+def _pipe_inodes(proc):
+    """The inodes of the pipes the tool holds with `proc` (Linux: /proc names a pipe by it; elsewhere the answer is not used)."""
+    found = set()
+    for handle in (proc.stdin, proc.stdout, proc.stderr):
+        try:
+            if handle is not None:
+                found.add(os.fstat(handle.fileno()).st_ino)
+        except (OSError, ValueError):
+            pass
+    return found
+
+
+def _holds_pipe(pid, inodes):
+    """Whether `pid` holds one of the pipes (Linux only, from /proc/<pid>/fd): the pipes are private to the tool and what it started."""
+    try:
+        for name in os.listdir("/proc/%d/fd" % pid):
+            try:
+                link = os.readlink("/proc/%d/fd/%s" % (pid, name))
+            except OSError:
+                continue
+            if link.startswith("pipe:[") and link.endswith("]") and int(link[6:-1]) in inodes:
+                return True
+    except (OSError, ValueError):
+        pass
+    return False
+
+
+def _same_ident(pid, before, listed):
+    """Whether `pid` is still the process `before` was read from. `listed` is the identity the table just read gave it: when it is the same
+    kind of identity (a start time from /proc, from libproc or from ps) the two are compared; when it is not (macOS: a process is seen
+    through libproc and listed through ps, and the two give different texts for one start time) the pid is read again the way `before` was."""
+    if listed is not None and listed[0] == before[0]:
+        return listed == before
+    return same_process(pid, before)
+
+
+def reap_orphans(inodes=None):
+    """Kill what this tool started and lost: a process of the tool's own group that is no longer below the tool (its parent ended and
+    init adopted it, so the walk from a program's pid cannot find it) and that the tool knows to be its own: it was seen below the tool
+    (SEEN: the programs it started, the trees it listed, the samples taken while it waited), or, on Linux, it holds one of `inodes`,
+    the pipes the tool made. A process the tool never saw in its tree is not touched, whoever leads the group: the next stage of a
+    pipeline the tool heads, or a process a launcher put in the group, is not the tool's. A process outside the group is never looked
+    at, and a pid is checked against the group, and against the identity it had when it was seen (same_process), at the moment it is
+    signalled. Returns the pids signalled; when the processes cannot be listed it signals none and process_notes() says so."""
+    me = os.getpid()
+    try:
+        if os.getpgrp() != me:
+            return []
+    except OSError:
+        return []
+    try:
+        table = _process_table()
+    except TreeNotListed as exc:
+        _note("what the tool started and lost could not be looked for: the processes could not be listed (%s)" % exc)
+        return []
+    kids = {}
+    for pid, (parent, _group) in table.items():
+        kids.setdefault(parent, []).append(pid)
+    below = set(_below(kids, me))
+    on_linux = os.path.isdir("/proc/self")
+    killed = []
+    started = time.monotonic()
+    for pid, (_parent, group) in table.items():
+        if time.monotonic() - started > TABLE_SECONDS:
+            _note("the look for what the tool started and lost was cut after %d seconds" % TABLE_SECONDS)
+            break
+        if group != me or pid == me or pid in below:
+            continue
+        listed = table.ident.get(pid)
+        holder = False
+        if pid in SEEN:
+            before = SEEN_IDENT.get(pid)
+            if before is not None and not _same_ident(pid, before, listed):
+                continue                           # the pid is another process's now: one the tool never saw
+        elif inodes and on_linux and _holds_pipe(pid, inodes):
+            holder = True
+        else:
+            continue
+        try:
+            if os.getpgid(pid) != me:
+                continue
+            if not same_process(pid, listed) or (holder and not _holds_pipe(pid, inodes)):
+                continue
+            os.kill(pid, signal.SIGKILL)
+            killed.append(pid)
+        except OSError:
+            pass
+    return killed
+
+
+def _stop_below(root, stopped):
+    """Stop (SIGSTOP) every process below `root` as the walk finds it, so one that forks fast cannot outrun the walk, and repeat the walk
+    for what the stopped ones had already forked, for at most MAX_ROUNDS rounds and WALK_SECONDS seconds. `stopped` gets {pid: identity}.
+    Returns None, or the sentence that says the tree could not be listed or that the walk was cut."""
+    began = time.monotonic()
+    for _round in range(MAX_ROUNDS):
+        try:
+            found = list_descendants(root)
+        except TreeNotListed as exc:
+            return _note("the processes below pid %d could not be listed (%s): the program itself was ended, nothing below it" % (root, exc))
+        listed = getattr(found, "ident", None) or {}
+        _seen_below(found, listed)
+        fresh = [pid for pid in found if pid not in stopped]
+        if not fresh:
+            return None
+        for pid in fresh:
+            if not same_process(pid, listed.get(pid)):
+                continue
+            try:
+                os.kill(pid, signal.SIGSTOP)
+                stopped[pid] = listed.get(pid)
+            except OSError:
+                pass
+        if time.monotonic() - began > WALK_SECONDS:
+            break
+    return _note("the walk below pid %d was cut at %d rounds or %d seconds: a process started after it may be running" % (root, MAX_ROUNDS, WALK_SECONDS))
+
+
+def _end(stopped):
+    """Kill the stopped set, each pid only if it is still the process that was stopped."""
+    for pid, ident in list(stopped.items()):
+        if same_process(pid, ident):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+
+
+def kill_tree(proc):
+    """Kill the program and everything it started. The program is stopped first and then each process below it as the walk finds it
+    (_stop_below), so the tree does not grow while it is listed; the stopped set is killed after the program. A pid is killed only if it
+    is still the process that was listed (same_process). A program already waited for is not touched: its pid is free to be another
+    process's, and the walk below it would be that process's children. Returns None, or a sentence when the tree could not be listed or
+    the walk was cut."""
+    if proc.poll() is not None:
+        return None
+    try:
+        proc.send_signal(signal.SIGSTOP)    # a program that is stopped forks nothing more while its tree is listed
+    except OSError:
+        pass
+    stopped, note = {}, None
+    try:
+        note = _stop_below(proc.pid, stopped)
+    finally:
+        try:
+            proc.kill()
+        except OSError:
+            pass
+        _end(stopped)
+    return note
+
+
+def _stat_row(pid):
+    """(state letter, parent pid, identity) of `pid` from /proc/<pid>/stat, or None when it is gone or cannot be read. The identity is the one
+    process_ident gives (field 22, counted after the last ")")."""
+    try:
+        with open("/proc/%d/stat" % pid, "rb") as fh:
+            data = fh.read()
+        rest = data[data.rindex(b")") + 2:].split()
+        return rest[0].decode("ascii", "replace"), int(rest[1]), ("proc", int(rest[19]))
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _children_of_me():
+    """{pid: (state, identity)} of the direct children of this process (Linux). The kernel's own list of each thread's children is read where
+    there is one (no scan of every process), and every pid it names is checked against /proc/<pid>/stat; where there is none, /proc is
+    scanned. Raises TreeNotListed when /proc cannot be read or takes more than TABLE_SECONDS."""
+    me = os.getpid()
+    pids = None
+    try:
+        named = set()
+        for tid in os.listdir("/proc/%d/task" % me):
+            with open("/proc/%d/task/%s/children" % (me, tid)) as fh:
+                named.update(int(part) for part in fh.read().split())
+        pids = sorted(named)
+    except (OSError, ValueError):
+        pids = None
+    if pids is None:
+        try:
+            pids = [int(entry) for entry in os.listdir("/proc") if entry.isdigit()]
+        except OSError as exc:
+            raise TreeNotListed("the processes could not be read: %s" % type(exc).__name__) from exc
+    found, started = {}, time.monotonic()
+    for pid in pids:
+        if time.monotonic() - started > TABLE_SECONDS:
+            raise TreeNotListed("reading /proc took more than %d seconds" % TABLE_SECONDS)
+        row = _stat_row(pid)
+        if row is not None and row[1] == me:
+            found[pid] = (row[0], row[2])
+    return found
+
+
+def _unproven(text):
+    """Record why this block cannot say that no program left a process behind (once, at most 20) and return it."""
+    if text not in LEFT["unproven"] and len(LEFT["unproven"]) < 20:
+        LEFT["unproven"].append(text)
+    return text
+
+
+def become_subreaper():
+    """On Linux ask the kernel to make this process the parent of every process a program leaves behind (PR_SET_CHILD_SUBREAPER = 36), so that
+    one that left the tool's group or session, or holds none of its descriptors, is a child of the tool and settle() can find it. Called by
+    spawn() before the first program; once. PRE_KIDS records the children the tool already had (pid and start time): they are not a program's
+    and settle() leaves them. Where the kernel refuses, or the host is not Linux, nothing is adopted: settle() falls back to what the tool
+    saw below a program (SEEN), and the answer cannot prove that nothing was left (process_verdict()['unproven']). Returns whether it is on."""
+    if SUB["tried"]:
+        return SUB["on"]
+    SUB["tried"] = True
+    if sys.platform.startswith("linux") and ctypes is not None:
+        try:
+            SUB["on"] = ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0) == 0
+        except Exception:  # noqa: BLE001 - no libc symbol, a sandbox: the caller falls back
+            SUB["on"] = False
+        if SUB["on"]:
+            try:
+                PRE_KIDS.update({pid: ident for pid, (_state, ident) in _children_of_me().items()})
+            except TreeNotListed as exc:
+                _unproven(_note("the children the tool already had could not be listed (%s): one of them may be taken for a program's" % exc))
+        else:
+            _unproven("this host refused PR_SET_CHILD_SUBREAPER: a process a program left behind outside the walk is not adopted and may not be found")
+    else:
+        reason = "this host cannot adopt orphaned processes (no PR_SET_CHILD_SUBREAPER): a process a program left behind may not be found"
+        SUB["note"] = reason              # in process_verdict()["notes"], never in process_notes(): a tool that reads only what a program printed is not made partial by it
+        if NONLINUX_UNPROVEN_DOWNGRADE:
+            _unproven(reason)
+    return SUB["on"]
+
+
+def process_keep(pid):
+    """Let `pid` stay: settle() does not end it. For a process a program leaves on purpose (a daemon the tool stops itself); spawn(argv,
+    leaves=True) does it for what that program leaves. A kept process is still ended by a stop signal (kill_all)."""
+    ident = process_ident(pid)
+    if ident is not None:
+        KEEP[pid] = ident
+
+
+def _exempt(pid, ident, active):
+    """Whether the process `pid` (identity `ident`) is the tool's own and not a program's leftover: a program spawn() started (Popen owns it
+    and reaps it), one in ACTIVE (`active`, their pids), one kept (KEEP) or one the tool already had (PRE_KIDS). A pid whose identity differs is
+    another process that has the number now."""
+    if pid in active:
+        return True
+    for table in (SPAWNED, KEEP, PRE_KIDS):
+        if pid in table and (table[pid] is None or (table[pid] == ident if ident is None or table[pid][0] == ident[0] else same_process(pid, table[pid]))):
+            return True
+    return False
+
+
+def _victims_children(active):
+    """[(pid, state, identity)]: the children of this tool that are no program's own (Linux, with the subreaper on)."""
+    return [(pid, state, ident) for pid, (state, ident) in sorted(_children_of_me().items()) if not _exempt(pid, ident, active)]
+
+
+def _victims_seen(active):
+    """[(pid, state, identity)]: where nothing is adopted, the processes that were seen below a program, are still the ones that were seen, and
+    have lost their parent (the parent is not the tool and is not a live process the tool saw). Raises TreeNotListed."""
+    me = os.getpid()
+    candidates = [pid for pid in list(SEEN) if pid != me and SEEN_IDENT.get(pid) is not None and not _exempt(pid, SEEN_IDENT[pid], active)]
+    if not candidates:
+        return []
+    table = _process_table()
+    found = []
+    for pid in candidates:
+        row, listed = table.get(pid), table.ident.get(pid)
+        if row is None or not _same_ident(pid, SEEN_IDENT[pid], listed) or row[0] == me:
+            continue
+        parent = row[0]
+        if parent in table and SEEN_IDENT.get(parent) is not None and _same_ident(parent, SEEN_IDENT[parent], table.ident.get(parent)):
+            continue                               # its parent is a live process of a program's tree: the program has not ended
+        found.append((pid, "S", listed))
+    return found
+
+
+def _stop_under(roots, stopped, deadline):
+    """_stop_below for several roots at once with one reading of the processes per round (a program may leave thousands): stop (SIGSTOP)
+    every process below any of `roots` as the walk finds it, for at most MAX_ROUNDS rounds, WALK_SECONDS seconds and until `deadline`.
+    `stopped` gets {pid: identity}. Returns None, or the sentence that says the tree could not be listed or that the walk was cut."""
+    began = time.monotonic()
+    for _round in range(MAX_ROUNDS):
+        try:
+            table = _process_table()
+        except TreeNotListed as exc:
+            return _unproven(_note("the processes below what a program left behind could not be listed (%s): the leftovers were ended, nothing below them" % exc))
+        kids = {}
+        for child, (parent, _group) in table.items():
+            kids.setdefault(parent, []).append(child)
+        fresh = []
+        for root in roots:
+            fresh.extend(pid for pid in _below(kids, root) if pid not in stopped)
+        if not fresh:
+            return None
+        for pid in fresh:
+            ident = table.ident.get(pid)
+            if pid not in stopped and same_process(pid, ident):
+                try:
+                    os.kill(pid, signal.SIGSTOP)
+                    stopped[pid] = ident
+                except OSError:
+                    pass
+        if time.monotonic() > min(deadline, began + WALK_SECONDS):
+            break
+    return _unproven(_note("the walk below what a program left behind was cut at %d rounds or %d seconds: a process started after it may be running" % (MAX_ROUNDS, WALK_SECONDS)))
+
+
+def _end_counting(stopped):
+    """Kill the stopped set, each pid only if it is still the process that was stopped. How many were alive (a zombie was not left running)."""
+    alive = 0
+    for pid, ident in list(stopped.items()):
+        row = _stat_row(pid)
+        if not same_process(pid, ident):
+            continue
+        try:
+            os.kill(pid, signal.SIGKILL)
+            if row is None or row[0] not in ("Z", "X"):
+                alive += 1
+        except OSError:
+            pass
+    return alive
+
+
+def _end_children(victims, deadline):
+    """End the leftovers that are this tool's children: each is stopped (its identity and parent read again first), what it started is stopped
+    with it (_stop_under), the set is killed, and the children are reaped (waitpid WNOHANG: the tool is their parent). The clock is read for
+    every one, so a program that left thousands is cut at `deadline`, not after a pass. Returns how many live processes were killed."""
+    me = os.getpid()
+    stopped, reap, cut = {}, [], False
+    try:
+        for pid, _state, ident in victims:
+            if time.monotonic() >= deadline:
+                cut = True
+                break
+            row = _stat_row(pid)
+            if row is None or row[1] != me or row[2] != ident:
+                continue                           # gone, or not this tool's child any more
+            if row[0] in ("Z", "X"):
+                reap.append(pid)
+                continue
+            try:
+                os.kill(pid, signal.SIGSTOP)
+            except OSError:
+                continue
+            stopped[pid] = ident
+            reap.append(pid)
+        _stop_under(list(stopped), stopped, deadline)
+    finally:
+        alive = _end_counting(stopped)
+    pending = set(reap)
+    while pending:
+        for pid in list(pending):
+            try:
+                done, _status = os.waitpid(pid, os.WNOHANG)
+            except OSError:
+                pending.discard(pid)               # not this tool's child (any more): nothing to reap
+                continue
+            if done:
+                pending.discard(pid)
+        if not pending:
+            break
+        if time.monotonic() >= deadline:
+            _unproven(_note("%d processes a program left behind did not end within %d seconds" % (len(pending), LEFTOVER_SECONDS)))
+            break
+        time.sleep(0.005)
+    if cut:
+        _unproven(_note("a program left more processes than could be ended within %d seconds: some are still running" % LEFTOVER_SECONDS))
+    return alive
+
+
+def _end_seen(victims, deadline):
+    """End the leftovers where nothing is adopted: stopped, what they started stopped with them, then killed (each only if it is still the
+    process that was seen). Returns how many live processes were killed."""
+    stopped = {}
+    try:
+        for pid, _state, ident in victims:
+            if time.monotonic() >= deadline:
+                _unproven(_note("a program left more processes than could be ended within %d seconds: some are still running" % LEFTOVER_SECONDS))
+                break
+            if same_process(pid, ident):
+                try:
+                    os.kill(pid, signal.SIGSTOP)
+                    stopped[pid] = ident
+                except OSError:
+                    pass
+        _stop_under(list(stopped), stopped, deadline)
+    finally:
+        alive = _end_counting(stopped)
+    return alive
+
+
+def _settle(final):
+    active = {proc.pid for proc in list(ACTIVE)}
+    if not final and any(proc.poll() is None for proc in list(ACTIVE)):
+        _unproven(_note("a program was still running when another one ended: what is left behind cannot be told from what that program started, so nothing was ended"))
+        return 0
+    deadline = time.monotonic() + LEFTOVER_SECONDS
+    victims = _victims_children if SUB["on"] else _victims_seen
+    ended, looked = 0, False
+    ready = [proc for proc in list(LEAVES.values()) if proc.poll() is not None]
+    if ready:
+        for proc in ready:                         # a program that leaves a process on purpose: what it left stays
+            LEAVES.pop(proc.pid, None)
+        for pid, state, ident in victims(active):
+            if state not in ("Z", "X"):
+                KEEP[pid] = ident
+    while True:
+        found = victims(active)
+        if not found:
+            if ended and not looked:
+                looked = True                      # one more look after a short pause: a fork that was under way when the first one died
+                time.sleep(SETTLE_LOOK)
+                continue
+            return ended
+        if time.monotonic() >= deadline:
+            _unproven(_note("%d processes a program left behind were still there after %d seconds: they were not all ended" % (len(found), LEFTOVER_SECONDS)))
+            return ended
+        ended += (_end_children if SUB["on"] else _end_seen)(found, deadline)
+        if not SUB["on"]:
+            return ended                           # nothing is adopted: one pass, the processes are not this tool's to reap
+
+
+def settle(final=False):
+    """Look for what the programs this tool ran have left behind, and end it: the processes that are the tool's children and no program's own
+    (the subreaper adopted them) are stopped, what they started with them, killed and reaped, for at most LEFTOVER_SECONDS (the clock is read for
+    every process, and one more look follows an ending). Never a process of another program: while another program is running in ACTIVE nothing
+    is ended and process_verdict() says it is unproven. Never a program spawn() started (Popen owns its exit status: its returncode is never
+    taken), nor KEEP, PRE_KIDS or a process outside the tool's own children. final=True is the stop signal's own call (kill_all). Runs on the
+    caller's thread, joins none and never raises. Returns how many live processes it ended; process_verdict() holds the totals."""
+    if SETTLING[0] and not final:
+        return 0
+    SETTLING[0] = True
+    try:
+        ended = _settle(final)
+        LEFT["left_behind"] += ended
+        return ended
+    except Exception as exc:  # noqa: BLE001 - never into the finally of a carrier: say it could not be proven
+        _unproven(_note("the look for what a program left behind failed (%s)" % type(exc).__name__))
+        return 0
+    finally:
+        SETTLING[0] = False
+
+
+def process_verdict():
+    """What an answer says about the programs the tool ran: {"subreaper": whether orphans were adopted, "left_behind": how many live processes
+    settle() ended, "unproven": why 'nothing was left behind' cannot be claimed (empty when it can), "notes": process_notes()}."""
+    return {"subreaper": SUB["on"], "left_behind": LEFT["left_behind"], "unproven": list(LEFT["unproven"]), "notes": process_notes() + ([SUB["note"]] if SUB["note"] else [])}
+
+
+def process_apply(answer):
+    """Put process_verdict() into `answer` as answer["program_group"] and, when a program left a process behind or that cannot be ruled out,
+    turn a complete answer into a partial one (status "partial", the ok and complete flags that are there false, a sentence in status_basis;
+    a call of communicate_bounded that was cut at POST_EXIT_BYTES counts, PIPE_CUT):
+    what a program wrote while the tool read it is not a complete result. A carrier calls it once where it prints its answer. Returns `answer`."""
+    verdict = process_verdict()
+    answer["program_group"] = verdict
+    if (verdict["left_behind"] > 0 or verdict["unproven"] or PIPE_CUT["cut"]) and answer.get("status") == "complete":
+        answer["status"] = "partial"
+        for flag in ("ok", "complete"):
+            if flag in answer:
+                answer[flag] = False
+        if verdict["left_behind"] > 0:
+            sentence = "a program left %d process%s running after it ended; the tool ended them, and what they wrote before that is in the files named here" % (
+                verdict["left_behind"], "" if verdict["left_behind"] == 1 else "es")
+        elif PIPE_CUT["cut"]:
+            sentence = "a process that held a program's pipe after it ended went on writing; the tool read no more than %d bytes of it and let the pipe go" % POST_EXIT_BYTES
+        else:
+            sentence = "the tool cannot prove that no program left a process behind (see program_group.unproven)"
+        basis = answer.get("status_basis")
+        answer["status_basis"] = "%s; %s" % (basis, sentence) if isinstance(basis, str) and basis else sentence
+    return answer
+
+
+PIPE_GRACE = 1.0    # seconds the pipes of a program that has ended are given to reach end of file
+POST_EXIT_BYTES = 1 << 20    # the most bytes (both pipes together) read from the pipes of a program that has ended
+PIPE_CUT = {"cut": 0}        # how many calls stopped reading at POST_EXIT_BYTES because a process still held the pipes and went on writing
+
+
+def communicate_bounded(proc, seconds, input=None):
+    """(stdout bytes, stderr bytes, timed out) for a program started with pipes, in bytes. At `seconds` the program and what it started
+    are killed (timed out). A program that has ended while something it started still holds its pipes (a daemon, a helper that
+    inherited them) does not hold the tool: from the moment the program has ended (or was killed) the pipes are given PIPE_GRACE seconds
+    and POST_EXIT_BYTES bytes, whichever is used up first; what the program wrote is kept, what the tool lost is killed (reap_orphans,
+    settle), and the pipes are let go. A cut at the byte cap is counted in PIPE_CUT and noted (process_notes()); the return shape is the
+    same. The pipes are read here and by nothing else (not by Popen.communicate), so letting them go is safe. `input` is written while
+    the program runs and is dropped once it has ended."""
+    deadline = time.monotonic() + max(0.1, seconds)
+    bufs = (bytearray(), bytearray())
+    sel = _selectors.DefaultSelector()
+    pending = memoryview(input) if input and proc.stdin is not None else None
+    for index, stream in enumerate((proc.stdout, proc.stderr)):
+        if stream is not None:
+            sel.register(stream, _selectors.EVENT_READ, index)
+    if proc.stdin is not None:
+        if pending:
+            sel.register(proc.stdin, _selectors.EVENT_WRITE, 2)
+        else:
+            _close_pipe(proc.stdin)
+    timed_out, note, ended, extra, cut, sampled = False, None, None, 0, False, 0.0
+    try:
+        while True:
+            now = time.monotonic()
+            if ended is None:
+                if proc.poll() is not None:
+                    ended = now
+                elif now >= deadline:
+                    timed_out = True
+                    note = kill_tree(proc)
+                    ended = time.monotonic()
+                elif now - sampled >= 0.2:
+                    sampled = now
+                    _sample(proc.pid)
+            if ended is not None:
+                if pending is not None:
+                    sel.unregister(proc.stdin)
+                    _close_pipe(proc.stdin)
+                    pending = None
+                if not any(key.data != 2 for key in sel.get_map().values()) or extra >= POST_EXIT_BYTES or now - ended >= PIPE_GRACE:
+                    cut = extra >= POST_EXIT_BYTES and any(key.data != 2 for key in sel.get_map().values())
+                    break
+            wait = max(0.01, min(0.2, (deadline if ended is None else ended + PIPE_GRACE) - now))
+            if not sel.get_map():
+                try:
+                    proc.wait(timeout=wait)
+                except subprocess.TimeoutExpired:
+                    pass
+                continue
+            for key, _mask in sel.select(wait):
+                if key.data == 2:
+                    try:
+                        pending = pending[os.write(key.fd, pending[:_select.PIPE_BUF]):]
+                    except OSError:
+                        pending = None
+                    if not pending:
+                        sel.unregister(proc.stdin)
+                        _close_pipe(proc.stdin)
+                        pending = None
+                    continue
+                if ended is not None and extra >= POST_EXIT_BYTES:
+                    break
+                try:
+                    data = os.read(key.fd, 65536 if ended is None else min(65536, POST_EXIT_BYTES - extra))
+                except OSError:
+                    data = b""
+                if not data:
+                    sel.unregister(key.fileobj)
+                    continue
+                bufs[key.data].extend(data)
+                if ended is not None:
+                    extra += len(data)
+        if any(key.data != 2 for key in sel.get_map().values()):
+            reap_orphans(_pipe_inodes(proc))
+            settle()
+    finally:
+        sel.close()
+        for pipe in (proc.stdin, proc.stdout, proc.stderr):
+            _close_pipe(pipe)
+    if cut:
+        PIPE_CUT["cut"] += 1
+        _note("a process that held a program's pipe after the program ended went on writing: the tool read %d bytes more and let the pipe go" % POST_EXIT_BYTES)
+    try:
+        proc.wait(timeout=PIPE_GRACE)
+    except subprocess.TimeoutExpired:
+        pass
+    settle()
+    err = bytes(bufs[1])
+    if note:
+        err = err + (b"\n" if err else b"") + note.encode("utf-8", "replace")
+    return bytes(bufs[0]), err, timed_out
+
+
+def _close_pipe(pipe):
+    try:
+        if pipe is not None:
+            pipe.close()
+    except (OSError, ValueError):
+        pass
+
+
+def kill_all():
+    """End every program the tool has running, with what each started. Then everything below the tool itself, which is the tool's own: a
+    program forked a moment before it was entered in ACTIVE is among it. Then what an earlier program started and lost (reap_orphans).
+    Returns the sentences for what could not be done (also in process_notes())."""
+    notes = []
+    for proc in list(ACTIVE):
+        note = kill_tree(proc)
+        if note:
+            notes.append(note)
+    stopped = {}
+    try:
+        note = _stop_below(os.getpid(), stopped)
+        if note:
+            notes.append(note)
+    finally:
+        _end(stopped)
+    reap_orphans()
+    settle(True)     # what the stop ended below the tool is reaped (bounded; settle never raises)
+    return notes
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)     # the first signal counts: a second one starts no second answer
+    kill_all()
+    last_word = STATE.get("last_word")
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    if "answer_a_stop" in globals():     # (a block run on its own, by a test, has no ENDS block)
+        answer_a_stop(signum)
+    os._exit(128 + signum)
+
+
+def preflight(argv, seconds):
+    """Run a short program, bounded; (exit code or None, stdout bytes, stderr bytes, timed out)."""
+    try:
+        proc = spawn(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except OSError as exc:
+        return None, b"", describe(exc).encode("utf-8", "replace"), False
+    ACTIVE.append(proc)
+    try:
+        out, err, timed_out = communicate_bounded(proc, max(1.0, seconds))
+        return (None if timed_out else proc.returncode), out, err, timed_out
+    finally:
+        ACTIVE.remove(proc)
+
+
+def run_to_files(argv, stdout_path, stderr_path, seconds, cwd=None):
+    """One program with its output in files, killed with what it started at `seconds`. (exit code, timed out)."""
+    with open(stdout_path, "wb") as stdout, open(stderr_path, "wb") as stderr:
+        proc = spawn(argv, stdout=stdout, stderr=stderr, cwd=cwd)
+        ACTIVE.append(proc)
+        try:
+            return proc.wait(timeout=max(0.1, seconds)), False
+        except subprocess.TimeoutExpired:
+            kill_tree(proc)
+            proc.wait()
+            return None, True
+        finally:
+            ACTIVE.remove(proc)
+
+
+def install_signal_handlers():
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+# END SHARED PROCESS
+
+import os as _os
+import sys as _sys
+import threading as _threading
+
+# ---- the one protected printer of an answer (outside the shared block) ------------------------------------------------------------
+# The stop signals are held while the answer is written, so that a signal cannot cut the document. A reader that stops taking it (a full
+# pipe) would make that tool unkillable by SIGTERM: the held write is therefore bounded. If a stop signal is waiting when
+# HELD_WRITE_SECONDS have passed, the tool says so on stderr and ends with 128 plus that signal; nothing is claimed about the answer.
+HELD_WRITE_SECONDS = int(_os.environ.get("TOOL_HELD_WRITE_SECONDS") or 30)       # the environment variable is for the tests
+_STOPS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+
+
+def _unstick():
+    try:
+        waiting = signal.sigpending()
+    except (AttributeError, OSError):
+        waiting = set()
+    held = [s for s in _STOPS if s in waiting]
+    if held:
+        try:
+            _os.write(2, ("the answer could not be written in %d seconds (the reader is not taking it); ended by the stop signal that was held\n" % HELD_WRITE_SECONDS).encode())
+        except OSError:
+            pass
+        _os._exit(128 + int(held[0]))
+    again = _threading.Timer(1.0, _unstick)
+    again.daemon = True
+    again.start()
+
+
+ERROR_FLAGS = ("all_results_error", "all_matches_error", "receipt_error", "receipts_error", "rows_file_error", "rows_error", "invalid_lines_file_error",
+               "write_error", "values_error")
+
+
+def _flagged(node, depth=0):
+    """The first error flag found in an answer (top level, and two levels of dicts below it), or None."""
+    if not isinstance(node, dict) or depth > 2:
+        return None
+    for key in ERROR_FLAGS:
+        if node.get(key):
+            return key
+    for value in node.values():
+        found = _flagged(value, depth + 1)
+        if found:
+            return found
+    return None
+
+
+def _reconcile(answer):
+    """status, complete and ok are one fact: an error flag in the answer (a file that should hold the rest could not be written) is not a
+    complete answer, and a complete or ok that survives a partial or failed status is a wrong claim. Said once, here, for every answer."""
+    if not isinstance(answer, dict):
+        return
+    flag = _flagged(answer)
+    if flag and answer.get("status") == "complete":
+        answer["status"] = "partial"
+        basis = answer.get("status_basis")
+        answer["status_basis"] = ("%s; but %s says part of what was asked for could not be kept" % (basis, flag)) if basis else "%s says part of what was asked for could not be kept" % flag
+    if answer.get("status") in ("partial", "failed") or flag:
+        if answer.get("complete") is True:
+            answer["complete"] = False
+    if answer.get("status") == "failed" and answer.get("ok") is True:
+        answer["ok"] = False
+
+
+# BEGIN SHARED TEMPS
+# One lifecycle for the hidden temporary files of a run. A file is made by temp_create (or its name is registered with temp_hold before it is
+# made), it is registered before anything else is done with it, and it stays registered until temp_done says it was renamed into place. What is
+# still registered when the run ends is removed: by atexit on a normal end or any exception, by drop_temporaries in the last-resort handler, and
+# by the stop signal's own cleanup, which removes the _tmp of every object in PAGES (a registered name is one such object).
+import atexit
+import tempfile
+
+if "PAGES" not in globals():
+    PAGES = []                 # objects with a hidden temporary file (_tmp) that a stop removes
+
+
+class _HeldTemp:
+    def __init__(self, name):
+        self._tmp = name
+
+
+def temp_hold(name):
+    """Register a temporary file that is about to be made (or has been): it is removed on every way out unless temp_done is called."""
+    held = _HeldTemp(os.fspath(name))
+    PAGES.append(held)
+    return held._tmp
+
+
+def temp_create(directory, prefix, suffix=""):
+    """tempfile.mkstemp with the new name registered at once: (fd, name)."""
+    fd, name = tempfile.mkstemp(dir=os.fspath(directory), prefix=prefix, suffix=suffix)
+    temp_hold(name)
+    return fd, name
+
+
+def temp_done(name):
+    """The file was renamed into place (or is kept on purpose): it is no longer a temporary."""
+    name = os.fspath(name)
+    PAGES[:] = [p for p in PAGES if not (isinstance(p, _HeldTemp) and p._tmp == name)]
+
+
+def temp_drop(name):
+    """Remove one temporary now; False when it could not be removed (it stays registered, and the end of the run tries again)."""
+    try:
+        os.unlink(name)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return False
+    temp_done(name)
+    return True
+
+
+def temp_replace(tmp, dest):
+    os.replace(tmp, dest)
+    temp_done(tmp)
+
+
+def drop_temporaries():
+    """Remove every temporary still registered (the pages being written and the held names); the names that could not be removed come back."""
+    left = []
+    for page in list(PAGES):
+        tmp = None
+        try:
+            tmp = getattr(page, "_tmp", None)
+            if tmp is not None:
+                os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        except Exception:   # noqa: BLE001 - every one is tried
+            left.append(str(tmp))
+    return left
+
+
+atexit.register(drop_temporaries)
+# END SHARED TEMPS
+
+
+def _guarded_write(write):
+    try:
+        before = signal.pthread_sigmask(signal.SIG_BLOCK, set(_STOPS))      # before the timer thread exists, so that the thread holds them too
+    except (AttributeError, ValueError, OSError):
+        before = None
+    watch = _threading.Timer(HELD_WRITE_SECONDS, _unstick)
+    watch.daemon = True
+    watch.start()
+    try:
+        write()
+        _sys.stdout.flush()
+    except BrokenPipeError:                       # the reader is gone: there is nobody to tell
+        _os._exit(1)
+    watch.cancel()
+    if before is not None:
+        # The document is whole. A stop that came while it was written is let go now: run as a program, the shared ENDS block has given it a
+        # handler that does nothing (the answer stands, and the call ends with its own code); loaded as a module, the tool's own handler ends it
+        # (128 plus the signal; the last word was cleared) with nothing more on stdout. The mask is also what an in-process caller (a test) had before.
+        signal.pthread_sigmask(signal.SIG_SETMASK, before)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back and the last word cleared (a signal in the middle of the write would cut the
+    document, and the last word would add a second one), on the bounded write above."""
+    hold_stop_signals()
+    STATE["last_word"] = None
+    _reconcile(answer)
+    _guarded_write(lambda: print(json.dumps(answer, **dumps_kwargs)))
+
+
+def _unexpected_tool(kind, value, _tb):
+    """Last resort: an error nobody foresaw is an answer too. The hidden temporaries are removed first (a name that cannot be removed is said in the
+    answer), then one JSON document with the class and, for a file-system error, its reason (a message can quote a name from the evidence), and
+    exit 1; what was written before it is not claimed. A stop signal that arrives while this runs is held with the answer's write and is answered by
+    this document and exit 1, not by 128 + the signal."""
+    try:
+        left = drop_temporaries()
+        reason = getattr(value, "strerror", None) if issubclass(kind, OSError) else None
+        said = ("a path or file could not be used: %s" % (reason or kind.__name__)) if issubclass(kind, (OSError, ValueError)) else "internal error: %s" % kind.__name__
+        answer = {"tool": globals().get("TOOL"), "status": "failed", "error": said,
+                  "status_basis": "the tool stopped on an error it did not foresee (%s); what it had written before is not claimed" % kind.__name__}
+        if left:
+            answer["temporaries_left"] = left[:10]
+            answer["status_basis"] += "; hidden temporary files that could not be removed are listed in temporaries_left"
+        print_answer(answer)
+    except BaseException:       # noqa: BLE001 - nothing may stop the exit
+        pass
+    os._exit(1)
+
+
+sys.excepthook = _unexpected_tool
+
+
+TOOL = {"name": "frame_survey", "version": 1}
+PARSER = "frame_survey/1"
+DEFAULT_SECONDS, MAX_SECONDS = 540, 570         # under the manifest's 600
+PROBE_SECONDS = 30
+DEFAULT_FRAMES, MAX_FRAMES = 20000, 200000      # frames decoded a call
+MAX_EXTRACT = 300                               # frames written at native size a call
+MAX_EXTRACT_BYTES = 2 << 30
+MAX_NATIVE_PIXELS = 8192 * 4320
+GRID_COLUMNS, GRID_ROWS = 32, 18                # the blocks a frame is compared in
+BLOCK_STEP = 8                                  # a block has changed when its mean moved by more than this (of 255)
+KNOWN_PARAMS = {"video", "mode", "every", "start_frame", "max_frames", "tile_width", "columns", "rows", "window", "first", "last", "max_seconds"}
+MODES = ("survey", "extract", "repair")
+RULES = [
+    "Survey first, with the default call ({\"video\": ...}): every frame is decoded, tiled with its frame number and time, and scored. "
+    "Read `runs` before the sheets: a run is a stretch of frames in which one region changed and changed back (a caption, an overlay, a "
+    "flash) with no scene cut, and it names the sheets that show it.",
+    "A sampled or capped survey is `partial` and says what it skipped (every, max_frames, the clock): a run shorter than the sampling "
+    "step can fall between two samples, so \"nothing stands out\" is a negative only for a `complete` survey with every: 1.",
+    "Take the frames a run names at native size ({\"mode\": \"extract\", \"first\": N, \"last\": M}) before reading text off a tile: a "
+    "tile is a reduced copy. Frame numbers count decoded frames of the first video stream from 0; a time is the frame's own "
+    "presentation time when the decoder gave one, else frame / rate, and the answer says which.",
+    "A file that will not open goes to {\"mode\": \"repair\"}: it says what the container lacks (an MP4's moov, a cut mdat, an AVI's "
+    "index), writes a remuxed copy, and counts the frames that copy DECODES. The count decoded is the claim; a missing moov with no "
+    "second file from the same recorder is not rebuilt, and the answer says so.",
+]
+
+
+# ---- what every answer and every file of this tool goes through ---------------------------------------------------------------------
+MAX_ARGUMENT_BYTES = 4 << 20
+
+
+class Refused(Exception):
+    """A parameter or an input the tool refuses: the text is the whole message."""
+
+
+def fail(message, **extra):
+    print_answer({"tool": TOOL, "status": "failed", "error": message,
+                  "status_basis": "the tool stopped with an error (see error): it read nothing it answers for, and that is not a negative",
+                  "rules": RULES, **extra})
+    raise SystemExit(1)
+
+
+def describe(exc):
+    """An error without the path it names: its class, the errno's name and the system's own words."""
+    code = errno.errorcode.get(exc.errno, "") if getattr(exc, "errno", None) else ""
+    words = getattr(exc, "strerror", None) or "no system message"
+    return "%s%s: %s" % (type(exc).__name__, " " + code if code else "", words)
+
+
+def where_it_failed(exc):
+    tb, line = exc.__traceback__, None
+    while tb is not None:
+        if tb.tb_frame.f_code.co_filename == __file__:
+            line = tb.tb_lineno
+        tb = tb.tb_next
+    return "line %s of the tool" % line if line else "an unknown line"
+
+
+def printable(text, most=300):
+    """A caller's string as the answer repeats it: one line, bounded, with nothing a terminal or a JSON reader would trip on."""
+    text = text if isinstance(text, str) else repr(text)
+    text = "".join(ch if " " <= ch < "\x7f" or (ch > "\xa0" and ch.isprintable() and not 0xD800 <= ord(ch) <= 0xDFFF) else "?" for ch in text)
+    return text if len(text) <= most else text[:most] + "...(%d characters)" % len(text)
+
+
+def read_args(known):
+    """The arguments, a JSON object on standard input: (args, the names it does not know)."""
+    raw = sys.stdin.buffer.read(MAX_ARGUMENT_BYTES + 1)
+    if len(raw) > MAX_ARGUMENT_BYTES:
+        fail("the arguments are over %d bytes" % MAX_ARGUMENT_BYTES)
+    try:
+        args = json.loads(raw.decode("utf-8"))
+    except (ValueError, RecursionError) as exc:
+        fail("the arguments are not valid JSON (%s): send one JSON object on standard input" % type(exc).__name__)
+    if not isinstance(args, dict):
+        fail("the arguments must be a JSON object")
+    return args, sorted(printable(k, 60) for k in args if k not in known)
+
+
+def int_param(args, key, default, low, high):
+    value = args.get(key)
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+        raise Refused("%s must be a whole number from %d to %d" % (key, low, high))
+    return value
+
+
+def number_param(args, key, default, low, high):
+    value = args.get(key)
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value != value or not low <= value <= high:
+        raise Refused("%s must be a number from %s to %s" % (key, low, high))
+    return float(value)
+
+
+def bool_param(args, key, default=False):
+    value = args.get(key)
+    if value is None:
+        return default
+    if not isinstance(value, bool):
+        raise Refused("%s must be true or false" % key)
+    return value
+
+
+def choice_param(args, key, default, choices):
+    value = args.get(key)
+    if value is None:
+        return default
+    if not isinstance(value, str) or value not in choices:
+        raise Refused("%s must be one of: %s" % (key, ", ".join(choices)))
+    return value
+
+
+def path_param(value, what):
+    if not isinstance(value, str) or not value or "\x00" in value or len(value) > 4096:
+        raise Refused("%s must be a path: a string of 1 to 4096 characters without a NUL" % what)
+    try:
+        value.encode("utf-8")
+    except UnicodeError:
+        raise Refused("%s is not a path this tool can open: it does not encode as UTF-8" % what)
+    return value
+
+
+def read_file(path, most, what):
+    """The bytes of a regular file, opened without waiting on a FIFO or a device, at most `most` bytes: Refused says why not."""
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    except OSError as exc:
+        raise Refused("%s cannot be opened (%s)" % (what, describe(exc)))
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise Refused("%s is not a regular file (a directory, a FIFO or a device is not read)" % what)
+        if st.st_size > most:
+            raise Refused("%s is %d bytes; this tool reads a file of up to %d" % (what, st.st_size, most))
+        parts, got = [], 0
+        while got <= most:
+            if out_of_time():
+                raise Refused("the tool's clock ran out while %s was being read" % what)
+            block = os.read(fd, min(1 << 22, most + 1 - got))
+            if not block:
+                break
+            parts.append(block)
+            got += len(block)
+        if got > most:
+            raise Refused("%s grew past %d bytes while it was read" % (what, most))
+        return b"".join(parts)
+    except OSError as exc:
+        raise Refused("%s cannot be read (%s)" % (what, describe(exc)))
+    finally:
+        os.close(fd)
+
+
+class Place:
+    """Where this call writes: a directory of its own, made new, under $OUT in a job and under work/<agent>/tool-output outside one. No
+    link is followed on the way: every directory is opened with O_NOFOLLOW and the next one made and opened below it, and a file is
+    created exclusively (never over a name that is there, never through a link). A file that was begun and not finished is removed on
+    every way out (the shared TEMPS block holds its name until it is whole)."""
+
+    def __init__(self, stem):
+        job, out = os.environ.get("JOB_ID"), os.environ.get("OUT")
+        self.in_job = bool(job and out)
+        nofollow = getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_DIRECTORY", 0) | os.O_RDONLY
+        try:
+            if self.in_job:
+                self.shown = "store/jobs/%s/out" % re.sub(r"[^A-Za-z0-9_.-]", "_", job)
+                self.path = out
+                os.makedirs(out, exist_ok=True)
+                fd = os.open(out, nofollow)
+            else:
+                agent = re.sub(r"[^A-Za-z0-9_.-]", "_", os.environ.get("AGENT_ID") or "tool")
+                self.shown = "work/%s/tool-output" % agent
+                self.path = os.path.join("work", agent, "tool-output")
+                fd = os.open(".", nofollow)
+                for part in ("work", agent, "tool-output"):
+                    try:
+                        os.mkdir(part, 0o755, dir_fd=fd)
+                    except FileExistsError:
+                        pass
+                    below = os.open(part, nofollow, dir_fd=fd)
+                    os.close(fd)
+                    fd = below
+            for n in range(1, 10000):
+                name = stem if n == 1 else "%s-%d" % (stem, n)
+                try:
+                    os.mkdir(name, 0o755, dir_fd=fd)
+                except FileExistsError:
+                    continue
+                self.fd = os.open(name, nofollow, dir_fd=fd)
+                os.close(fd)
+                self.shown += "/" + name
+                self.path = os.path.join(self.path, name)
+                return
+            os.close(fd)
+            raise Refused("no free name for this call's output directory under %s" % self.shown)
+        except OSError as exc:
+            raise Refused("the output directory cannot be made or is reached through a link (%s): nothing was written" % describe(exc))
+
+    def write(self, name, chunks, mode=0o644):
+        """Create `name` here and write the chunks (bytes, or an iterable of bytes); the name the answer cites. OSError when it cannot."""
+        full = os.path.join(self.path, name)
+        fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), mode, dir_fd=self.fd)
+        temp_hold(full)
+        try:
+            for chunk in ((chunks,) if isinstance(chunks, (bytes, bytearray)) else chunks):
+                view = memoryview(chunk)
+                while len(view):
+                    view = view[os.write(fd, view[:1 << 20]):]
+        finally:
+            os.close(fd)
+        temp_done(full)
+        return "%s/%s" % (self.shown, name)
+
+    def remove(self, name):
+        """Remove a file this call wrote here (a result that turned out to hold nothing); False when it could not be."""
+        try:
+            os.unlink(name, dir_fd=self.fd)
+            return True
+        except OSError:
+            return False
+
+    def note(self):
+        return None if self.in_job else ("written where you called it, not sealed: run it as a job (job_run tool=%s) to have the files sealed into the store and citable as job:<id>/<path>" % TOOL["name"])
+
+
+def answered(main):
+    """main(), with every way it can fail turned into one JSON answer."""
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Refused as exc:
+        hold_stop_signals(quietly=True)
+        left = drop_temporaries()
+        fail(str(exc), **({"temporaries_left": left[:10]} if left else {}))
+    except (MemoryError, RecursionError) as exc:
+        hold_stop_signals(quietly=True)
+        drop_temporaries()
+        fail("the input needs more memory or nesting than this tool has (%s)" % type(exc).__name__)
+    except Exception as exc:  # noqa: BLE001 - never an empty or clean answer for a failure
+        hold_stop_signals(quietly=True)
+        drop_temporaries()
+        fail("unexpected failure: %s" % (describe(exc) if isinstance(exc, OSError) else "%s at %s" % (type(exc).__name__, where_it_failed(exc))))
+
+
+def _stopped(signum):
+    """The last word of a stop: the temporaries go, then one document (status failed, interrupted)."""
+    left = drop_temporaries()
+    sys.stdout.write(json.dumps({"tool": TOOL, "status": "failed", "interrupted": True, "signal": signum,
+                                 "status_basis": "the tool was stopped by signal %d before its answer: the program it was running was ended, a file it had begun was removed, and nothing is claimed about what it had read" % signum,
+                                 **({"temporaries_left": left[:10]} if left else {})}) + "\n")
+    sys.stdout.flush()
+
+
+STATE["last_word"] = _stopped
+install_signal_handlers()
+STOP_CLOCK = {"deadline": None}
+
+
+def set_deadline(seconds):
+    STOP_CLOCK["deadline"] = time.monotonic() + seconds
+
+
+def out_of_time():
+    return STOP_CLOCK["deadline"] is not None and time.monotonic() > STOP_CLOCK["deadline"]
+
+
+def seconds_left(most):
+    left = (STOP_CLOCK["deadline"] - time.monotonic()) if STOP_CLOCK["deadline"] is not None else most
+    return max(0.5, min(most, left))
+
+
+def find_program(name):
+    """The program's path on PATH, or None."""
+    return shutil.which(name)
+
+
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+
+
+def png_bytes(width, height, rows, channels=1):
+    """A PNG (8-bit grey, or RGB with channels 3) from rows of bytes."""
+    raw = b"".join(b"\x00" + bytes(row) for row in rows)
+
+    def chunk(kind, body):
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+
+    return (PNG_MAGIC + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 0 if channels == 1 else 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b""))
+
+
+# ---- index numbers on a picture: a 3 x 5 font of the tool's own (digits and the marks a frame label needs) ----------------------------
+FONT_3X5 = {
+    "0": "111101101101111", "1": "010110010010111", "2": "111001111100111", "3": "111001111001111", "4": "101101111001001",
+    "5": "111100111001111", "6": "111100111101111", "7": "111001001001001", "8": "111101111101111", "9": "111101111001111",
+    ":": "000010000010000", ".": "000000000000010", "-": "000000111000000", " ": "000000000000000", "#": "101111101111101",
+    "s": "000011110011110", "f": "011100110100100",
+}
+
+
+def label_rows(text, scale=2):
+    """A label as rows of 0 (paper) and 1 (ink): (width, rows). A character the font lacks is drawn as a dash."""
+    glyphs = [FONT_3X5.get(ch, FONT_3X5["-"]) for ch in text]
+    width = max(1, len(glyphs) * 4 - 1) * scale
+    rows = []
+    for y in range(5):
+        line = bytearray()
+        for i, glyph in enumerate(glyphs):
+            for x in range(3):
+                line += (b"\x01" if glyph[y * 3 + x] == "1" else b"\x00") * scale
+            if i < len(glyphs) - 1:
+                line += b"\x00" * scale
+        rows += [bytes(line)] * scale
+    return width, rows
+
+
+class Clock(Exception):
+    """The tool's own clock ran out inside a loop."""
+
+
+def tick():
+    if out_of_time():
+        raise Clock()
+
+
+SHOWINFO = re.compile(rb"\] n: *(\d+) +pts: *(-?\d+|N/A) +pts_time: *(-?[0-9.]+|N/A)")
+TROUBLE = re.compile(rb"error|damaged|corrupt|invalid|partial file|missing|conceal|truncat", re.I)
+
+
+def clean(text, most=300):
+    text = text.decode("utf-8", "replace") if isinstance(text, bytes) else text
+    text = "".join(ch if " " <= ch < "\x7f" else " " for ch in text).strip()
+    return text if len(text) <= most else text[:most] + "..."
+
+
+def programs():
+    """The decoder of this image: (ffmpeg path, ffprobe path, what to say when one is missing)."""
+    ffmpeg, ffprobe = find_program("ffmpeg"), find_program("ffprobe")
+    missing = [name for name, path in (("ffmpeg", ffmpeg), ("ffprobe", ffprobe)) if path is None]
+    return ffmpeg, ffprobe, ("no video decoder is in this image: %s %s not on PATH (this tool decodes with ffmpeg and reads the stream's shape with ffprobe; it has no decoder of its own)"
+                             % (" and ".join(missing), "is" if len(missing) == 1 else "are")) if missing else None
+
+
+def target_of(path):
+    """A path ffmpeg takes as a file: a relative one is given with ./ in front, so that a name that begins with a dash is no option
+    and a name with a colon is no protocol."""
+    return path if os.path.isabs(path) else os.path.join(".", path)
+
+
+def probe(ffprobe, path):
+    """The first video stream as ffprobe reads it: {codec, width, height, rate, frames_said, duration_said, container}, or (None, why)."""
+    code, out, err, timed_out = preflight([ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries",
+                                           "stream=codec_name,width,height,avg_frame_rate,r_frame_rate,nb_frames,duration:format=format_name,duration",
+                                           "-of", "json", "-i", "file:" + target_of(path)], seconds_left(PROBE_SECONDS))
+    if timed_out:
+        return None, "ffprobe did not finish in %d seconds" % PROBE_SECONDS
+    try:
+        doc = json.loads(out.decode("utf-8", "replace"))
+    except ValueError:
+        doc = {}
+    streams = doc.get("streams") if isinstance(doc, dict) else None
+    if code != 0 or not streams or not isinstance(streams[0], dict):
+        return None, "ffprobe found no video stream it can read (exit %s): %s" % (code, clean(err) or "it said nothing")
+    stream = streams[0]
+    width, height = stream.get("width"), stream.get("height")
+    if not isinstance(width, int) or not isinstance(height, int) or width < 2 or height < 2 or width * height > MAX_NATIVE_PIXELS:
+        return None, "the video stream's frame size is not one this tool takes (%s x %s)" % (clean(str(width), 12), clean(str(height), 12))
+
+    def rate(text):
+        try:
+            a, _, b = str(text).partition("/")
+            value = float(a) / float(b or 1)
+            return value if 0 < value < 1000 else None
+        except (ValueError, ZeroDivisionError):
+            return None
+
+    def number(text, kind):
+        try:
+            return kind(text)
+        except (TypeError, ValueError):
+            return None
+
+    form = doc.get("format") if isinstance(doc.get("format"), dict) else {}
+    return {"codec": clean(str(stream.get("codec_name")), 40), "width": width, "height": height,
+            "rate": rate(stream.get("avg_frame_rate")) or rate(stream.get("r_frame_rate")), "frames_said": number(stream.get("nb_frames"), int),
+            "duration_said": number(stream.get("duration"), float) or number(form.get("duration"), float), "container": clean(str(form.get("format_name")), 60)}, None
+
+
+def stream_frames(argv, frame_bytes, on_frame, stderr_file):
+    """Run a decoder that writes raw frames on its standard output and hand each to on_frame (False from it ends the run). Bounded all
+    the way: the tool's clock, and a program that has ended while something else holds its pipe is not waited on past PIPE_GRACE.
+    Returns {frames, exit, stopped: None | "clock" | "enough" | "pipe held"}."""
+    proc = spawn(argv, stdout=subprocess.PIPE, stderr=stderr_file)
+    ACTIVE.append(proc)
+    state = {"frames": 0, "exit": None, "stopped": None, "left": 0}
+    buffer = bytearray()
+    fd = proc.stdout.fileno()
+    ended = None
+    try:
+        while True:
+            if out_of_time():
+                state["stopped"] = "clock"
+                break
+            ready = _select.select([fd], [], [], 0.25)[0]
+            if not ready:
+                if proc.poll() is not None:
+                    ended = ended or time.monotonic()
+                    if time.monotonic() - ended >= PIPE_GRACE:
+                        state["stopped"] = "pipe held"
+                        break
+                continue
+            data = os.read(fd, 1 << 20)
+            if not data:
+                break
+            buffer += data
+            while len(buffer) >= frame_bytes:
+                frame = bytes(buffer[:frame_bytes])
+                del buffer[:frame_bytes]
+                state["frames"] += 1
+                if on_frame(frame) is False:
+                    state["stopped"] = "enough"
+                    break
+            if state["stopped"]:
+                break
+        if state["stopped"]:
+            kill_tree(proc)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            kill_tree(proc)
+            proc.wait()
+        state["exit"] = proc.returncode
+        state["left"] = len(buffer)
+    finally:
+        _close_pipe(proc.stdout)
+        ACTIVE.remove(proc)
+    return state
+
+
+class LogTimes:
+    """The presentation time of each output frame, from the showinfo lines the decoder writes to its log: {output index: seconds}. The log
+    is read on from where the last reading stopped, a line that is not whole yet waits for the next."""
+
+    def __init__(self, path):
+        self.path, self.at, self.times = path, 0, {}
+        self.trouble, self.said = 0, []            # the decoder's own lines about errors: how many, and the first three
+
+    def read(self):
+        try:
+            with open(self.path, "rb") as fh:
+                fh.seek(self.at)
+                while True:
+                    line = fh.readline(1 << 16)
+                    if not line.endswith(b"\n"):
+                        break
+                    self.at += len(line)
+                    found = SHOWINFO.search(line)
+                    if found:
+                        if found.group(3) != b"N/A":
+                            self.times[int(found.group(1))] = float(found.group(3))
+                    elif TROUBLE.search(line):
+                        self.trouble += 1
+                        if len(self.said) < 3:
+                            self.said.append(clean(line))
+        except (OSError, ValueError):
+            pass
+        return self.times
+
+
+def passthrough(ffmpeg):
+    """The option that keeps every decoded frame, none dropped or doubled: -fps_mode from ffmpeg 5.1, -vsync before it."""
+    _code_, out, _err, _timed_out = preflight([ffmpeg, "-hide_banner", "-version"], seconds_left(PROBE_SECONDS))
+    found = re.search(rb"ffmpeg version n?(\d+)\.(\d+)", out)
+    old = found is not None and (int(found.group(1)), int(found.group(2))) < (5, 1)
+    return (["-vsync", "0"] if old else ["-fps_mode", "passthrough"]), (clean(out.split(b"\n")[0], 80) if out else "ffmpeg, version not printed")
+
+
+def stamp(seconds):
+    if seconds is None:
+        return "-"
+    minutes, rest = divmod(max(0.0, seconds), 60)
+    return "%d:%05.2f" % (int(minutes), rest)
+
+
+def block_means(frame, width, height):
+    """The mean of each of GRID_COLUMNS x GRID_ROWS blocks of an RGB frame, all channels together (0 to 255)."""
+    stride = width * 3
+    means = []
+    for by in range(GRID_ROWS):
+        y0, y1 = by * height // GRID_ROWS, max(by * height // GRID_ROWS + 1, (by + 1) * height // GRID_ROWS)
+        sums = [0] * GRID_COLUMNS
+        for y in range(y0, y1):
+            row = frame[y * stride:(y + 1) * stride]
+            for bx in range(GRID_COLUMNS):
+                x0, x1 = bx * width // GRID_COLUMNS, max(bx * width // GRID_COLUMNS + 1, (bx + 1) * width // GRID_COLUMNS)
+                sums[bx] += sum(row[x0 * 3:x1 * 3])
+        for bx in range(GRID_COLUMNS):
+            x0, x1 = bx * width // GRID_COLUMNS, max(bx * width // GRID_COLUMNS + 1, (bx + 1) * width // GRID_COLUMNS)
+            means.append(sums[bx] / float((x1 - x0) * 3 * (y1 - y0)))
+    return means
+
+
+class Sheets:
+    """Contact sheets: tiles left to right, top to bottom, the frame number and its time under each."""
+
+    def __init__(self, place, tile_width, tile_height, columns, rows):
+        self.place, self.tw, self.th, self.columns, self.rows = place, tile_width, tile_height, columns, rows
+        self.scale = 2 if tile_width >= 150 else 1
+        self.cell_w, self.cell_h = tile_width + 4, tile_height + 5 * self.scale + 8
+        self.width, self.height = self.cell_w * columns, self.cell_h * rows
+        self.names, self.count, self.first = [], 0, None
+        self.canvas = None
+        self.error = None
+
+    def add(self, frame, number, seconds):
+        if self.canvas is None:
+            self.canvas = [bytearray(b"\x20" * (self.width * 3)) for _ in range(self.height)]
+            self.first = number
+        slot = self.count % (self.columns * self.rows)
+        x0, y0 = (slot % self.columns) * self.cell_w + 2, (slot // self.columns) * self.cell_h + 2
+        stride = self.tw * 3
+        for y in range(self.th):
+            self.canvas[y0 + y][x0 * 3:(x0 + self.tw) * 3] = frame[y * stride:(y + 1) * stride]
+        label_width, label = label_rows(("%06d %s" % (number, stamp(seconds)))[:self.tw // (4 * self.scale)], self.scale)
+        for i, line in enumerate(label):
+            self.canvas[y0 + self.th + 3 + i][x0 * 3:(x0 + label_width) * 3] = b"".join(b"\xff\xff\xff" if p else b"\x20\x20\x20" for p in line)
+        self.count += 1
+        self.last = number
+        if self.count % (self.columns * self.rows) == 0:
+            self.flush()
+
+    def flush(self):
+        if self.canvas is None:
+            return
+        name = "sheet-%04d.png" % (len(self.names) + 1)
+        try:
+            shown = self.place.write(name, png_bytes(self.width, self.height, self.canvas, 3))
+            self.names.append({"sheet": shown, "first_frame": self.first, "last_frame": self.last})
+        except OSError as exc:
+            self.error = "a contact sheet could not be written (%s)" % describe(exc)
+        self.canvas = None
+
+
+def survey(args, video, info, ffmpeg, common, started):
+    every = int_param(args, "every", 1, 1, 100000)
+    start = int_param(args, "start_frame", 0, 0, 10 ** 9)
+    most = int_param(args, "max_frames", DEFAULT_FRAMES, 1, MAX_FRAMES)
+    tile_width = int_param(args, "tile_width", 160, 64, 480)
+    columns = int_param(args, "columns", 10, 1, 20)
+    rows = int_param(args, "rows", 6, 1, 20)
+    window = int_param(args, "window", 10, 2, 1000)
+    tile_width -= tile_width % 2
+    tile_height = max(2, int(round(info["height"] * tile_width / float(info["width"]) / 2.0)) * 2)
+    place = Place("frame_survey")
+    stderr_path = os.path.join(place.path, ".decoder.log")
+    temp_hold(stderr_path)
+    select = "select='gte(n\\,%d)*not(mod(n-%d\\,%d))'" % (start, start, every)
+    keep_every_frame, decoder_version = passthrough(ffmpeg)
+    common["decoder"]["version"] = decoder_version
+    argv = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "info", "-i", "file:" + target_of(video), "-map", "0:v:0", "-an", "-sn",
+            "-vf", "%s,showinfo,scale=%d:%d:flags=area" % (select, tile_width, tile_height), *keep_every_frame, "-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1"]
+    sheets = Sheets(place, tile_width, tile_height, columns, rows)
+    blocks = GRID_COLUMNS * GRID_ROWS
+    rate = info["rate"]
+    pending = []                      # frames waiting for their time (the showinfo line is written a moment before the frame)
+    changes = []                      # per decoded frame: (frame number, blocks changed, their box)
+    previous = [None]
+    kept_frames = [0]
+
+    def on_frame(frame):
+        number = start + kept_frames[0] * every
+        means = block_means(frame, tile_width, tile_height)
+        changed, box = 0, None
+        if previous[0] is not None:
+            last = previous[0]
+            for index in range(blocks):
+                if abs(means[index] - last[index]) > BLOCK_STEP:
+                    changed += 1
+                    bx, by = index % GRID_COLUMNS, index // GRID_COLUMNS
+                    box = (bx, by, bx, by) if box is None else (min(box[0], bx), min(box[1], by), max(box[2], bx), max(box[3], by))
+        previous[0] = means
+        changes.append((number, changed, box))
+        pending.append((frame, number, kept_frames[0]))
+        kept_frames[0] += 1
+        if len(pending) >= 30:
+            drain()
+        return kept_frames[0] < most
+
+    log_times = LogTimes(stderr_path)
+    times = log_times.times
+
+    def drain():
+        log_times.read()
+        for frame, number, index in pending:
+            sheets.add(frame, number, times.get(index, number / rate if rate else None))
+        del pending[:]
+
+    try:
+        with open(stderr_path, "wb") as log:
+            state = stream_frames(argv, tile_width * tile_height * 3, on_frame, log)
+    except OSError as exc:
+        temp_drop(stderr_path)
+        raise Refused("the decoder could not be started (%s)" % describe(exc))
+    drain()
+    sheets.flush()
+    log_times.read()
+    errors = log_times.said
+    temp_drop(stderr_path)
+    decoded = kept_frames[0]
+    timed = sum(1 for i in range(decoded) if i in times)
+    reasons, skipped = [], []
+    if every > 1:
+        skipped.append("%d of every %d frames between the samples (every: %d): a run shorter than %d frames can fall between two samples" % (every - 1, every, every, every))
+    if start:
+        skipped.append("the %d frames before start_frame" % start)
+    if state["stopped"] == "enough":
+        skipped.append("every frame after frame %d (max_frames %d was reached): go on with start_frame %d" % (start + (decoded - 1) * every, most, start + decoded * every))
+    if state["stopped"] == "clock":
+        skipped.append("every frame after frame %d (the tool's clock ran out): go on with start_frame %d" % (start + (decoded - 1) * every if decoded else start, start + decoded * every))
+    if state["stopped"] == "pipe held":
+        reasons.append("the decoder ended but something it started kept its output pipe open: the end of the stream was not seen")
+    if state["stopped"] is None and state["exit"] != 0:
+        reasons.append("the decoder ended with exit code %s after %d frames: the stream is damaged or cut there, and what follows was not decoded" % (state["exit"], decoded))
+    if log_times.trouble:
+        reasons.append("the decoder wrote %d line(s) about errors while it decoded (decoder_said has the first): frames near them may be damaged, concealed or missing" % log_times.trouble)
+    if state["left"] and state["stopped"] is None:
+        reasons.append("the decoder's output ended inside a frame (%d bytes over)" % state["left"])
+    if sheets.error:
+        reasons.append(sheets.error)
+    reasons += ["not decoded: " + s for s in skipped]
+    # The change scores. A frame's score is the share of blocks that changed from the frame before it. A cut changes most of the picture;
+    # a local change (a caption, an overlay) changes a few blocks and, when it ends, changes the same blocks again.
+    scores = [c[1] / float(blocks) for c in changes]
+    ordered = sorted(scores[1:]) or [0.0]
+    median = ordered[len(ordered) // 2]
+    spread = sorted(abs(s - median) for s in scores[1:])[len(ordered) // 2] if len(scores) > 1 else 0.0
+    floor = max(median + 6 * spread, median * 3, 2.0 / blocks)
+    cuts = [changes[i][0] for i in range(1, len(changes)) if scores[i] >= 0.5]
+    local = [i for i in range(1, len(changes)) if floor <= scores[i] < 0.5 and scores[i] > 0]
+    next_cut, upcoming = [len(changes)] * (len(changes) + 1), len(changes)
+    for i in range(len(changes) - 1, -1, -1):
+        next_cut[i] = upcoming                      # the first cut after frame i
+        if scores[i] >= 0.5:
+            upcoming = i
+    runs, used = [], set()
+    pairing_until = time.monotonic() + 10           # the pairing has a clock of its own, after the decoder's
+    for a_pos, a in enumerate(local):
+        if a in used:
+            continue
+        if time.monotonic() > pairing_until:
+            reasons.append("the local changes after frame %d were not paired into runs (the pairing's own 10 seconds ran out): they are in frames.tsv" % changes[a][0])
+            break
+        box_a = changes[a][2]
+        for b in local[a_pos + 1:a_pos + 1 + 400]:
+            if b - a > 2000 or next_cut[a] < b:
+                break
+            if b in used:
+                continue
+            box_b = changes[b][2]
+            overlap_w = min(box_a[2], box_b[2]) - max(box_a[0], box_b[0]) + 1
+            overlap_h = min(box_a[3], box_b[3]) - max(box_a[1], box_b[1]) + 1
+            if overlap_w <= 0 or overlap_h <= 0:
+                continue
+            area_a = (box_a[2] - box_a[0] + 1) * (box_a[3] - box_a[1] + 1)
+            area_b = (box_b[2] - box_b[0] + 1) * (box_b[3] - box_b[1] + 1)
+            if overlap_w * overlap_h * 2 < max(area_a, area_b):
+                continue
+            used.update((a, b))
+            first, last = changes[a][0], changes[b - 1][0]
+            px = lambda bx: bx * info["width"] // GRID_COLUMNS
+            py = lambda by: by * info["height"] // GRID_ROWS
+            runs.append({"first_frame": first, "last_frame": last, "frames_decoded_in_run": b - a,
+                         "first_time": stamp(times.get(a, first / rate if rate else None)), "last_time": stamp(times.get(b - 1, last / rate if rate else None)),
+                         "blocks_changed_at_start": changes[a][1], "blocks_changed_at_end": changes[b][1], "of_blocks": blocks,
+                         "region_native_pixels": [px(min(box_a[0], box_b[0])), py(min(box_a[1], box_b[1])), px(max(box_a[2], box_b[2]) + 1), py(max(box_a[3], box_b[3]) + 1)],
+                         "sheets": [s["sheet"] for s in sheets.names if s["first_frame"] <= last and s["last_frame"] >= first][:6],
+                         "what": "one region changed at the first frame and changed again at the frame after the last, with no cut between: a candidate for a caption, an overlay or an inserted stretch"})
+            break
+    unpaired = [changes[i][0] for i in local if i not in used]
+    windows = []
+    for at in range(0, len(changes), window):
+        part = scores[at:at + window]
+        windows.append((changes[at][0], changes[min(len(changes), at + window) - 1][0], max(part), sum(part) / len(part)))
+    window_scores = sorted(w[2] for w in windows) or [0.0]
+    window_median = window_scores[len(window_scores) // 2]
+    files = {}
+    try:
+        files["windows"] = place.write("windows.tsv", (("first_frame\tlast_frame\tmax_share_of_blocks_changed\tmean_share_of_blocks_changed\n").encode("ascii"),
+                                                       *(("%d\t%d\t%.4f\t%.4f\n" % w).encode("ascii") for w in windows)))
+        files["frames"] = place.write("frames.tsv", (b"frame\ttime_s\ttime_from\tshare_of_blocks_changed\n",
+                                                     *(("%d\t%s\t%s\t%.4f\n" % (changes[i][0], ("%.6f" % times[i]) if i in times else ("%.6f" % (changes[i][0] / rate) if rate else ""),
+                                                                               "the frame's presentation time" if i in times else "frame / rate" if rate else "", scores[i])).encode("ascii") for i in range(len(changes)))))
+    except OSError as exc:
+        files["write_error"] = "a score table could not be written (%s)" % describe(exc)
+        reasons.append("a score table could not be written")
+    stand_out = sorted((w for w in windows if w[2] >= floor and w[2] > window_median), key=lambda w: -w[2])[:20]
+    status = "failed" if decoded == 0 else "partial" if reasons else "complete"
+    answer = {**common, "mode": "survey", "status": status, "complete": status == "complete",
+              "frames_decoded": decoded, "frames_the_container_says": info["frames_said"], "first_frame": start, "last_frame": start + (decoded - 1) * every if decoded else None,
+              "every": every, "tile": "%d x %d" % (tile_width, tile_height), "sheets": len(sheets.names), "sheet_files": sheets.names[:40], "tiles_a_sheet": columns * rows,
+              "times": {"from_the_frames_own_presentation_time": timed, "from_frame_over_rate": decoded - timed, "rate": rate},
+              "scores": {"what": "a frame's score is the share of %d x %d blocks whose mean moved by more than %d of 255 from the frame decoded before it" % (GRID_COLUMNS, GRID_ROWS, BLOCK_STEP),
+                         "median": round(median, 4), "stands_out_from": round(floor, 4), "window_frames": window, "windows": len(windows)},
+              "scene_cuts": {"count": len(cuts), "frames": cuts[:50], "what": "half of the blocks or more changed at once"},
+              "runs": runs[:50], "runs_total": len(runs),
+              "local_changes_without_a_partner": {"count": len(unpaired), "frames": unpaired[:50], "what": "a local change with no matching change among the next 400 local changes, within 2000 decoded frames and before the next cut"},
+              "windows_that_stand_out": [{"first_frame": w[0], "last_frame": w[1], "max_share_of_blocks_changed": round(w[2], 4)} for w in stand_out],
+              "files": files, "output_directory": place.shown, **({"decoder_said": errors} if errors else {})}
+    if len(sheets.names) > 40:
+        answer["sheet_files_more"] = "%d sheets in all, sheet-0001.png to sheet-%04d.png, %d tiles each in frame order" % (len(sheets.names), len(sheets.names), columns * rows)
+    if skipped:
+        answer["skipped"] = skipped
+    if reasons:
+        answer["partial_reasons"] = reasons
+    answer["status_basis"] = ("no frame was decoded: %s" % ("; ".join(reasons) or "the decoder wrote none") if decoded == 0 else
+                              "every frame the decoder gave of the first video stream was tiled and scored: %d frames on %d sheets, the decoder ended cleanly at the end of the stream" % (decoded, len(sheets.names))
+                              if status == "complete" else
+                              "%d frames were tiled and scored, but not the whole stream: %s" % (decoded, "; ".join(reasons)))
+    if status == "complete" and info["frames_said"] and info["frames_said"] != decoded:
+        answer["status_basis"] += " (the container's own count is %d: the decoder's count is what was read)" % info["frames_said"]
+    return answer, place
+
+
+def extract(args, video, info, ffmpeg, common):
+    first = int_param(args, "first", None, 0, 10 ** 9)
+    last = int_param(args, "last", None, 0, 10 ** 9)
+    if first is None:
+        raise Refused("mode extract takes first (and last): frame numbers as the survey prints them. " + RULES[2])
+    last = first if last is None else last
+    if last < first or last - first + 1 > MAX_EXTRACT:
+        raise Refused("last must be from first to first + %d: at most %d frames a call at native size" % (MAX_EXTRACT - 1, MAX_EXTRACT))
+    width, height = info["width"], info["height"]
+    place = Place("frame_survey")
+    stderr_path = os.path.join(place.path, ".decoder.log")
+    temp_hold(stderr_path)
+    keep_every_frame, decoder_version = passthrough(ffmpeg)
+    common["decoder"]["version"] = decoder_version
+    argv = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "info", "-i", "file:" + target_of(video), "-map", "0:v:0", "-an", "-sn",
+            "-vf", "select='between(n\\,%d\\,%d)',showinfo" % (first, last), *keep_every_frame, "-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1"]
+    written, total, problem = [], [0], [None]
+    stride = width * 3
+
+    def on_frame(frame):
+        number = first + len(written)
+        try:
+            data = png_bytes(width, height, [frame[y * stride:(y + 1) * stride] for y in range(height)], 3)
+            written.append({"frame": number, "file": place.write("frame-%06d.png" % number, data), "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()})
+            total[0] += len(data)
+        except OSError as exc:
+            problem[0] = "a frame could not be written (%s)" % describe(exc)
+            return False
+        if total[0] > MAX_EXTRACT_BYTES:
+            problem[0] = "the frames written passed %d bytes" % MAX_EXTRACT_BYTES
+            return False
+        return len(written) < last - first + 1
+
+    try:
+        with open(stderr_path, "wb") as log:
+            state = stream_frames(argv, width * height * 3, on_frame, log)
+    except OSError as exc:
+        temp_drop(stderr_path)
+        raise Refused("the decoder could not be started (%s)" % describe(exc))
+    log_times = LogTimes(stderr_path)
+    times = log_times.read()
+    temp_drop(stderr_path)
+    for index, row in enumerate(written):
+        seconds = times.get(index, row["frame"] / info["rate"] if info["rate"] else None)
+        row["time"] = stamp(seconds)
+        row["time_from"] = "the frame's presentation time" if index in times else "frame / rate" if info["rate"] else "unknown"
+    wanted = last - first + 1
+    reasons = []
+    if problem[0]:
+        reasons.append(problem[0])
+    if state["stopped"] == "clock":
+        reasons.append("the tool's clock ran out after %d of %d frames" % (len(written), wanted))
+    if state["stopped"] == "pipe held":
+        reasons.append("the decoder ended but something it started kept its output pipe open")
+    if log_times.trouble:
+        reasons.append("the decoder wrote %d line(s) about errors while it decoded: a frame written here may be damaged or concealed" % log_times.trouble)
+    if len(written) < wanted and not reasons:
+        reasons.append("the stream gave %d of the %d frames asked for: it ends at frame %d, or is damaged there" % (len(written), wanted, first + len(written) - 1))
+    status = "failed" if not written else "partial" if reasons else "complete"
+    answer = {**common, "mode": "extract", "status": status, "complete": status == "complete", "first": first, "last": last, "frames_written": len(written),
+              "size": "%d x %d (native)" % (width, height), "frames": written[:MAX_EXTRACT], "output_directory": place.shown,
+              "status_basis": ("every frame asked for (%d to %d) was decoded and written at native size as a PNG" % (first, last)) if status == "complete" else
+                              "%d of %d frames were written: %s" % (len(written), wanted, "; ".join(reasons))}
+    if problem[0] and "could not be written" in problem[0]:
+        answer["write_error"] = problem[0]
+    if reasons:
+        answer["partial_reasons"] = reasons
+    return answer, place
+
+
+def mp4_boxes(fd, size):
+    """The top-level boxes of an ISO media file: [(type, offset, size said, size in the file)], and what is wrong with the walk."""
+    boxes, offset, problem = [], 0, None
+    while offset + 8 <= size and len(boxes) < 10000:
+        tick()
+        head = os.pread(fd, 16, offset)
+        length, kind = struct.unpack(">I4s", head[:8])
+        if length == 1 and len(head) == 16:
+            length = struct.unpack(">Q", head[8:16])[0]
+            minimum = 16
+        elif length == 0:
+            length, minimum = size - offset, 8
+        else:
+            minimum = 8
+        if length < minimum or not all(32 <= b < 127 for b in kind):
+            problem = "at offset %d the bytes are no box header: the box walk stops there" % offset
+            break
+        boxes.append((kind.decode("ascii"), offset, length, min(length, size - offset)))
+        offset += length
+    if problem is None and offset < size and len(boxes) < 10000:
+        problem = "%d bytes after the last box are no box" % (size - offset)
+    return boxes, problem
+
+
+def diagnose(fd, size):
+    """What the container itself says is wrong, read without a decoder: {container, findings, boxes | chunks}."""
+    head = os.pread(fd, 16, 0)
+    if head[4:8] in (b"ftyp", b"moov", b"mdat", b"free", b"skip", b"wide", b"moof", b"styp"):
+        boxes, problem = mp4_boxes(fd, size)
+        kinds = [b[0] for b in boxes]
+        findings = []
+        if "moov" not in kinds:
+            findings.append({"finding": "moov missing", "what": "the file has no moov box (the sample tables and the codec's configuration): a recording that was not closed, or a file cut before its end"})
+        elif "mdat" in kinds and kinds.index("moov") > kinds.index("mdat"):
+            findings.append({"finding": "moov at end", "what": "the moov box follows the media data: a whole file, but one a player cannot start before it has all of it"})
+        for kind, offset, said, held in boxes:
+            if held < said:
+                findings.append({"finding": "%s cut" % kind, "what": "the %s box at offset %d says %d bytes and the file holds %d of them" % (kind, offset, said, held)})
+        if "moof" in kinds:
+            findings.append({"finding": "fragmented", "what": "the file is fragmented (moof boxes): each fragment carries its own tables"})
+        if problem:
+            findings.append({"finding": "box walk stopped", "what": problem})
+        return {"container": "ISO media (MP4, MOV, 3GP)", "findings": findings, "boxes": [{"type": b[0], "offset": b[1], "size_said": b[2], "size_in_file": b[3]} for b in boxes[:50]]}
+    if head[:4] == b"RIFF" and head[8:12] == b"AVI ":
+        said = struct.unpack("<I", head[4:8])[0] + 8
+        findings, chunks, offset, movi, index = [], [], 12, None, None
+        if said > size:
+            findings.append({"finding": "RIFF cut", "what": "the RIFF header says %d bytes and the file holds %d" % (said, size)})
+        while offset + 8 <= size and len(chunks) < 10000:
+            tick()
+            chunk = os.pread(fd, 12, offset)
+            kind, length = chunk[:4], struct.unpack("<I", chunk[4:8])[0]
+            name = kind.decode("latin-1") + (":" + chunk[8:12].decode("latin-1") if kind == b"LIST" and len(chunk) == 12 else "")
+            name = "".join(ch if " " <= ch < "\x7f" else "?" for ch in name)
+            chunks.append({"chunk": name, "offset": offset, "size_said": length, "size_in_file": min(length, size - offset - 8)})
+            if name == "LIST:movi":
+                movi = chunks[-1]
+            if kind == b"idx1":
+                index = chunks[-1]
+            offset += 8 + length + (length & 1)
+        if movi is None:
+            findings.append({"finding": "movi missing", "what": "no movi list (the frames) was found among the top-level chunks"})
+        elif movi["size_in_file"] < movi["size_said"]:
+            findings.append({"finding": "movi cut", "what": "the movi list says %d bytes and the file holds %d of them" % (movi["size_said"], movi["size_in_file"])})
+        if index is None:
+            findings.append({"finding": "index missing", "what": "no idx1 chunk follows the movi list (an OpenDML file keeps its index elsewhere: then this is no fault)"})
+        elif index["size_in_file"] < index["size_said"] or index["size_said"] % 16:
+            findings.append({"finding": "index broken", "what": "the idx1 chunk says %d bytes, holds %d, and an index is rows of 16 bytes" % (index["size_said"], index["size_in_file"])})
+        return {"container": "AVI (RIFF)", "findings": findings, "chunks": chunks[:50]}
+    return {"container": None, "findings": [{"finding": "not an MP4 or an AVI", "what": "the first bytes are neither an ISO media box nor a RIFF AVI header: this mode repairs those two containers only"}]}
+
+
+def count_decoded(ffmpeg, path):
+    """How many frames of the first video stream decode, and how the decoder ended: (frames, exit, error lines). The frames are decoded
+    to nothing; the count is read from the decoder's own progress report."""
+    code, out, err, timed_out = preflight([ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-i", "file:" + target_of(path), "-map", "0:v:0", "-an", "-sn",
+                                           "-f", "null", "-progress", "pipe:1", "-"], seconds_left(MAX_SECONDS))
+    frames = None
+    for line in out.split(b"\n"):
+        if line.startswith(b"frame="):
+            try:
+                frames = int(line[6:].strip())
+            except ValueError:
+                pass
+    lines = [clean(line) for line in err.split(b"\n") if line.strip()]
+    return frames, (None if timed_out else code), lines
+
+
+def repair(video, ffmpeg, common, size):
+    fd = os.open(video, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    try:
+        found = diagnose(fd, size)
+    finally:
+        os.close(fd)
+    answer = {**common, "mode": "repair", "diagnosis": found}
+    if found["container"] is None:
+        answer.update({"status": "failed", "error": found["findings"][0]["what"], "status_basis": "the file is neither an MP4 nor an AVI by its first bytes: nothing was repaired"})
+        return answer, None
+    names = [f["finding"] for f in found["findings"]]
+    if ffmpeg is None:
+        answer.update({"status": "failed", "error": common.get("decoder_missing"),
+                       "status_basis": "the container was read (diagnosis) but nothing was repaired or verified: " + (common.get("decoder_missing") or "no decoder")})
+        return answer, None
+    before_frames, before_exit, before_errors = count_decoded(ffmpeg, video)
+    answer["original"] = {"frames_that_decode": before_frames, "decoder_exit": before_exit, "decoder_said": before_errors[:3]}
+    if "moov missing" in names:
+        answer.update({"status": "failed", "rebuilt": [], "could_not": ["the moov box: its sample tables and codec configuration are not in the file, and this tool does not rebuild them from the media data. "
+                                                                           "A second, whole file from the same recorder and settings supplies them to a repair program that takes a reference file; none is run here"],
+                       "status_basis": "the file has no moov box and %s frames of it decode as it is: no repaired copy was written" % ("no" if not before_frames else before_frames)})
+        return answer, None
+    place = Place("frame_survey")
+    suffix = ".avi" if found["container"].startswith("AVI") else ".mp4"
+    out_name = "repaired" + suffix
+    out_path = os.path.join(place.path, out_name)
+    temp_hold(out_path)
+    argv = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-n", "-err_detect", "ignore_err", "-fflags", "+genpts", "-i", "file:" + target_of(video),
+            "-map", "0", "-c", "copy"] + (["-movflags", "+faststart"] if suffix == ".mp4" else []) + ["file:" + target_of(out_path)]
+    code, _out, err, timed_out = preflight(argv, seconds_left(MAX_SECONDS))
+    said = [clean(line) for line in err.split(b"\n") if line.strip()][:3]
+    if timed_out or not os.path.isfile(out_path) or os.path.islink(out_path) or os.path.getsize(out_path) == 0:
+        temp_drop(out_path)
+        answer.update({"status": "failed", "rebuilt": [], "could_not": ["a remuxed copy: the decoder's remux %s" % ("was ended at the clock" if timed_out else "wrote nothing (exit %s)" % code)],
+                       "decoder_said": said, "output_directory": place.shown,
+                       "status_basis": "no repaired copy was written: the remux %s" % ("did not finish in time" if timed_out else "failed")})
+        return answer, place
+    temp_done(out_path)
+    after_frames, after_exit, after_errors = count_decoded(ffmpeg, out_path)
+    with open(out_path, "rb") as fh:
+        digest = hashlib.sha256()
+        for block in iter(lambda: fh.read(1 << 20), b""):
+            tick()
+            digest.update(block)
+    rebuilt, could_not = [], []
+    if suffix == ".mp4":
+        rebuilt.append("the moov box, written again in front of the media data from the samples the demuxer read (a remux with the streams copied, no frame re-encoded)")
+        if any(n.endswith(" cut") for n in names):
+            could_not.append("the samples that lay past the end of the file: the copy holds the samples that were whole, and its tables name only those")
+    else:
+        rebuilt.append("the index (idx1) and the RIFF sizes, written again from the chunks the demuxer read in order (a remux with the streams copied, no frame re-encoded)")
+        if "movi cut" in names or "RIFF cut" in names:
+            could_not.append("the chunks that lay past the end of the file")
+    verified = after_frames is not None and after_frames > 0
+    whole = verified and after_exit == 0 and not after_errors
+    status = "failed" if not verified else "complete" if whole and code == 0 else "partial"
+    reasons = []
+    if verified and not whole:
+        reasons.append("the repaired copy decodes %d frames and the decoder then reported errors or a non-zero exit" % after_frames)
+    if code != 0:
+        reasons.append("the remux ended with exit code %s" % code)
+    answer.update({"status": status, "complete": status == "complete", "rebuilt": rebuilt, "could_not": could_not,
+                   "repaired": {"file": "%s/%s" % (place.shown, out_name), "bytes": os.path.getsize(out_path), "sha256": digest.hexdigest(),
+                                "frames_that_decode": after_frames, "decoder_exit": after_exit, "decoder_said": after_errors[:3]},
+                   "verified_by": "decoding the repaired copy's first video stream to nothing and counting the frames",
+                   "decoder_said": said, "output_directory": place.shown,
+                   "claim": "the repaired copy decodes %s frames; the original decodes %s as it is. That count is all that was verified: not that the frames are the scene's, in order, or all there were" % (
+                       after_frames, before_frames if before_frames is not None else "none"),
+                   "status_basis": ("the copy was written and every frame of it decodes without an error: %d frames" % after_frames) if status == "complete" else
+                                   ("a copy was written but it does not decode a single frame: it is not a repair" if status == "failed" else "; ".join(reasons))})
+    if reasons:
+        answer["partial_reasons"] = reasons
+    return answer, place
+
+
+def main():
+    args, unknown = read_args(KNOWN_PARAMS)
+    mode = choice_param(args, "mode", "survey", MODES)
+    seconds = int_param(args, "max_seconds", DEFAULT_SECONDS, 5, MAX_SECONDS)
+    for key in ("every", "start_frame", "max_frames", "tile_width", "columns", "rows", "window", "first", "last"):
+        int_param(args, key, None, 0, 10 ** 9)
+    if args.get("video") is None:
+        raise Refused("video is required: the path of a video file. " + RULES[0])
+    video = path_param(args.get("video"), "video")
+    set_deadline(seconds)
+    started = time.monotonic()
+    try:
+        st = os.stat(video)
+    except OSError as exc:
+        raise Refused("video cannot be read (%s)" % describe(exc))
+    if not stat.S_ISREG(st.st_mode):
+        raise Refused("video is not a regular file")
+    ffmpeg, ffprobe, missing = programs()
+    common = {"tool": TOOL, "parser": PARSER, "video": printable(video), "bytes": st.st_size, "rules": RULES,
+              "decoder": {"ffmpeg": bool(ffmpeg), "ffprobe": bool(ffprobe)}, **({"unrecognised_parameters": unknown} if unknown else {})}
+    place = None
+    try:
+        if mode == "repair":
+            if missing:
+                common["decoder_missing"] = missing
+            answer, place = repair(video, ffmpeg if not missing else None, common, st.st_size)
+            answer.pop("decoder_missing", None)
+        elif missing:
+            answer = {**common, "status": "failed", "error": missing, "status_basis": "%s: no frame was decoded, and that says nothing about the video" % missing}
+        else:
+            info, why = probe(ffprobe, video)
+            if info is None:
+                answer = {**common, "status": "failed", "error": why,
+                          "status_basis": "the video stream could not be read (%s): no frame was decoded. %s" % (why, RULES[3])}
+            else:
+                common["stream"] = info
+                answer, place = survey(args, video, info, ffmpeg, common, started) if mode == "survey" else extract(args, video, info, ffmpeg, common)
+    except Clock:
+        left = drop_temporaries()
+        answer = {**common, "status": "failed", "error": "the tool's clock ran out", "status_basis": "the clock (max_seconds %d) ran out inside a step that has no partial result: what was written before it is not claimed" % seconds,
+                  **({"temporaries_left": left[:10]} if left else {})}
+    answer["seconds"] = round(time.monotonic() - started, 2)
+    if place is not None and place.note():
+        answer["note"] = place.note()
+    notes = process_notes()
+    if notes:
+        answer["process_notes"] = notes
+    process_apply(answer)
+    print_answer(answer, indent=1)
+    if answer["status"] == "failed":
+        raise SystemExit(1)
+
+
+if __name__ == "__main__":
+    exit_code = 0
+    try:
+        answered(main)
+    except SystemExit as stop:
+        exit_code = _code(stop)
+    _leave(exit_code)

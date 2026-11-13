@@ -11,7 +11,7 @@ Platform-specific artefact knowledge lives in the packs that depend on this one.
 
 ## What it carries
 
-**Thirty skills**, fetched one at a time by the agents that need them. Each is a leaf of at most 800 tokens that opens with "Use when ... Not for ..."; a topic that needs more has a second-level leaf the first one points to ("only if"), so `skills/INDEX.md` lists both. One of them is the pack's router, `base/router` (at most 400 tokens): when a run's index is over its budget the prompt shows this one line for the pack, and the router names every other skill by the question it answers:
+**Thirty-five skills**, fetched one at a time by the agents that need them. Each is a leaf of at most 800 tokens that opens with "Use when ... Not for ..."; a topic that needs more has a second-level leaf the first one points to ("only if"), so `skills/INDEX.md` lists both. One of them is the pack's router, `base/router` (at most 400 tokens): when a run's index is over its budget the prompt shows this one line for the pack, and the router names every other skill by the question it answers:
 
 | | |
 | --- | --- |
@@ -27,11 +27,16 @@ Platform-specific artefact knowledge lives in the packs that depend on this one.
 | `evidence/collections` | the evidence is a zip, a directory tree or an AD1, not a disk: what it contains and what it cannot show |
 | `evidence/archives` | a zip, tar, 7z, RAR or compressed file: list it, extract it under budgets, never recreate a link, keep every name |
 | `evidence/ad1` | an FTK Imager logical image: list, extract and corroborate it |
+| `evidence/first-stage` | which file started it on one machine: the whole member list ranked for macro-capable documents (the `first-stage-candidates` recipe), and the rule that "cannot be determined" needs the whole list searched |
 | `evidence/tool-validation` | validate a parser before you trust it: version, status counts, the decisive field against the bytes, independence, a positive control |
 | `data/sqlite` | a SQLite database is a set of files: snapshot it, apply its WAL in a copy, query the state you name |
 | `data/sqlite-secrets` | a table of cookies, logins, tokens, keys or messages: its values go to a sealed file, never into your context (`sqlite_query` with `write_values`) |
 | `data/browser-storage` | a Chromium or Electron IndexedDB, Local Storage or Session Storage: the inventory, the locators, what a preview shows, and the sealed file for the values (`browser_storage`) |
 | `data/documents-media` | document and image content as layers: bytes, rendering, extracted text, embedded objects, metadata, OCR, concealment |
+| `data/http-cache` | the body of a Chromium HTTP cache entry as a file, decoded (`cache_body`), and what a cache entry does and does not show |
+| `data/qr` | a QR symbol in a picture, whole, with a finder erased or in pieces (`qr_read`): the payload in a file, a negative bounded by what was looked for |
+| `data/glyphs` | exact characters read off a picture (`glyph_strip`): the glyph count, the strip, and a reading with a confusable character recorded at medium confidence as a candidate set |
+| `data/video` | every frame of a video on contact sheets, the runs that stand out without a scene cut, frames at native size, a checked container repair (`frame_survey`) |
 | `filesystem/extract` | get a file out of an image, and say which record it came from |
 | `filesystem/semantics` | path against object identity, record reuse, sizes, allocation, deletion, times, snapshots and TRIM: what a recovered file does and does not show |
 | `filesystem/carving` | recover candidate structures where there is no file system, and say how far to trust them |
@@ -46,11 +51,12 @@ Platform-specific artefact knowledge lives in the packs that depend on this one.
 | `reporting/citations` | every claim resolves to an inspectable observation, and a negative is bounded |
 | `reporting/disagreement` | disputing, correcting and republishing, through the ledger's own acts |
 
-**Twenty tools**: `image_layout`, `check_inputs`, `catalog_search`,
+**Twenty-four tools**: `image_layout`, `check_inputs`, `catalog_search`,
 `icat_extract`, `sig_carve`, `file_carver`, `ioc_scan`, `chunk_needles`,
 `file_type`, `sqlite_query`, `feature_scan`, `timeline_super`,
 `timestamp_decode`, `ad1_extract`, `archive_extract`, `sqlite_snapshot`,
-`image_verify`, `layer_describe`, `byte_range_extract`, `browser_storage`. `file_type` to `timestamp_decode` arrived
+`image_verify`, `layer_describe`, `byte_range_extract`, `browser_storage`, `cache_body`, `qr_read`,
+`glyph_strip`, `frame_survey`. `file_type` to `timestamp_decode` arrived
 with the packs that depend on this one: a tool every pack would have carried
 belongs here once, not in each of them. `ad1_extract` lists an AccessData
 AD1 logical image's items (`list: true`, nothing written out) and writes its
@@ -75,6 +81,10 @@ are a file. `browser_storage` inventories a Chromium or Electron LevelDB directo
 `ccl_chromium_reader` 0.3.18, which it runs in the `ccl_indexeddb_dump` venv as a program of its own: databases, object stores, key types, puts, deletes and
 current keys, a locator for every record, and a bounded preview after the shared withholding. With `write_values`, in a `secret_output` job, it writes every record
 whole to a 0600 file; a venv that is missing is `failed`, never an empty inventory. It does not verify the files' checksums, read blob files or interpret Local Storage.
+`cache_body` writes the body of one Chromium HTTP cache entry (a simple-cache entry file, an entry of a block-file cache directory, or a plain file) out as a file, decoded (gzip and deflate always; brotli and zstd where a Python module imports, else the stored bytes and a `partial` that says "brotli: not decodable here"), with its detected type; the key and the headers are files beside it, never in the answer.
+`qr_read` reads QR symbols (versions 1 to 10) from pictures with the standard library alone (a PNG reader of its own; Pillow for other formats where it imports): the three-finder reading, a repaint reading for a symbol with a finder erased or overdrawn, and a fragments reading that places rectangular pieces of one symbol by the fixed modules, the format word and the Reed-Solomon syndromes; a planted control is read before every run, the payload goes to a file, and "not a symbol" comes with what was looked for.
+`glyph_strip` cuts a crop of one line of text into its glyphs (a count, a crop each, a strip with index numbers) and, given a reading and its uncertain positions, counts the candidate set a confusable character leaves and writes it to a file; it runs `tesseract` as a second reader when it is installed and says so when it is not.
+`frame_survey` puts every decoded frame of a video on numbered contact sheets with its number and time, scores each frame so that a short run of differing frames stands out without a scene cut, writes a range of frames at native size, and diagnoses and remuxes an MP4 or AVI that will not open, claiming only the frames the copy decodes; it decodes with `ffmpeg` and answers `failed` where the image has none.
 Every one takes JSON on stdin and returns JSON, and every call lands on the
 run's trace under the calling agent's name. What they return is bounded and
 says so: a carve is a candidate with `boundary: validated` or `heuristic`, a
@@ -93,7 +103,7 @@ and answers with locators, types and lengths only (no `sql` in that mode, so no 
 `sqlite_snapshot` copies the database with its `-wal`, `-shm` and `-journal` (hashed), reads the
 WAL against the format and has SQLite apply it in a copy, and `sqlite_query` takes that copy.
 
-**Five recipes**, each saying what it prepares (`purpose` in its
+**Six recipes**, each saying what it prepares (`purpose` in its
 `recipe.json`). `disk-volumes` (the partition table, and per filesystem a body
 file, a path list and a MAC timeline) and `archive-members` (an archive's
 member list) inventory: they read no file's contents. `ad1-items` inventories
@@ -106,7 +116,11 @@ no item leads to counted (a lost item makes the answer partial), nothing
 extracted; `ad1_extract` writes the files out. It runs in two phases: the
 listing is whole on disk, and its coverage record says "listing complete;
 digests pending", before any content is inflated; `RECIPE_PHASE=listing` ends
-it there. `memory-windows` is a
+it there, and the recipe declares that phase (`phases` in its `recipe.json`). `first-stage-candidates` ranks the macro-capable Office documents of a
+whole directory tree or member list, wherever they lie, on signals named one by
+one (the name, a VBA project inside, the folder, a Recent shortcut, the name in
+the profile's hive and in antivirus files, the application's Prefetch file);
+it is run on demand, opens no document and reads no macro. `memory-windows` is a
 broad extraction of a Windows memory image, Volatility's standard views of
 the whole of it. `disk-timeline` is a broad extraction of a disk image,
 Plaso's log2timeline over every partition and volume and a psort CSV timeline;
@@ -121,7 +135,10 @@ space, and the text inside documents).
 The Sleuth Kit and libewf are invoked as executables and are not redistributed
 here: their licences and this project's do not combine in one work. BitLocker,
 LUKS and virtual-disk tooling is declared optional, needed for one kind of case
-rather than for the pack to work. `requires/host.json` has the whole list with
+rather than for the pack to work. So are `ffmpeg` and `ffprobe` (the decoder
+`frame_survey` runs) and `tesseract` with its English model and the DejaVu fonts
+(the second reader `glyph_strip` runs): a tool that lacks its program says so in
+its answer. `requires/host.json` has the whole list with
 install commands; `scripts/pack.sh show computer-forensics-base` says which of
 them this host has.
 

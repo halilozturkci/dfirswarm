@@ -1,7 +1,7 @@
 ---
 id: filesystem/carving
 title: Recover candidate structures and validate their limits
-when: Relevant data is outside a readable file, or survives only as residual bytes.
+when: Data is outside a readable file, or only residual bytes.
 needs: []
 tools: [sig_carve, file_carver]
 requires_host: [photorec, img_cat]

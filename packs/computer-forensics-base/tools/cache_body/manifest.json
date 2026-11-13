@@ -1,0 +1,52 @@
+{
+  "name": "cache_body",
+  "description": "Write the body of ONE browser HTTP cache entry out as a file, decoded, with its detected type, the key and the response headers beside it. RULES (they are in every answer and in every refusal too): (1) A cache entry shows that these bytes were stored under this key (a URL) by this browser profile; it does not show that a person opened the page, when it was shown, or that the server still serves it. Cite the entry file (or the cache directory and the entry's address), the body file and its sha256. (2) Read status: `partial` with `brotli: not decodable here` (or zstd) means the stored bytes were written out as they are and NOT decoded: the body is still compressed, and nothing found or not found in it is a statement about the page. (3) A block-file cache is listed first ({\"path\": \"<cache directory>\", \"list\": true}: one row an entry in entries.tsv, the key in the file, never in the answer), then one entry is taken by its row number (entry) or its address; a simple-cache entry file (<16 hex>_0) and a plain file are read directly. A plain file whose encoding is brotli needs encoding: \"br\" (brotli has no signature). (4) The key (the URL) and the response headers can carry a session token: they are written to files beside the body, never into the answer. When the case turns on them, run the job with secret_output: true and cite the file. SOURCES (kind, default auto by the first bytes): simple, a Chromium simple-cache entry file (<16 hex>_0), read as the format lays it out: a 24-byte header (magic, version 5 to 9, key length), the key, stream 1 (the body), a 24-byte end record with the body's CRC-32, stream 0 (the response headers), the key's SHA-256 when the flag says so, and stream 0's end record, which alone carries a stream size; stored_crc32_matches and key_sha256_matches say whether the entry's own checks hold. blockfile, a Chromium block-file cache DIRECTORY (index, data_0 to data_3 and f_NNNNNN files; index versions 2.0 and 2.1): list: true walks the index's hash table and every chain and writes one row an entry to entries.tsv (n, address, state, created_utc, created_raw, key_bytes, headers_bytes, body_bytes, body_in, sparse, key), entry: n or address: \"0x........\" then takes one entry; a chain that loops or an entry record that does not read as one is counted (problems) and makes the list partial. plain, any file whose whole content is a body (an f_ file, a carved response). No other cache is read here: Firefox's cache2, Safari's, a simple cache's sparse (_s) or stream-2 (_1) files and the simple cache's index are not; a sparse block-file entry (a ranged or media response kept in child entries) is named and its body is not put together (partial). DECODING: the stored response's Content-Encoding header says how the body is stored (encoding.said_by); gzip (x-gzip) and deflate (zlib-wrapped, or raw when it has no zlib header) are decoded with the standard library; br and zstd with a Python module when one imports (brotli or brotlicffi; zstandard), and when none does the stored bytes are written as they are, the answer is partial and says \"brotli: not decodable here\" (or zstd); several codings at once, or one that is not a token, are not decoded (partial). With no header (a plain file) a gzip or zstd signature is followed, and brotli and deflate, which have none, need encoding. A stream that is damaged, has no end marker or is followed by more stored bytes is written as far as it decoded and the answer is partial and says where. Bounded: max_bytes of decoded body (default 256 MiB), 2,000 decoded bytes for one stored byte past the first MiB, and the tool's clock. THE TYPE is read from the first bytes of the decoded body (a table of about thirty signatures, then HTML, XML, JSON-like and plain text; else unrecognised): a reading of the first bytes, not a validation, and it names the body file's suffix. IN THE ANSWER: offsets, sizes, the body file's sha256, the entry's creation time (created_raw, microseconds since 1601-01-01 UTC by the browser's clock, and created_utc), and from the headers only the status code, the media type and the coding tokens. NOT IN THE ANSWER: the key (the URL), every other header value and the body: they are key.txt, headers.txt and body.<suffix> (mode 0600) in a new directory under $OUT (outside a job, under work/<agent>/tool-output). This tool does not declare secret output: when the key, a cookie header or the body is what the case turns on, run the job with secret_output: true. Status: complete when the entry (or the list) was read whole and the body was decoded and written; partial with partial_reasons otherwise; failed when the structure does not read as the format says (the answer names the structure and the offset) or no body file could be written. Measured with Python 3.12 on an Apple M-series host: an entry with a 7.6 KiB page in under 0.01 s; a gzip body of 209 MB decoded and written in 0.3 s (about 700 MB/s of output); a job VM may be several times slower. A stop signal ends it with one JSON answer (failed, interrupted), exit 128 + the signal, and a file that was begun is removed. Known limits of the claim: the two Chromium layouts are written from the browser's published source headers (simple_entry_format.h, disk_format.h) and tested against fixtures built from those headers, not against a cache a browser wrote on this host; a version outside those named is refused, not guessed.",
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "A simple-cache entry file (<16 hex>_0), a block-file cache directory (the one that holds index and data_1), or a plain file whose whole content is a body",
+      "required": true
+    },
+    "kind": {
+      "type": "string",
+      "description": "auto (default: a directory is a block-file cache, a file is a simple-cache entry by its magic, else plain), simple, blockfile or plain"
+    },
+    "list": {
+      "type": "boolean",
+      "description": "block-file cache: write the list of entries (entries.tsv) and take no body"
+    },
+    "entry": {
+      "type": "integer",
+      "description": "block-file cache: the entry's row number n in entries.tsv (from 1, in table then chain order)"
+    },
+    "address": {
+      "type": "string",
+      "description": "block-file cache: the entry's address as entries.tsv prints it (0x and 8 hex digits)"
+    },
+    "encoding": {
+      "type": "string",
+      "description": "auto (default: the stored response's header, else a gzip or zstd signature), identity, gzip, deflate, br or zstd"
+    },
+    "max_bytes": {
+      "type": "integer",
+      "description": "The most decoded body bytes written (default 268435456, at most 2147483648); a body past it is cut there and the answer is partial"
+    },
+    "max_seconds": {
+      "type": "integer",
+      "description": "The tool's own time limit in seconds (default 100, 5 to 110; the manifest's timeout is 120)"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 120,
+  "example": "{\"path\": \"work/extracted/profile/Cache/Cache_Data/1a2b3c4d5e6f7a8b_0\"}",
+  "optional_python": [
+    "brotli",
+    "brotlicffi",
+    "zstandard"
+  ],
+  "by": "maintainer",
+  "at": "2026-11-13T12:00:00.000Z",
+  "version": 1,
+  "sha256": "0bdff0b382e8cd14ffe5b355443e3484d4c02954a930ae675e974331ae41750c"
+}

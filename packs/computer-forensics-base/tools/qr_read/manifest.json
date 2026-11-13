@@ -1,0 +1,69 @@
+{
+  "name": "qr_read",
+  "description": "Read QR symbols from pictures and say what was looked for when none is read: one row per input, decoded (version, level, mask, errors corrected, the payload's length and the file it was written to) or \"not a symbol\". It is written in the standard library alone: a PNG is read by a reader of its own (8 and 16-bit grey, RGB, palette and alpha, 1 to 4-bit grey and palette; not interlaced), and any other picture format only where Pillow imports (picture_reader says which read it). RULES (they are in every answer and in every refusal too): (1) A decoded payload is a reading of a picture: it says what the symbol encodes, not who made it, when, or that a link in it was opened. Cite the picture, the payload file and version, level and mask; errors_corrected says how much of the symbol was repaired. (2) The payload is in a file, never in the answer: it can be a credential (an otpauth secret, a Wi-Fi passphrase, a login link). When payload_shape says so, or the case suggests it, run the job with secret_output: true and cite the file, not the text. (3) A symbol with a finder erased or overdrawn is read by mode repaint (auto tries it too): the grid is taken from the two finders left or from the box of the dark pixels, the fixed patterns are taken as the standard's, and the format word and Reed-Solomon decide. Pieces of one symbol go to mode fragments together, as images: [..], never one call a piece. (4) \"not a symbol\" is a statement about these methods on this picture (looked_for lists them) and holds only because the planted control was read first: a symbol under perspective, torn along a ragged line, of version 11 or above, or of another kind (Data Matrix, Aztec, a bar code) is not read here, and that is not its absence. WHAT IT DOES: the picture is thresholded (Otsu; dark on light, then light on dark); finder patterns are found by their 1:1:3:1:1 runs along rows and columns; the module grid is sampled through three finders and, from version 2, the alignment pattern; the format word is read in both copies against all 32 valid words (BCH 15,5, up to three wrong bits); the mask is lifted; the codewords are corrected with Reed-Solomon; numeric, alphanumeric and byte segments are read (a kanji segment is written as Shift JIS pairs; an ECI designator, FNC1 and structured append are noted). Versions 1 to 10 (21 to 57 modules), levels L M Q H, masks 0 to 7. MODES: auto (default) tries the three-finder reading and then the repaint reading; finders only the first; repaint takes the grid from the two finders that are left (as neighbouring or as opposite corners of a square grid) or from the box of the dark pixels (box gives it, version fixes the size), takes every fixed module as the standard's instead of reading it, lets the format word and Reed-Solomon decide (as a last resort each of the 32 format words is tried), and writes a repainted copy of the symbol (repainted_file); fragments takes several pictures that are rectangular pieces of one symbol at one scale: each is cut into modules at the module size its runs give, every place of every piece in the grids of the versions the pieces could fill is ranked on the fixed modules it would cover, and whole placements are scored on the format word and on how many Reed-Solomon blocks have zero syndromes, the first that decodes being the answer (placements names where each piece went). CONTROL: before any picture is read, a symbol made in the tool (version 3, level Q, random payload, three modules flipped) is read back by the same code, whole, with a finder erased (auto, repaint) and cut into four pieces (fragments); a failed control ends the call as failed without reading a picture, and self_test: true runs every control alone. So \"not a symbol\" means: this picture was read whole, these methods (looked_for lists them, with the counts of finder candidates, grids sampled, format words read and Reed-Solomon attempts) read no symbol from it, and the same code read the control. It does NOT read (not_read in every answer): versions 11 to 40, Micro QR, rMQR and other symbologies; a symbol under strong perspective or on a curved surface; pieces turned against each other, of different scale or not rectangular; a piece set with a hole beyond what Reed-Solomon corrects (missing modules count as light: no erasure decoding). THE PAYLOAD IS NOT IN THE ANSWER: it is written to qr-NN.payload.bin (mode 0600) in a new directory under $OUT (outside a job, under work/<agent>/tool-output), and the answer carries its length, its segments' modes and payload_shape (text, a URI, an otpauth URI, a Wi-Fi configuration, bytes that are not UTF-8: a kind read from the first characters, never the content); payload_holds_a_secret_shape is true for the two kinds that carry a credential. This tool does not declare secret output: an agent that expects a credential runs the job with secret_output: true. The picture's sha256 is printed; no digest of a payload is. Status: complete when every picture given was read whole and judged; partial when a picture could not be read as a picture, the clock (max_seconds) ran out or a payload could not be written, with partial_reasons; failed when nothing was read. Bounds: at most 64 pictures a call, 256 MiB and 36,000,000 pixels a picture (the built-in PNG reader takes rows of up to 256 MiB inflated), 16 pieces, 4,000 whole placements scored. Measured with Python 3.12 on an Apple M-series host: the controls of the default call 0.02 s (a whole self_test, interpreter start included, under 0.1 s); a 145 x 145 pixel version 1 symbol 0.02 s; a 1920 x 1080 picture of flat blocks (no symbol) 0.07 s; a picture of random noise, the worst case (it is full of chance finder shapes), 1.6 s at 600 x 600 and 23 s at 2000 x 2000, both polarities and the built-in reader's decode included; a job VM may be several times slower. Paths are printed as given. A stop signal (SIGTERM, SIGINT, SIGHUP) ends it with one JSON answer, status failed and interrupted, exit 128 + the signal, and a file that was begun is removed. Known limits of the claim: the encoder of the control and the decoder share one author's tables (they are checked against the count of data modules of each version and, in the tests, against an independent generator for versions 1 to 4 at level L); a payload that decodes is a reading of the picture, and errors_corrected says how much of it was repaired.",
+  "params": {
+    "image": {
+      "type": "string",
+      "description": "One picture to read (a path; a PNG, or another format where Pillow imports)"
+    },
+    "images": {
+      "type": "array",
+      "description": "Several pictures: each is read on its own (one row each), or, with mode fragments, all are pieces of ONE symbol and are placed together (at least two, at most 16)"
+    },
+    "mode": {
+      "type": "string",
+      "description": "auto (default: three finders, then repaint), finders, repaint (a finder erased or overdrawn; writes a repainted copy) or fragments (images are pieces of one symbol)"
+    },
+    "box": {
+      "type": "array",
+      "description": "[left, top, right, bottom] in pixels: the symbol's own extent without its quiet zone, for one picture in which other dark content defeats the box of the dark pixels (repaint reading only)"
+    },
+    "version": {
+      "type": "integer",
+      "description": "The symbol's version, 1 to 10, when it is known: only that size is tried (box and fragments)"
+    },
+    "module_pixels": {
+      "type": "number",
+      "description": "fragments: the size of one module in pixels, when the pieces' own runs do not give it (1 to 512)"
+    },
+    "reader": {
+      "type": "string",
+      "description": "auto (default: the built-in PNG reader, Pillow for the rest) or builtin (never Pillow)"
+    },
+    "max_seconds": {
+      "type": "integer",
+      "description": "The tool's own time limit in seconds (default 90, 5 to 100; the manifest's timeout is 120). When it runs out the answer is partial and names the picture it stopped in"
+    },
+    "self_test": {
+      "type": "boolean",
+      "description": "true: run only the planted controls and answer whether each passed. No evidence is read"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 120,
+  "example": "{\"image\": \"work/extracted/screenshot 12.png\"}",
+  "optional_python": [
+    "PIL"
+  ],
+  "use": {
+    "extensions": [
+      ".png",
+      ".jpg",
+      ".jpeg",
+      ".bmp",
+      ".gif",
+      ".webp"
+    ],
+    "magic": [
+      {
+        "offset": 0,
+        "hex": "89504e470d0a1a0a"
+      }
+    ]
+  },
+  "by": "maintainer",
+  "at": "2026-11-13T12:00:00.000Z",
+  "version": 1,
+  "sha256": "772471b700dbfafee7fa220ebbd9be255b43b9fd4b2392755207920dea15ddaf"
+}

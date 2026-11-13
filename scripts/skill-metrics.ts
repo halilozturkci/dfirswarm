@@ -4,7 +4,7 @@
  * tool jobs a seat ran while holding a note on that tool, and how often a
  * seat loaded a note again after its context was compacted.
  *
- * The share is the measure of the skills experiment (Batman III: a seat
+ * The share is the measure of the skills experiment (one case: a seat
  * held the note on the tool it ran for 5 of 55 tool jobs on one run): a tool
  * job is a `job_run` that names a tool; it counts as covered when, before it,
  * the seat loaded a skill whose front matter lists that tool, or was shown

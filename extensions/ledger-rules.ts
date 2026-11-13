@@ -1302,7 +1302,7 @@ export async function imageReads(sandboxRoot: string): Promise<Map<string, Set<s
 export type NegativeFields = { control?: Array<{ ref: string; found: string }>; images_read?: string[]; images_unread?: Array<{ job: string; dir: string; total: number; unread: string[] }> };
 
 /**
- * What a negative rests on, beyond its refs (docs: the review of the Batman
+ * What a negative rests on, beyond its refs (docs: the review of the one case
  * III runs, I-22 and I-07).
  *
  * A negative from the seat's own scanner needs a control: a search that
@@ -4332,7 +4332,7 @@ export const PREMISE_CITERS_MIN = 5;
  * The findings a run stands on that nobody checked: a standing finding at
  * high confidence, recorded by one seat, attested by no other and under no
  * dispute, that at least PREMISE_CITERS_MIN later standing entries cite (five:
- * on the five Batman III ledgers read for it most findings are high and
+ * on the five one case ledgers read for it most findings are high and
  * unreviewed, two citers named 26 to 51 of them a run, five names 1 to 13): by
  * a link (rel supports or derived_from), as support of an answer, among a
  * coverage record's results, or as E-<seq> in what they say. On the run

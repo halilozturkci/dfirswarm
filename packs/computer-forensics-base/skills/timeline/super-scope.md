@@ -1,7 +1,7 @@
 ---
 id: timeline/super-scope
 title: Parsers, zone and export for a Plaso timeline
-when: Choosing parsers, giving a time zone, or making another export from a storage file.
+when: Choosing parsers, a zone, or another export.
 needs: []
 tools: [timeline_super]
 requires_host: [log2timeline, psort]

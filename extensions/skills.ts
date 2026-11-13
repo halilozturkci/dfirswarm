@@ -412,7 +412,7 @@ export async function readSkillFile(pack: PackRef, id: string): Promise<SkillFil
  * A card is a note's few lines a seat must not miss, shown with the result of a
  * call to one of the tools the note names (`tools:`) when the seat does not hold
  * the note: the method comes to the call instead of waiting to be asked for.
- * Pull alone did not reach the open models of the Batman III runs: 5 of 8 seats
+ * Pull alone did not reach the open models of the runs of one case: 5 of 8 seats
  * of the run sf4406b never loaded a note, and 5 of its 55 pack-tool calls (9 %)
  * came from a seat that held the tool's note (48 of 65, 74 %, on a Codex run).
  * Its ad1_extract errors were what evidence/ad1 says. Once per note and seat in
@@ -569,7 +569,7 @@ export type Located = {
  * "ransomware" of ransomware-response), its words up to a dash
  * ("computer-forensics"), and the namespace its router sits in (base/router,
  * windows/router), which is the name the index shows a seat when it is over
- * budget. 24 of 25 failed loads in three Batman III runs were an id with one
+ * budget. 24 of 25 failed loads in three runs of one case were an id with one
  * of these in front, as `base:evidence/ad1` or `base/evidence/ad1`. A part of a
  * word ("lin", "comp") is no pack's name.
  */

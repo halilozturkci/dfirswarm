@@ -1,7 +1,7 @@
 ---
 id: evidence/verify
 title: Establish evidence identity, integrity and provenance
-when: Before substantive examination, after an integrity concern, and before reporting.
+when: Before examination, after an integrity concern, before reporting.
 needs: []
 tools: [check_inputs, image_layout, image_verify]
 requires_host: [ewfinfo, ewfverify]

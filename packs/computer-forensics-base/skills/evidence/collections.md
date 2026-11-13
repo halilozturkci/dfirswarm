@@ -1,6 +1,6 @@
 ---
 id: evidence/collections
-title: Establish what a logical collection actually contains
+title: What a logical collection contains
 when: Evidence arrives as copied files, an archive or an AD1 logical image.
 needs: []
 tools: [check_inputs, file_type]
