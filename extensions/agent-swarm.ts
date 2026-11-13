@@ -2747,7 +2747,7 @@ export default function (pi: ExtensionAPI) {
       const job = (last.job ?? {}) as Record<string, unknown>;
       return { ok: job.state === "committed" && (job.status === undefined || job.status === "ok"), job: id, result: { ...job, ...(last.stdout ? stdoutWithNote(id, last.stdout) : {}), ...leadNote, ...reuse } };
     }
-    return { ok: true, job: id, result: { job: id, state: last.job?.state, note: `still ${last.job?.state === "accepted" ? "queued" : "running"}; a post tagged result will say when it is done (your wait wakes on it)`, ...leadNote, ...reuse } };
+    return { ok: true, job: id, result: { job: id, state: last.job?.state, note: typeof (last.job as { waiting?: unknown } | undefined)?.waiting === "string" ? String((last.job as { waiting?: unknown }).waiting) : `still ${last.job?.state === "accepted" ? "queued" : "running"}; a post tagged result will say when it is done (your wait wakes on it)`, ...leadNote, ...reuse } };
   }
   pi.registerTool({
     name: "job_run",

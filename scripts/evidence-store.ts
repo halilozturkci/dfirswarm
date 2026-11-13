@@ -523,7 +523,12 @@ export async function resolveRef(sandbox: string, ref: string, opts: ResolveOpti
     const rel = slash < 0 ? "" : value.slice(slash + 1);
     if (!/^[a-z0-9-]{1,64}$/.test(id)) return { ok: false, ref, reason: `${id} is not a ${kind} id` };
     const found = await readManifest(join(kind === "job" ? P.jobs : P.imports, id, "manifest.json"));
-    if (!found) return { ok: false, ref, reason: `${kind} ${id} has no sealed manifest` };
+    if (!found) {
+      // A job that ran and waits for its seal is not a job that left nothing: say which, so the seat waits instead of re-running it.
+      const state = kind === "job" ? await readFile(join(P.jobs, id, "job.json"), "utf8").then((t) => String((JSON.parse(t) as { state?: unknown }).state ?? "")).catch(() => "") : "";
+      const waits = state === "finished" || state === "fenced" ? `: it has finished and its output is waiting to be sealed into the store (state ${state}); cite it again after its result post` : state === "running" || state === "accepted" ? `: it has not finished (state ${state})` : "";
+      return { ok: false, ref, reason: `${kind} ${id} has no sealed manifest${waits}` };
+    }
     const base = `${kind === "job" ? "store/jobs" : "store/imports"}/${id}`;
     // A job's own outcome travels with what it left: a failed job's kept output is citable, and said to be.
     const status = kind === "job" ? await jobStatus(join(P.jobs, id)) : undefined;

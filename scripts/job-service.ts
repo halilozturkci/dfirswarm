@@ -1735,6 +1735,8 @@ export class JobService {
     if (job.requester.agent === DERIVED) this.derivedSpent.push({ at: Date.now(), s: (Date.now() - started) / 1000 });
     await this.journal.append({ type: "job_finished", job: job.id, attempt: job.attempt, exit, status, ...(reason ? { reason } : {}), duration_ms: Date.now() - started, ...(result.digest ? { image_digest: result.digest } : {}), ...(result.boot_retry ? { boot_retry: result.boot_retry } : {}), ...(result.create_ms !== undefined ? { create_ms: result.create_ms } : {}) });
     Object.assign(job, { state: "finished", exit, status, reason, finished_at: new Date().toISOString(), ...(result.digest ? { image_digest: result.digest } : {}) });
+    // job.json says what the job is at each step, not only at its commit: a job waiting to be sealed read "running" for hours (the run s17fdfe).
+    await this.project(job).catch(() => undefined);
     await this.workerHealth(job, exit === null && !cancelled && !stopped ? (result.error ?? "the worker did not report an exit status") : null);
     await this.journal.append({ type: "job_fenced", job: job.id, attempt: job.attempt, fenced: result.fenced, ...(result.fence_error ? { error: result.fence_error } : {}) });
     if (!result.fenced) {
@@ -1745,6 +1747,7 @@ export class JobService {
       return;
     }
     job.state = "fenced";
+    await this.project(job).catch(() => undefined);
     maybeCrash("job:fenced");
     await this.commit(job, { status, exit, reason });
   }
@@ -2534,6 +2537,28 @@ export class JobService {
     for (const j of this.jobs.values()) if (j.state === "running") await this.progress(j.id).catch(() => null);
   }
 
+  /**
+   * Why a job that is not done is not done yet, in words for the seat that waits: queued behind what, or finished and
+   * waiting to be sealed behind how many. Undefined for a job that runs or is done. A job whose output waits for the
+   * store read "accepted", "fenced" or "still running" (4,443 seat-seconds of such answers in one run), and seats
+   * cancelled, re-ran and recorded "sealed nothing" on it.
+   */
+  waitWords(job: JobRecord): string | undefined {
+    const others = [...this.jobs.values()].filter((j) => j.id !== job.id);
+    const sealing = others.filter((j) => j.state === "finished" || j.state === "fenced");
+    const biggest = (): string => (sealing.length ? `${sealing.length} finished job(s) are being sealed into the store` : "");
+    if (job.state === "accepted") {
+      const ahead = Math.max(0, this.queue.indexOf(job.id));
+      const busy = this.running.size >= this.o.workers;
+      return `queued, not started: ${ahead} job(s) ahead of it${busy ? `, and all ${this.o.workers} workers are busy` : ""}${biggest() ? ` (${biggest()}, which holds a worker until it ends)` : ""}. It will start by itself; a post tagged result says when it is done`;
+    }
+    if (job.state === "finished" || job.state === "fenced") {
+      const ahead = sealing.filter((j) => (j.finished_at ?? "") < (job.finished_at ?? "")).length;
+      return `finished${job.exit !== undefined && job.exit !== null ? ` (exit ${job.exit})` : ""}${job.finished_at ? ` at ${job.finished_at}` : ""}, waiting to be sealed into the store: ${ahead} job(s) ahead of it. Its output cannot be cited or read as job:${job.id}/... until then; it is not lost, and running it again or cancelling it gains nothing. A post tagged result says when it is sealed`;
+    }
+    return undefined;
+  }
+
   /** A job's state for its requester (or anyone: jobs are the run's, not private), with a page of its stdout. */
   async status(agent: string, id: string, o: { offset?: number; limit?: number; cancel?: boolean; wait?: number } = {}): Promise<{ ok: true; job: JobRecord; stdout?: { offset: number; bytes: number; total: number; text: string; next: number | null; path: string }; progress?: JobProgress } | { ok: false; reason: string }> {
     if (!JOB_ID.test(id)) return { ok: false, reason: `${id} is not a job id` };
@@ -2893,10 +2918,11 @@ export function sensitiveWords(job: Pick<JobRecord, "id" | "sensitive">): string
  * files it wrote (every one is in its manifest, named), the tail of stderr
  * when it failed (all of it is in stderr.log, named), and how to cite it.
  */
-export async function jobView(S: string, job: JobRecord, o: { files?: number } = {}): Promise<Record<string, unknown>> {
+export async function jobView(S: string, job: JobRecord, o: { files?: number; waiting?: string } = {}): Promise<Record<string, unknown>> {
   const view: Record<string, unknown> = {
     job: job.id,
     state: job.state,
+    ...(o.waiting ? { waiting: o.waiting } : {}),
     ...(job.status ? { status: job.status } : {}),
     ...(job.reason ? { reason: job.reason } : {}),
     kind: job.spec.kind,

@@ -13,7 +13,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlink
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { boundInputSets, copyInputsManifest, DERIVED, JOB_INPUTS_MANIFEST, JOB_INPUTS_MANIFEST_MAX, JobService, missingOf, SHORT_JOB_SECONDS, type JobServiceOptions } from "../scripts/job-service.ts";
+import { boundInputSets, copyInputsManifest, DERIVED, JOB_INPUTS_MANIFEST, JOB_INPUTS_MANIFEST_MAX, JobService, jobView, missingOf, SHORT_JOB_SECONDS, type JobServiceOptions } from "../scripts/job-service.ts";
 import { storePaths, verifyJournalText } from "../scripts/evidence-store.ts";
 import { listInputs, localWorker, mountedWorker } from "./job-service-worker.ts";
 import type { WorkerSpec } from "../scripts/vm.ts";
@@ -203,13 +203,19 @@ test("a failed job keeps what it wrote, a timed-out one says so, and a peer cann
   const long = await svc.submit("a1", { kind: "command", command: "sleep 1", inputs: [] });
   const queued = await svc.submit("a1", { kind: "command", command: "echo never", inputs: [] });
   assert.ok(long.ok && queued.ok);
+  // Why it waits, in words: queued behind a busy worker; and a job that finished and waits for its seal says that, never "running".
+  assert.match(svc.waitWords(queued.job) ?? "", /^queued, not started: 0 job\(s\) ahead of it, and all 1 workers are busy/);
+  const sealing = { ...queued.job, state: "finished" as const, exit: 0, finished_at: "2026-01-01T00:00:00.000Z" };
+  assert.match(svc.waitWords(sealing) ?? "", /^finished \(exit 0\) at 2026-01-01T00:00:00.000Z, waiting to be sealed into the store: 0 job\(s\) ahead of it\. .*running it again or cancelling it gains nothing/);
+  assert.equal((await jobView(S, sealing, { waiting: svc.waitWords(sealing) })).waiting, svc.waitWords(sealing));
   const other = await svc.status("a2", queued.job.id, { cancel: true });
   assert.equal(other.ok, false, "only the requester cancels");
   const mine = await svc.status("a1", queued.job.id, { cancel: true });
   assert.ok(mine.ok);
   assert.equal(mine.ok && mine.job.state, "cancelled", "the answer to the cancel says so");
   assert.equal((await until(svc, queued.job.id)).state, "cancelled");
-  await until(svc, long.job.id);
+  const done = await until(svc, long.job.id);
+  assert.equal(svc.waitWords(done), undefined, "a job that is done waits for nothing");
   assert.ok(!posts.some(([, body]) => body.includes(`Job ${queued.job.id} `)), "the agent that cancelled it is not told again by post");
   await svc.stop("test over");
 });

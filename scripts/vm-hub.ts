@@ -623,7 +623,7 @@ export function boardTable(hub: {
   // job's output (a page of stdout, the tail of stderr), a note of that for
   // the access record. Whether the job is sensitive is for the hub to say.
   const shown = async (who: string, fn: string, job: Parameters<typeof jobView>[1], stdout?: { offset: number; bytes: number; total: number; path: string }) => {
-    const view = await jobView(S, job);
+    const view = await jobView(S, job, { waiting: hub.jobs?.()?.waitWords(job) });
     if (hub.accessed) {
       if (stdout) await hub.accessed(who, { fn, job: job.id, part: "stdout", path: stdout.path, offset: stdout.offset, bytes: stdout.bytes, total: stdout.total }).catch(() => undefined);
       const err = view.stderr as { tail?: string; bytes?: number } | undefined;
