@@ -61,6 +61,7 @@ import * as L from "./leads.ts";
 import * as NB from "./negative-bar.ts";
 import * as P from "./protocol.ts";
 import { boundItems } from "../scripts/reply-bound.ts";
+import { firstLine } from "./answer-format.ts";
 
 export const FINISH_LOG = "leads/finish.jsonl";
 /** How a done that is not the coordinator's is answered: quietly, never as a refusal. */
@@ -1644,6 +1645,8 @@ export async function finishHeader(sandboxRoot: string, me: string): Promise<str
   if (phase) await syncPhase(sandboxRoot, phase).catch(() => false);
   if (phase?.assembling) act += mine ? " ASSEMBLING: you assemble the finish; another seat's answer revision is admitted only with material (why it changes a conclusion); yours are free." : ` ASSEMBLING by ${phase.coordinator}: an answer revision from another seat is admitted only with material (why it changes a conclusion); a rewording or a restatement is not recorded now.`;
   if (mine) {
+    const differs = await reportCheck(sandboxRoot, lease.report).catch(() => [] as string[]);
+    if (differs.length) act += ` The report and the ledger differ in ${differs.length} place(s) (finish status lists them under report_against_ledger): bring them together before done.`;
     const late = await lateItems(sandboxRoot, me, lease.report);
     const digest = await reportDigest(sandboxRoot, lease.report);
     act += late.length ? ` Late against the report, each for your typed resolution, all in one call (finish resolve with items, generation ${lease.generation}, digest ${(digest ?? "").slice(0, 12)}): ${late.map((x) => (x.kind === "post" ? `post #${x.id} (${x.tag}) by ${x.by}` : `objection ${x.id} by ${x.by}: ${x.why}`)).join("; ")}.` : r.ready ? " Call done." : "";
@@ -1682,9 +1685,42 @@ export async function recordCheck(sandboxRoot: string, by: string, revision: str
  * against the report. What is late needs the lease's boundary: before a
  * coordinator's prepare (or done) there is none, and nothing is listed.
  */
+/**
+ * A report held against the ledger: each question's standing answer whose value's first line the report does not hold,
+ * and each E-<n> the report cites that the ledger does not have. A run's report held six exact strings its ledger had
+ * as sentences (s082123), another cited E-97 in a ledger that ended at E-95, a third said "pending" twelve minutes
+ * after the answer was recorded. Pure: `answers` are the standing answers, `maxSeq` the ledger's last entry.
+ */
+export function reportAgainstLedger(report: string, answers: ReadonlyArray<{ section: string; seq: number; value: string }>, maxSeq: number): string[] {
+  const out: string[] = [];
+  const flat = report.replace(/[*_`]/g, "").replace(/\s+/g, " ").toLowerCase();
+  for (const a of answers) {
+    const first = firstLine(a.value);
+    if (!first) continue;
+    const want = first.replace(/[*_`]/g, "").replace(/\s+/g, " ").toLowerCase();
+    if (!flat.includes(want)) out.push(`the report does not hold ${a.section}'s standing answer (E-${a.seq}): its value's first line, ${first.length > 120 ? `${first.slice(0, 117)}...` : first}, is not in it; the report and the ledger must say the same, so bring one to the other`);
+  }
+  const cited = new Set([...report.matchAll(/\bE-(\d{1,6})\b/g)].map((m) => Number(m[1])));
+  const missing = [...cited].filter((n) => n > maxSeq || n < 1).sort((x, y) => x - y);
+  if (missing.length) out.push(`the report cites ${missing.slice(0, 10).map((n) => `E-${n}`).join(", ")}${missing.length > 10 ? ` and ${missing.length - 10} more` : ""}, which the ledger does not have (its last entry is E-${maxSeq})`);
+  return out;
+}
+
+/** The standing report held against the standing answers, or [] with no report to read. */
+export async function reportCheck(sandboxRoot: string, report: string | null | undefined): Promise<string[]> {
+  if (!report) return [];
+  const bytes = await P.readSandboxFile(sandboxRoot, report).catch(() => null);
+  if (!bytes) return [];
+  const entries = await P.readLedger(sandboxRoot).catch(() => [] as P.LedgerEntry[]);
+  const replaced = P.supersededBy(entries);
+  const answers = entries.filter((e) => e.kind === "answer" && !replaced.has(e.seq) && String(e.section ?? "").startsWith("question:")).map((e) => ({ section: String(e.section), seq: e.seq, value: String(e.value ?? "") }));
+  return reportAgainstLedger(Buffer.from(bytes.bytes).toString("utf8"), answers, entries.reduce((m, e) => Math.max(m, e.seq), 0));
+}
+
 export async function finishStatus(ctx: P.SwarmContext): Promise<Record<string, unknown>> {
   const r = await readiness(ctx.sandboxRoot);
   const st = await readFinish(ctx.sandboxRoot);
+  const reportItems = await reportCheck(ctx.sandboxRoot, st.lease?.report).catch(() => [] as string[]);
   const digest = await reportDigest(ctx.sandboxRoot, st.lease?.report);
   const review = await reportReview(ctx.sandboxRoot, st).catch(() => null);
   const last = st.checks.at(-1);
@@ -1707,6 +1743,8 @@ export async function finishStatus(ctx: P.SwarmContext): Promise<Record<string, 
     // Every review that stands for this version (on it, or carried over from an earlier one whose sections it covered are unchanged), and those asked again on what changed.
     ...(review ? { reviews: { ...reviewSummary(review), invite: reviewInvite(review), ...(st.carries.some((c) => c.digest === review.digest && c.report === review.report) ? { carry: st.carries.filter((c) => c.digest === review.digest && c.report === review.report).at(-1)!.seq } : {}) } } : {}),
     late: st.lease ? await lateItems(ctx.sandboxRoot, st.lease.holder, st.lease.report) : [],
+    // The report held against the ledger: where they say different things, for the coordinator to bring them together before done.
+    ...(reportItems.length ? { report_against_ledger: reportItems } : {}),
     chain: st.chain.ok ? "intact" : `BROKEN at line ${st.chain.broken_at} (${st.chain.reason})`,
     ...(existsSync(join(ctx.sandboxRoot, FINISH_LOG)) ? {} : { note: "no finish act yet" }),
   };
