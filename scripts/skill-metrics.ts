@@ -39,6 +39,7 @@ export function skillMetrics(events: readonly P.SwarmEvent[]): SkillMetrics {
   const out: SkillMetrics = { recorded: false, loads: 0, failed_loads: 0, already_loaded: 0, cards: 0, seats: {}, tool_jobs: 0, tool_jobs_covered: 0, covered_share: null, uncovered_by_tool: {}, compactions_after_loads: 0, reloaded_after_compaction: 0 };
   // Per seat: the tools its loaded notes or cards name since its last compaction, the ids it loaded, and whether a compaction waits for a reload.
   const held = new Map<string, Set<string>>();
+  const carded = new Map<string, Set<string>>();
   const ids = new Map<string, Set<string>>();
   const loadedSinceCompact = new Map<string, boolean>();
   const waiting = new Map<string, boolean>();
@@ -84,9 +85,10 @@ export function skillMetrics(events: readonly P.SwarmEvent[]): SkillMetrics {
       const tool = String(r.args?.tool ?? "");
       // A card of one note (id) puts its rules beside the call; a list of notes names them only.
       if (tool && r.args?.id) {
-        const tools = held.get(agent) ?? new Set<string>();
+        // A card is shown once in the run and its rules ride on every hand-off after: it covers the tool from then on.
+        const tools = carded.get(agent) ?? new Set<string>();
         tools.add(tool);
-        held.set(agent, tools);
+        carded.set(agent, tools);
       }
       continue;
     }
@@ -103,7 +105,7 @@ export function skillMetrics(events: readonly P.SwarmEvent[]): SkillMetrics {
       const tool = typeof r.args?.tool === "string" ? r.args.tool : "";
       if (!tool) continue;
       out.tool_jobs += 1;
-      if (held.get(agent)?.has(tool)) out.tool_jobs_covered += 1;
+      if (held.get(agent)?.has(tool) || carded.get(agent)?.has(tool)) out.tool_jobs_covered += 1;
       else out.uncovered_by_tool[tool] = (out.uncovered_by_tool[tool] ?? 0) + 1;
     }
   }

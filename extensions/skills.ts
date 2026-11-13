@@ -1254,6 +1254,9 @@ export function registerSkills(pi: ExtensionAPI, deps: SkillsDeps): SkillsHandle
   let notesByTool: Promise<Map<string, Array<{ pack: PackRef; id: string; spread: number }>>> | null = null;
   /** Notes whose card this context has shown: a compaction empties it. */
   const cardsShown = new Set<string>();
+  /** The tools whose card this seat was shown in this run (never cleared), and the cards' words by note, to carry across a compaction. */
+  const cardsEver = new Set<string>();
+  const cardsHeld = new Map<string, string>();
   /** Each note's card, by its key, once read: the hand-off header's cards are taken from here (it is written without a wait). */
   const cardText = new Map<string, string>();
 
@@ -1321,6 +1324,11 @@ export function registerSkills(pi: ExtensionAPI, deps: SkillsDeps): SkillsHandle
     if (cardsMode === "on") {
       const cards = ids.slice().reverse().map((k) => [k, cardText.get(k)] as const).filter((x): x is readonly [string, string] => Boolean(x[1])).slice(0, HANDOFF_CARDS_MAX);
       if (cards.length) lines.push(`Cards of the notes you were working with (the whole note: skill(id)):\n${cards.map(([k, c]) => `- ${k}:\n${c.split("\n").map((l) => `  ${l}`).join("\n")}`).join("\n")}`);
+      // The rules shown with a tool's first call are not shown again in this run, so they are carried here: the last
+      // HANDOFF_CARDS_MAX tools' cards, without the ones just listed.
+      const listed = new Set(cards.map(([k]) => k.split(":").pop()));
+      const shown = [...cardsHeld.entries()].filter(([ref]) => !listed.has(ref.split(":").pop())).slice(-HANDOFF_CARDS_MAX);
+      if (shown.length) lines.push(`Rules of the tools you have run (shown once with each tool's first call; the whole note: skill(id)):\n${shown.map(([ref, c]) => `- ${ref}:\n${c.split("\n").map((l) => `  ${l}`).join("\n")}`).join("\n")}`);
     }
     // A prompt the extension had to add the index to loses it with the run a hand-off starts: it comes back here.
     if (sectionText && (source === "extension" || source === "stale")) lines.push(`The index of this run's packs (your prompt no longer carries it):\n${sectionText}`);
@@ -1733,22 +1741,19 @@ export function registerSkills(pi: ExtensionAPI, deps: SkillsDeps): SkillsHandle
       const notes = (await (notesByTool ??= packIndexes().then((all) => toolNotes(all)))).get(tool);
       if (!notes?.length) return undefined;
       const refOf = (n: { pack: PackRef; id: string }) => (notes.filter((x) => x.id === n.id).length > 1 ? `${n.pack.id}:${n.id}` : n.id);
-      if (notes.length > CARD_TOOL_SPREAD) {
-        // A generic tool (regkv, evtx_query, pe_info): no one note is its method, so the notes that name it are listed, once a context, unless the seat holds one.
-        const listKey = `tool:${tool}`;
-        if (cardsShown.has(listKey) || notes.some((n) => ledger.get(SkillLedger.key(n.pack.id, n.id)))) return undefined;
-        cardsShown.add(listKey);
-        const shown = notes.slice(0, NOTES_LISTED_MAX).map(refOf);
-        const words = `Notes that name ${tool}: ${shown.join(", ")}${notes.length > shown.length ? ` and ${notes.length - shown.length} more` : ""}. Load the one for what you are reading: skill(id).`;
-        await deps.trace((ctx as unknown as { cwd: string }).cwd, "skill_card", { tool, ids: shown }, { ok: true, listed: notes.length, tokens: estimateTokens(words), turn: deps.turns() }).catch(() => undefined);
-        return { content: [...content, { type: "text" as const, text: words }] };
-      }
-      const pick = notes.find((n) => {
-        const key = SkillLedger.key(n.pack.id, n.id);
-        return !cardsShown.has(key) && !ledger.get(key);
-      });
-      if (!pick) return undefined;
+      // A call that was refused or failed before it ran gets no card: seven of 39 cards of one run were pinned to a refusal.
+      if ((event as unknown as { isError?: boolean }).isError) return undefined;
+      // A generic tool (regkv, evtx_query, pe_info) has no one note that is its method: nothing is shown. The bare list
+      // of note ids it used to get ("Notes that name regkv: ... and 11 more") was 9 of those 39 and was followed by no load.
+      if (notes.length > CARD_TOOL_SPREAD) return undefined;
+      // One card a tool, the most specific note's, once in the run for this seat: not again after a compaction (20 of 39
+      // were the same card), and never a second note's for the same tool (the second picks were off the subject).
+      const toolKey = `tool:${tool}`;
+      if (cardsEver.has(toolKey)) return undefined;
+      const pick = notes[0]!;
       const key = SkillLedger.key(pick.pack.id, pick.id);
+      if (ledger.get(key)) return undefined;
+      cardsEver.add(toolKey);
       cardsShown.add(key);
       let card = cardText.get(key);
       if (!card) {
@@ -1758,9 +1763,11 @@ export function registerSkills(pi: ExtensionAPI, deps: SkillsDeps): SkillsHandle
         cardText.set(key, card);
       }
       const ref = refOf(pick);
-      const words = `Skill card for ${tool}: \`${ref}\` (${pick.pack.id}). The whole note: skill('${ref}').\n${card}`;
+      cardsHeld.set(ref, card);
+      const words = `Before you read this result, the rules of ${tool} (from the note \`${ref}\`, ${pick.pack.id}; the whole note: skill('${ref}')):\n${card}`;
       await deps.trace((ctx as unknown as { cwd: string }).cwd, "skill_card", { tool, id: pick.id }, { ok: true, pack: pick.pack.id, tokens: estimateTokens(words), turn: deps.turns() }).catch(() => undefined);
-      return { content: [...content, { type: "text" as const, text: words }] };
+      // First in the result, where it is read: 24 of 39 cards sat in the last fifth of the result they came with.
+      return { content: [{ type: "text" as const, text: words }, ...content] };
     } catch {
       return undefined;
     }

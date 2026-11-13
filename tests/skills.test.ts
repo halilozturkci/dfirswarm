@@ -692,7 +692,7 @@ test("the hand-off header lists the skill bodies the seat held before its contex
   assert.match(withSkills, /Skill bodies a compaction took out of your context: pack-a:evidence\/one, pack-b:shared\/dup\./);
 });
 
-test("a note's card comes with a call to one of its tools, for a seat that does not hold the note: once a context, again after a compaction, none for a generic tool, and the hand-off header carries the cards of the notes it took out", async () => {
+test("a note's card comes first in the result of the first call to its tool, once in the run for a seat that does not hold the note: never with a refused call, never a list for a generic tool, and its rules ride on the hand-off", async () => {
   const root = await mkdtemp(join(tmpdir(), "skills-packs-"));
   try {
     const AD1 = "Use when evidence is an AD1 image. Not for a disk image.\n\nLong prose about the format that the card leaves out.\n\n    job_run tool=ad1_extract args={\"image\": \"inputs/case.ad1\"} inputs=[\"input:case.ad1\"]\n\nDeclare every segment.\n\n**Does not show.** That the source held nothing else.";
@@ -724,27 +724,35 @@ test("a note's card comes with a call to one of its tools, for a seat that does 
     const rows: Array<{ tool: string; args: Record<string, unknown>; result: Record<string, unknown> }> = [];
     const handle = registerSkills(fake as never, { packDirs: [base], agentId: () => "agent00", trace: async (_c, tool, args, result) => void rows.push({ tool, args, result: result as Record<string, unknown> }), turns: () => 0, fault: async () => undefined });
     const ctx = { cwd: sandbox, sessionManager: { buildContextEntries: () => [], getBranch: () => [] } };
-    const result = async (toolName: string, input: Record<string, unknown>) => {
+    const result = async (toolName: string, input: Record<string, unknown>, isError = false) => {
       const [h] = handlers.get("tool_result") ?? [];
-      const out = (await h!({ type: "tool_result", toolName, input, content: [{ type: "text", text: "Job j000001 done" }] }, ctx)) as { content?: Array<{ text: string }> } | undefined;
+      const out = (await h!({ type: "tool_result", toolName, input, isError, content: [{ type: "text", text: "Job j000001 done" }] }, ctx)) as { content?: Array<{ text: string }> } | undefined;
       return out?.content?.map((c) => c.text).join("\n") ?? null;
     };
+    // A refused call gets no card, and does not spend the tool's one card.
+    assert.equal(await result("job_run", { tool: "ad1_extract", args: {} }, true), null, "no card with a refusal");
     const first = await result("job_run", { tool: "ad1_extract", args: {} });
-    assert.ok(first?.startsWith("Job j000001 done\nSkill card for ad1_extract: `evidence/ad1` (computer-forensics-base). The whole note: skill('evidence/ad1')."), String(first));
+    assert.ok(first?.startsWith("Before you read this result, the rules of ad1_extract (from the note `evidence/ad1`, computer-forensics-base; the whole note: skill('evidence/ad1')):\nAn AD1 image is a collection."), String(first));
+    assert.ok(first?.endsWith("Job j000001 done"), "the card comes first, the result after it");
     assert.ok(first?.includes("Declare every segment") === false && first.includes("**Does not show.**"));
     assert.deepEqual(rows.at(-1)?.tool, "skill_card");
     assert.deepEqual(rows.at(-1)?.args, { tool: "ad1_extract", id: "evidence/ad1" });
-    assert.equal(await result("job_run", { tool: "ad1_extract" }), null, "once a context");
-    assert.equal(await result("catalog_search", { query: "x" }), "Job j000001 done\nNotes that name catalog_search: data/a, data/b, evidence/ad1, evidence/e01. Load the one for what you are reading: skill(id).", "a tool four notes name is a generic one: the notes are listed, the most specific first");
-    assert.equal(await result("catalog_search", { query: "y" }), null, "once a context");
-    assert.match((await result("ewf_verify", {}))!, /Skill card for ewf_verify: `evidence\/e01` .*\nVerify the set first with ewf_verify/, "a note's own card: line");
-    // A note the seat holds shows no card; a compaction that takes it out shows it again, and the hand-off header carries it.
+    assert.equal(await result("job_run", { tool: "ad1_extract" }), null, "once");
+    // A tool four notes name is a generic one: no note is its method, and no list of ids is shown.
+    assert.equal(await result("catalog_search", { query: "x" }), null);
+    assert.equal(rows.filter((r) => r.tool === "skill_card").length, 1);
+    assert.match((await result("ewf_verify", {}))!, /^Before you read this result, the rules of ewf_verify \(from the note `evidence\/e01`.*\nVerify the set first with ewf_verify/, "a note's own card: line");
+    // A compaction does not bring the card again (20 of one run's 39 cards were the same card after each compaction): its rules ride on the hand-off.
     for (const h of handlers.get("session_compact") ?? []) await h({ type: "session_compact" }, ctx);
+    assert.equal(await result("job_run", { tool: "ad1_extract" }), null, "not again after a compaction");
+    assert.match(handle.handoffLine(), /Rules of the tools you have run \(shown once with each tool's first call; the whole note: skill\(id\)\):\n- evidence\/ad1:\n  An AD1 image is a collection\.\n  Use when evidence/);
+    assert.match(handle.handoffLine(), /- evidence\/e01:\n  Verify the set first/);
+    // A note the seat loaded and a compaction took out is carried as before, and is not listed twice.
     await tools.get("skill")!.execute("c1", { id: "evidence/ad1" }, undefined, undefined, { cwd: sandbox });
-    assert.equal(await result("job_run", { tool: "ad1_extract" }), null, "the seat holds the note");
     for (const h of handlers.get("session_compact") ?? []) await h({ type: "session_compact" }, ctx);
-    assert.match(handle.handoffLine(), /Cards of the notes you were working with \(the whole note: skill\(id\)\):\n- computer-forensics-base:evidence\/ad1:\n  An AD1 image is a collection\.\n  Use when evidence/);
-    assert.match((await result("job_run", { tool: "ad1_extract" }))!, /Skill card for ad1_extract/, "the compaction took the note out: the card comes again");
+    const line = handle.handoffLine();
+    assert.match(line, /Cards of the notes you were working with \(the whole note: skill\(id\)\):\n- computer-forensics-base:evidence\/ad1:\n  An AD1 image is a collection\./);
+    assert.equal(line.split("An AD1 image is a collection.").length - 1, 1, "each card once");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
