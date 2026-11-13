@@ -213,6 +213,7 @@ import { readToolchainAt, TOOLCHAIN_DIR } from "./toolchain.ts";
 import { installChunkedEgress } from "./vm-egress.ts";
 import { toolsListing } from "./tools-view.ts";
 import { lastKnown } from "./last-known.ts";
+import { pngForModel } from "./png-scale.ts";
 
 /** How long a read made before a model call may take before the call goes out on the last known value. */
 const PRECALL_DEADLINE_MS = 1500;
@@ -2127,6 +2128,28 @@ export default function (pi: ExtensionAPI) {
       content = [...(Array.isArray(content) ? content : []), { type: "text", text: shellTimeoutNote(limit) }];
       contentChanged = true;
       if (agentId) await logEvent(ctx.cwd, agentId, "shell_timeout", { tool: name }, { ok: true, seconds: limit.seconds, why: limit.why }).catch(() => undefined);
+    }
+    // An image a seat reads goes to the model at a size worth looking at (png-scale.ts): a large PNG is scaled to 1,568
+    // pixels on its long side, and the seat is told from what and where the original is. Other formats pass as they are.
+    if (name === "read" && Array.isArray(content) && process.env.SWARM_IMAGE_SCALE !== "off") {
+      const scaledNotes: string[] = [];
+      const next = content.map((part) => {
+        if (part.type !== "image" || part.mimeType !== "image/png" || typeof part.data !== "string") return part;
+        try {
+          const scaled = pngForModel(Buffer.from(part.data, "base64"));
+          if (!scaled) return part;
+          scaledNotes.push(`${scaled.from.width}x${scaled.from.height} (${scaled.from.bytes} bytes) to ${scaled.to.width}x${scaled.to.height}`);
+          return { ...part, data: scaled.data.toString("base64") };
+        } catch {
+          return part;
+        }
+      });
+      if (scaledNotes.length) {
+        const where = typeof input?.path === "string" ? ` The file itself is unchanged at ${input.path}.` : "";
+        content = [...next, { type: "text", text: `The image above was scaled down for viewing, from ${scaledNotes.join("; ")}.${where} For detail too small to read here (small text, a code, single pixels), crop the region at full size in a job and read the crop.` }];
+        contentChanged = true;
+        if (agentId) await logEvent(ctx.cwd, agentId, "image_scaled", { path: typeof input?.path === "string" ? input.path : undefined }, { ok: true, scaled: scaledNotes }).catch(() => undefined);
+      }
     }
     const hostSpill = details?.fullOutputPath;
     if ((name === "bash" || name === "powershell") && hostSpill && agentId) {
