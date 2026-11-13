@@ -83,3 +83,13 @@ both were refused, and seats sent the call again. In a job `max_bytes` is held t
 whole-image call stops by its budget between items instead of running into a full disk part way through a file (three jobs). Each is said
 in the answer's `adjusted`. A locator the image does not hold is answered with the nearest items the read holds, and that a locator is an
 item's address as `members.tsv` lists it, not an offset in a segment file (a seat had worked one out from a raw offset).
+
+### Fixed: the hub no longer runs out of heap when several store sweeps run at once
+
+One run's hub died of a 4 GiB heap after 90 minutes, and nothing was said before it did. Measured on a clone of that run: one store sweep's
+list of the store's 212,722 objects held 330 MB, 260 MB of it their whole paths, and three sweeps at once (the hub starts one per coverage
+record, in the background) peaked at 1.6 GB. An object now holds its directory, shared by every file of a job, and its name, joined when it
+is read; sweeps that start while a listing is made share it. Three sweeps at once now peak at 312 MB. The hub writes its memory to
+`status.json`, says a crossing of three quarters of its heap on the trace (`hub_memory_high`), and is started with a heap snapshot near its
+limit, which `swarm.sh stop` keeps under `~/.dfirswarm/diagnostics/<run>/`, out of the run. A seat told its file-history quota is spent sends
+later revisions as their hash, not their bytes.

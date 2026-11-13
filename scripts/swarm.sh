@@ -8446,7 +8446,7 @@ start_vm_hub() { # <sandbox> <hub dir> <run id> <collector socket> <agent ids...
   [[ "${vm_snapshot:-1}" -eq 1 ]] || hub_args+=(--no-snapshot)
   # The inbox page bound is read by readInbox, which for a VM runs here.
   # The custody the hub takes at the finish has the operator's deadline.
-  printf '%s' "$input" | SWARM_RUNS_DIR="$RUNS_DIR" SWARM_INBOX_PAGE_CHARS="${inbox_page_chars:-}" SWARM_VM_IMAGE_DIGEST="${vm_image_digest:-}" SWARM_CUSTODY_TIMEOUT="${custody_timeout:-${SWARM_CUSTODY_TIMEOUT:-14400}}" detach_exec node --experimental-strip-types --no-warnings "$script" \
+  printf '%s' "$input" | SWARM_RUNS_DIR="$RUNS_DIR" SWARM_INBOX_PAGE_CHARS="${inbox_page_chars:-}" SWARM_VM_IMAGE_DIGEST="${vm_image_digest:-}" SWARM_CUSTODY_TIMEOUT="${custody_timeout:-${SWARM_CUSTODY_TIMEOUT:-14400}}" detach_exec node --experimental-strip-types --no-warnings --heapsnapshot-near-heap-limit=1 --diagnostic-dir="$dir" "$script" \
     "$sandbox" --dir "$dir" --run "$run" "${hub_args[@]}" --quiet >"$sandbox/traces/vm-hub.log" 2>&1 &
   local hub_pid=$!
   echo "$hub_pid" > "$sandbox/hub.pid"
@@ -8834,6 +8834,15 @@ stop_vm_run() { # <sandbox> <run id> <snapshot 0|1>  (returns 3 when finalisatio
   if dir="$(hub_dir_of "$sandbox")"; then
     # The hub's own lines the collector did not take stay with the run.
     [[ -f "$dir/hub-spill.jsonl" && ! -L "$dir/hub-spill.jsonl" && -s "$dir/hub-spill.jsonl" ]] && cp -P "$dir/hub-spill.jsonl" "$sandbox/traces/hub-spill.jsonl" 2>/dev/null
+    # A heap snapshot a hub left when it ran out of memory (--heapsnapshot-near-heap-limit) is the operator's to read, not the run's
+    # (a hub's memory holds the seats' tokens): kept under ~/.dfirswarm/diagnostics/<run>/, 0700, and said.
+    local snap kept_snaps=0
+    for snap in "$dir"/*.heapsnapshot; do
+      [[ -f "$snap" && ! -L "$snap" ]] || continue
+      mkdir -p "$HOME/.dfirswarm/diagnostics/$run" && chmod 700 "$HOME/.dfirswarm/diagnostics" "$HOME/.dfirswarm/diagnostics/$run" 2>/dev/null
+      mv "$snap" "$HOME/.dfirswarm/diagnostics/$run/" 2>/dev/null && kept_snaps=$((kept_snaps + 1))
+    done
+    [[ "$kept_snaps" -gt 0 ]] && echo "Hub heap snapshot(s) kept: $kept_snaps in $HOME/.dfirswarm/diagnostics/$run/ (the hub ran out of memory; they hold its tokens, so they stay out of the run)." >&2
     # Only a directory this run could have made, and only once its hub has
     # gone: a hub still up keeps it (and hub.dir, hub.pid), so the next stop
     # finds the hub, waits for it and seals after it, never beside it.

@@ -259,8 +259,15 @@ export type ImportSweepRecord = {
 /** Any line of ledger/sweeps.jsonl: a coverage record's sweep, or an addition's reverse sweep. */
 export type AnySweepLine = SweepRecord | ImportSweepRecord;
 
-/** One object a sweep reads. */
-type SweepObject = { ref: string; path: string; bytes: number; key: string; mtimeMs?: number };
+/**
+ * One object a sweep reads. Its path is its directory (one string, shared by
+ * every file of a job or an import) and its name under it, joined only when
+ * it is read (objectPath): on the run s082123's store, 212,722 objects held
+ * as whole paths took 260 MB of a sweep's 330 MB, and the hub, running
+ * several sweeps at once, ran out of heap at 3.5 GB.
+ */
+type SweepObject = { ref: string; dir: string; name: string; bytes: number; key: string; mtimeMs?: number };
+const objectPath = (x: Pick<SweepObject, "dir" | "name">): string => (x.name ? join(x.dir, x.name) : x.dir);
 
 /** The sha256 of a file known by its inode, by its inode, size and time: a kept output or a job's log is written once. */
 const contentHashes = new Map<string, string>();
@@ -270,7 +277,7 @@ async function contentKey(x: SweepObject): Promise<string | null> {
   if (had) return had;
   try {
     const h = createHash("sha256");
-    for await (const chunk of createReadStream(x.path)) h.update(chunk as Buffer);
+    for await (const chunk of createReadStream(objectPath(x))) h.update(chunk as Buffer);
     const key = `sha256:${h.digest("hex")}`;
     contentHashes.set(stamp, key);
     return key;
@@ -288,7 +295,21 @@ async function contentKey(x: SweepObject): Promise<string | null> {
  * object (the run sd0e59d's records named the import, and the kept file
  * went on holding their negatives).
  */
-export async function sweepObjects(sandboxRoot: string): Promise<SweepObject[]> {
+export function sweepObjects(sandboxRoot: string): Promise<SweepObject[]> {
+  // Sweeps that start while a listing is being made share it: one list in memory, not one per sweep (the hub runs a sweep per coverage
+  // record, in the background, and a reread or a finish gate runs more). A listing is never reused once it is done: a sweep that starts
+  // after it sees what was sealed since.
+  const key = resolve(sandboxRoot);
+  let p = listing.get(key);
+  if (!p) {
+    p = listSweepObjects(sandboxRoot).finally(() => listing.delete(key));
+    listing.set(key, p);
+  }
+  return p;
+}
+const listing = new Map<string, Promise<SweepObject[]>>();
+
+async function listSweepObjects(sandboxRoot: string): Promise<SweepObject[]> {
   const out: SweepObject[] = [];
   const dirs = async (p: string) => (await readdir(p, { withFileTypes: true }).catch(() => [])).filter((d) => d.isDirectory()).map((d) => d.name);
   const manifestFiles = async (dir: string): Promise<Array<{ path: string; sha256: string; bytes: number }> | null> => {
@@ -308,22 +329,25 @@ export async function sweepObjects(sandboxRoot: string): Promise<SweepObject[]> 
   for (const id of (await dirs(jobs)).sort()) {
     const files = await manifestFiles(join(jobs, id));
     if (!files) continue;
-    for (const f of files) out.push({ ref: `job:${id}/${f.path}`, path: join(jobs, id, "out", f.path), bytes: f.bytes, key: `sha256:${f.sha256}` });
+    const dir = join(jobs, id, "out");
+    for (const f of files) out.push({ ref: `job:${id}/${f.path}`, dir, name: f.path, bytes: f.bytes, key: `sha256:${f.sha256}` });
     for (const log of ["stdout.log", "stderr.log"]) {
       const k = await fileKey(join(jobs, id, log));
-      if (k && k.bytes) out.push({ ref: `job:${id}/${log}`, path: join(jobs, id, log), ...k });
+      if (k && k.bytes) out.push({ ref: `job:${id}/${log}`, dir: join(jobs, id), name: log, ...k });
     }
   }
   // Imports: evidence added late, supplied material, a brain's sealed output.
   const imports = join(sandboxRoot, "store", "imports");
   for (const id of (await dirs(imports)).sort()) {
-    for (const f of (await manifestFiles(join(imports, id))) ?? []) out.push({ ref: `import:${id}/${f.path}`, path: join(imports, id, "out", f.path), bytes: f.bytes, key: `sha256:${f.sha256}` });
+    const dir = join(imports, id, "out");
+    for (const f of (await manifestFiles(join(imports, id))) ?? []) out.push({ ref: `import:${id}/${f.path}`, dir, name: f.path, bytes: f.bytes, key: `sha256:${f.sha256}` });
   }
   // Captures the fetch service sealed.
   const net = join(sandboxRoot, "store", "net");
   for (const k of (await dirs(net)).sort()) {
     for (const n of (await dirs(join(net, k))).sort()) {
-      for (const f of (await manifestFiles(join(net, k, n))) ?? []) out.push({ ref: `net:${k}/${n}/${f.path}`, path: join(net, k, n, f.path), bytes: f.bytes, key: `sha256:${f.sha256}` });
+      const dir = join(net, k, n);
+      for (const f of (await manifestFiles(dir)) ?? []) out.push({ ref: `net:${k}/${n}/${f.path}`, dir, name: f.path, bytes: f.bytes, key: `sha256:${f.sha256}` });
     }
   }
   // The whole outputs the harness kept under tool-output/<seat>/.
@@ -336,7 +360,7 @@ export async function sweepObjects(sandboxRoot: string): Promise<SweepObject[]> 
         if (d.isDirectory()) await walk(p, r);
         else if (d.isFile()) {
           const k = await fileKey(p);
-          if (k) out.push({ ref: `tool:${seat}/${r}`, path: p, ...k });
+          if (k) out.push({ ref: `tool:${seat}/${r}`, dir: p, name: "", ...k });
         }
       }
     };
@@ -783,7 +807,7 @@ export async function computeSweep(sandboxRoot: string, cov: Pick<LedgerEntry, "
     }
     let found: Awaited<ReturnType<typeof searchFile>>;
     try {
-      found = await searchFile(first.path, pats);
+      found = await searchFile(objectPath(first), pats);
     } catch (err) {
       for (const g of group) unsearched.push({ ref: g.ref, why: `it could not be read (${(err as Error).message})` });
       continue;
@@ -1304,7 +1328,7 @@ export async function computeImportSweep(sandboxRoot: string, addition: { seq: n
     }
     let found: Awaited<ReturnType<typeof searchFile>>;
     try {
-      found = await searchFile(first.path, pats);
+      found = await searchFile(objectPath(first), pats);
     } catch (err) {
       for (const g of group) unsearched.push({ ref: g.ref, why: `it could not be read (${(err as Error).message})` });
       continue;
