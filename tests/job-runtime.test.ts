@@ -18,7 +18,7 @@ import * as L from "../extensions/leads.ts";
 import * as T from "../scripts/job-telemetry.ts";
 import { JobService, programMissing } from "../scripts/job-service.ts";
 import { storePaths } from "../scripts/evidence-store.ts";
-import { regroup } from "../scripts/leads-cli.ts";
+import { platformStall, platformStallWords, regroup } from "../scripts/leads-cli.ts";
 import { renewSeatSecrets, validityMs, type ResolvedSecret, type VmSpec } from "../scripts/vm.ts";
 import { localWorker } from "./job-service-worker.ts";
 
@@ -178,6 +178,29 @@ test("B12: nothing moving while a job runs under a lead: its holder is nudged fi
   const all = await regroup(S, openAt + 32 * 60_000);
   assert.equal(all.posted && all.kind, "all_hands", "a running job never holds the regroup off for ever");
   assert.ok((await posts()).some((p) => /^REGROUP 1:/.test(p.body) && /Jobs running under leads \(1\)/.test(p.body)));
+  // The store is the stall: a job that finished and waits for its seal. Nobody is asked to regroup or to cancel; it is said once.
+  const base3 = await mkdtemp(join(tmpdir(), "regroup3-"));
+  dirs.push(base3);
+  const S3 = join(base3, "run");
+  await P.initSandbox(S3, { swarmId: "r4", agentIds: ["a0", "a1"], capUsd: 5, wallClockMinutes: 30 });
+  const b3 = await P.readBudget(S3);
+  await P.writeBudget(S3, { ...b3, until_solved: true, stall_minutes: 15 });
+  const lead3 = await L.openLead({ sandboxRoot: S3, agentId: "a0" }, { title: "Extract the image", why: "part 1", take: true });
+  assert.ok(lead3.ok);
+  const sealing = join(storePaths(S3).jobs, "j000048");
+  await mkdir(sealing, { recursive: true });
+  await writeFile(join(sealing, "job.json"), JSON.stringify({ id: "j000048", attempt: 1, state: "finished", exit: 0, finished_at: new Date().toISOString(), requester: { agent: "a0" }, spec: { kind: "command", timeout_seconds: 1800, command: "x", inputs: [] } }));
+  assert.ok((await L.attachJob(S3, "a0", "j000048", "L-1")).ok);
+  const open3 = Date.parse((await L.leadsSnapshot(S3)).state.events[0].at);
+  const stall = await regroup(S3, open3 + 16 * 60_000);
+  assert.equal(stall.posted && stall.kind, "platform");
+  const said = (await P.readInbox({ sandboxRoot: S3, agentId: "a1" }, { markSeen: false })).posts;
+  assert.ok(said.some((p) => /^PLATFORM STALL: nothing has been sealed for \d+ minutes, and the cause is the harness's store, not your work: 1 job\(s\) have finished and wait to be sealed \(j000048\).*do not cancel or run these jobs again/.test(p.body)), JSON.stringify(said.map((p) => p.body.slice(0, 120))));
+  assert.ok(!said.some((p) => /REGROUP/.test(p.body)), "no seat is asked to regroup over the store");
+  const stallAgain = await regroup(S3, open3 + 40 * 60_000);
+  assert.equal(stallAgain.posted, false, "said once per stall");
+  assert.deepEqual(platformStall([{ id: "j1", state: "running" }, { id: "j2", state: "committed" }]), null);
+  assert.match(platformStallWords({ jobs: Array.from({ length: 12 }, (_, i) => `j${i}`), queued: 5 }, 20), /12 job\(s\).*j7 and 4 more.*5 more wait for a worker/);
   // A run with no job running under a lead: everyone at once.
   const base2 = await mkdtemp(join(tmpdir(), "regroup2-"));
   dirs.push(base2);
