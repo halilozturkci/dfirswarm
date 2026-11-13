@@ -1630,7 +1630,9 @@ export class JobService {
     // store/, work/extracted/, inputs/ or $OUT (job-exec-refused.ts). Read
     // first: the loader's refusal to map a segment ends in exit 127, which is
     // no program missing from the image.
-    const unexecuted = failed ? await execRefused({ ctl: st.ctl, out: st.out, cwd: this.S, exit }).catch(() => null) : null;
+    // At exit 0 only the shell's line for a program in $OUT is read (a script that went on): the job is ok, and its reason says what did not run.
+    const noexec = [{ guest: this.outPath(job), host: st.out }, { guest: st.out, host: st.out }];
+    const unexecuted = failed || (exit === 0 && !cancelled && !stopped) ? await execRefused({ ctl: st.ctl, out: st.out, cwd: this.S, exit, noexec }).catch(() => null) : null;
     if (unexecuted) {
       job.exec_refused = unexecuted;
       await this.journal.append({ type: "job_exec_refused", job: job.id, attempt: job.attempt, exit, ...unexecuted });
@@ -1655,6 +1657,8 @@ export class JobService {
       stopped ??
       (exit === 124 || exit === 137
         ? `stopped at its limit of ${job.spec.timeout_seconds}s`
+        : exit === 0 && unexecuted
+          ? `exit 0, but ${execRefusedWords(unexecuted, { job: job.id, out: this.outPath(job), cwd: this.S })}`
         : exit === null
           ? result.error ?? "the worker did not report an exit status"
           : job.spec.kind === "import" && exit === 3
@@ -2745,7 +2749,7 @@ export function describe(job: JobRecord): string {
   if (job.state === "cancelled") return `Job ${job.id} (${what}) was cancelled${job.reason ? `: ${job.reason}` : ""}.`;
   const o = job.outputs;
   const files = o ? `${o.files} file(s), ${o.bytes} bytes in ${o.path}/${o.rejected ? ` (${o.rejected} link(s) or special file(s) left out, named in its manifest)` : ""}` : "no output";
-  const head = job.status === "ok" ? "done" : `${job.status}${job.reason ? ` (${job.reason})` : ""}`;
+  const head = job.status === "ok" ? `done${job.exec_refused && job.reason ? ` (${job.reason})` : ""}` : `${job.status}${job.reason ? ` (${job.reason})` : ""}`;
   const cite = job.spec.seal && job.status === "ok" ? `record again citing ${job.spec.seal.ref}: it resolves to import:${job.id}/<name>` : `cite its files as job:${job.id}/<path>`;
   const same = job.same_as?.length ? ` ${job.same_as.length} of its files are an earlier job's output byte for byte (job_status ${job.id} names them).` : "";
   return `Job ${job.id} (${what}) ${head}: ${files}; stdout and stderr whole in store/jobs/${job.id}/. job_status ${job.id} for the details; ${cite}.${job.generation ? ` Catalogued as ${job.generation}.` : ""}${same}${job.sensitive ? ` ${sensitiveWords(job)}` : ""}`;

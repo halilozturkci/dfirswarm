@@ -39,7 +39,11 @@
  * anywhere else at another status is not read here: nothing in the line tells
  * a program that could not be executed from a file that could not be written
  * (a read-only directory in $OUT), and a denied write is
- * job-write-refused.ts's. The job's stdout, its stderr and every stderr file
+ * job-write-refused.ts's. One exception, at any status, 0 included: the
+ * shell's own "line N: <path>: Permission denied" for an existing file in the
+ * job's own $OUT (writable, mounted no-exec), where a script went on after a
+ * program it copied there could not run and ended 0 (the run sf4406b), so the
+ * job is ok and its reason says what did not run. The job's stdout, its stderr and every stderr file
  * it kept in $OUT are read whole, a line at a time. Generic: no program is
  * named or recognised.
  */
@@ -108,7 +112,7 @@ export function placeOf(path: string | null, cwd: string): Place {
  * existing file under a directory a worker mounts read-only (`isFile` says
  * whether a path is one, the host's by default).
  */
-export function execRefusedIn(line: string, o: { cwd: string; exit: number | null; isFile?: (path: string) => boolean }): { error: ExecError; path: string | null } | null {
+export function execRefusedIn(line: string, o: { cwd: string; exit: number | null; isFile?: (path: string) => boolean; noexec?: ReadonlyArray<{ guest: string; host: string }> }): { error: ExecError; path: string | null } | null {
   const resolved = (named: string | null | undefined) => (!named ? null : isAbsolute(named) ? normalize(named) : resolve(o.cwd, named));
   if (line.includes(LOADER_REFUSAL)) {
     // "<program>: error while loading shared libraries: <file it could not map>: failed to map segment from shared object"
@@ -131,6 +135,16 @@ export function execRefusedIn(line: string, o: { cwd: string; exit: number | nul
   if (line.includes(DENIED)) {
     const path = resolved(pathIn(line, DENIED));
     if (path !== null && readOnlyPlaces(o.cwd).some((d) => within(path, d)) && (o.isFile ?? isRegularFile)(path)) return { error: DENIED, path };
+    // The shell's own line for a command it found and could not execute, inside a script that went on ("<script>: line 54: <path>: Permission
+    // denied", status 126 for that command and the job's own status whatever came last: the run sf4406b's j000279 printed it 26 times for
+    // a supplied program copied into $OUT, and ended 0). Read on a file that exists in the job's own $OUT, which is writable and mounted
+    // no-exec, so a denial there is no refused write.
+    const shell = /(?:^|: )line \d+: (\/[^:]+): Permission denied\s*$/.exec(line)?.[1];
+    const place = shell ? (o.noexec ?? []).find((m) => within(normalize(shell), m.guest)) : undefined;
+    if (shell && place) {
+      const host = join(place.host, normalize(shell).slice(place.guest.length));
+      if ((o.isFile ?? isRegularFile)(host)) return { error: DENIED, path: normalize(shell) };
+    }
   }
   return null;
 }
@@ -143,7 +157,7 @@ export function execRefusedIn(line: string, o: { cwd: string; exit: number | nul
  * line names the program (its stderr may have gone into a file of the job's
  * own). `cwd` is where the job started (a relative path is read from there).
  */
-export async function execRefused(o: { ctl: string; out: string; cwd: string; exit: number | null; isFile?: (path: string) => boolean }): Promise<ExecRefused | null> {
+export async function execRefused(o: { ctl: string; out: string; cwd: string; exit: number | null; isFile?: (path: string) => boolean; noexec?: ReadonlyArray<{ guest: string; host: string }> }): Promise<ExecRefused | null> {
   const seen: { first: Pick<ExecRefused, "error" | "path" | "file" | "line" | "text"> | null; lines: number; files: Set<string> } = { first: null, lines: 0, files: new Set() };
   const read = async (path: string, name: string) => {
     await eachLine(path, (line, n) => {

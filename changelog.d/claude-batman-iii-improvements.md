@@ -20,3 +20,10 @@ under the earlier rules is read again when the hub starts (sweep rules version 2
 `windows:execution/prefetch`. The index over budget shows each pack as its router (`base/router`), so a seat wrote that namespace in front.
 `skill()` now takes a whole word of a pack's id, its words up to a dash, or its router's namespace as the pack, with a slash or a colon, and
 answers with the id to use; `x:id` where no pack goes by `x` is the one pack that carries `id`. Two packs that carry it: none is chosen.
+
+### Fixed: a job that ends 0 after a program it copied into `$OUT` could not run says so
+
+A supplied program copied into `$OUT` (mounted no-exec) could not run, and a script that went on ended 0: the run's job printed
+"Permission denied" 26 times and was `ok`, with no word of why. The job is still `ok`, and its reason and its requester's post now say
+"exit 0, but a program it ran could not be executed" with the way to run it, as they do for a job that ends 126. Only the shell's own line for
+a file that exists in the job's `$OUT` is read at exit 0.
