@@ -85,34 +85,63 @@ function pieceRe(piece: string): [string, string] {
   return ["[^\\n]+?", "text"];
 }
 
-/** The lines of a value a format is looked for in: each line, and each of its spans in code marks, without list or emphasis marks. */
-function candidates(value: string): string[] {
-  const out = new Set<string>();
-  for (const line of String(value ?? "").split(/\r?\n/)) {
-    const bare = line.replace(/^\s*(?:[-*+]|\d+[.)])\s+/, "").replace(/\*\*|__/g, "").trim();
-    if (bare) out.add(bare.replace(/^`(.+)`$/, "$1").replace(/^\*(.+)\*$/, "$1").trim());
-    for (const m of line.matchAll(/`([^`]+)`/g)) out.add(m[1].trim());
-    // The span after a label ("Answer: x", "Flag: x").
-    const label = /^[^:]{1,30}:\s+(\S.*)$/.exec(bare);
-    if (label) out.add(label[1].trim());
+/**
+ * The first line of a value, as a grader reads it: without list, emphasis or code marks around the whole of it. An
+ * answer is graded on how its value starts, so that line is the one held to the format. The first version of this
+ * check took any line and any span in code marks, and "The C2 endpoint is **`192.168.1.33:6969`**. It was ..." passed
+ * nine times in one run (s01a4f4, questions 5 and 6: right values, never in the form).
+ */
+export function firstLine(value: string): string {
+  const line = String(value ?? "").split(/\r?\n/).map((l) => l.trim()).find((l) => l !== "") ?? "";
+  let bare = line.replace(/^\s*(?:[-*+]|\d+[.)])\s+/, "").trim();
+  for (;;) {
+    const w = /^(\*\*|__|\*|`)(.+)\1$/.exec(bare);
+    if (!w) break;
+    bare = w[2].trim();
   }
-  return [...out];
+  return bare;
+}
+
+/** An example of a value in a format, built from its parts: what the note shows beside the format's own words. */
+export function formatExample(f: AnswerFormat): string {
+  const sample: Record<string, string> = { hash: "<32 or more hex digits>", clock: "<digits in the placeholders' order>", ip: "192.0.2.7", port: "8080", email: "name@example.org", text: "<text>" };
+  let i = 0;
+  return f.format.split(SEPARATORS).map((piece) => {
+    if (piece.trim() === "") return "";
+    if (/^[_:/|,;@]$/.test(piece)) return piece;
+    const kind = f.parts[i] ?? "text";
+    i += 1;
+    if (kind === "hash") {
+      const m = /^(md5|sha1|sha256|sha512)/i.exec(piece.trim());
+      return `<${HASHES[(m?.[1] ?? "md5").toLowerCase()]} hex digits>`;
+    }
+    if (kind === "clock") return piece.trim().replace(/[A-Za-z]+/g, (w) => "0".repeat(w.length));
+    return sample[kind] ?? "<text>";
+  }).join("");
 }
 
 /**
- * Whether an answer's value gives the format: null when it does (or the
- * question names none), else what it asks, for the note.
+ * Whether an answer's value gives the format: null when its first line does (or the question names none), else what it
+ * asks, for the note. `seenAnywhere` says the form is in the value but not as its first line, so the note can say
+ * "move it up" instead of "it is missing".
  */
-export function formatMiss(questionText: string, value: string): { format: string; parts: string[] } | null {
+export function formatMiss(questionText: string, value: string): { format: string; parts: string[]; example: string; first_line: string; seen_elsewhere: boolean } | null {
   const f = questionFormat(questionText);
   if (!f) return null;
-  return candidates(value).some((c) => f.pattern.test(c)) ? null : { format: f.format, parts: f.parts };
+  const first = firstLine(value);
+  if (f.pattern.test(first)) return null;
+  const elsewhere = String(value ?? "").split(/\r?\n/).some((l) => f.pattern.test(firstLine(l))) || [...String(value ?? "").matchAll(/`([^`]+)`/g)].some((m) => f.pattern.test(m[1].trim()));
+  return { format: f.format, parts: f.parts, example: formatExample(f), first_line: first.length > 120 ? `${first.slice(0, 117)}...` : first, seen_elsewhere: elsewhere };
 }
 
 /** The note an answer recorded out of its question's format gets. */
-export function formatNote(section: string, miss: { format: string; parts: string[] }): string {
+export function formatNote(section: string, miss: { format: string; parts: string[]; example?: string; first_line?: string; seen_elsewhere?: boolean }): string {
   const what = [...new Set(miss.parts.filter((p) => p !== "text"))]
     .map((p) => ({ hash: "a hash as its hex digits", clock: "a date and time in the placeholders' order, as digits", ip: "an address as four numbers", port: "a port as a number", email: "an address with @" })[p] ?? p)
     .join(", ");
-  return `${section} asks for its answer in the format ${miss.format}, and no line of the value is in it (${what}): the answer is graded on that format, so give it as one line exactly in that form (the value, or its first line), with the words around it elsewhere. Recorded as written; record it again with supersedes when you have it in the form`;
+  const shape = miss.example ? ` It looks like: ${miss.example}` : "";
+  const where = miss.seen_elsewhere
+    ? "the value holds it, but not as its first line: an answer is graded on how its value starts, so put that one line first, alone, and the words after it"
+    : "the value's first line is not in it";
+  return `${section} asks for its answer in the format ${miss.format}${what ? ` (${what})` : ""}, and ${where}.${shape} Recorded as written; record it again with supersedes, the value's first line exactly in that form and nothing else on that line (no sentence, no label, no second candidate). If part of it is not known yet, say so in the lines after the first; this note is not a reason to guess a part`;
 }
