@@ -3,6 +3,7 @@ id: metadata/fingerprints
 title: TLS fingerprints and Suricata output, with limits
 when: A finding rests on a JA3 or JA4 value or a Suricata match.
 needs: []
+card: suricata_run {"path": "<capture>", "rules": "<rules file>", "out_dir": "<empty dir>"}: no rules ship and none are downloaded; a rules file or config from inputs/ is refused. When rule_load.known is false nothing shows a rule loaded. In tls_fingerprints, configured, TLS events logged and fingerprints produced are three numbers; zero produced does not show the build lacks the feature. checksum_mode is none by default: use all when checksum integrity is the question, and record it. An alert is a rule match, not a finding; a JA3 or JA4 value is a pivot, not a binary's identity. Run with secret_output: true. Does not show: what another build or ruleset would.
 tools: [suricata_run]
 requires_host: [suricata, tshark]
 ---

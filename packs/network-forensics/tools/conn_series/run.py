@@ -168,7 +168,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "conn_series", "version": 9}
+TOOL = {"name": "conn_series", "version": 10}
 PARSER = "conn_series/1"
 
 
@@ -2475,7 +2475,17 @@ def stream_program(argv, stderr_path, seconds, byte_cap, feed):
                 proc.stdout.close()
             except OSError:
                 pass
-            code = proc.wait()
+            if res["timed_out"] or res["capped"] or res["error"]:
+                code = proc.wait()          # ended above
+            else:
+                try:
+                    # A program that closed its output and went on running is waited for on the same clock, not past it: at the
+                    # clock it is ended with what it started, as one still writing would be, and the run is timed out.
+                    code = proc.wait(timeout=max(0.1, stop_at - time.monotonic()))
+                except subprocess.TimeoutExpired:
+                    res["timed_out"] = True
+                    kill_tree(proc)
+                    code = proc.wait()
             if ACTIVE and proc in ACTIVE:
                 ACTIVE.remove(proc)
         res["code"] = None if (res["timed_out"] or res["capped"]) else code

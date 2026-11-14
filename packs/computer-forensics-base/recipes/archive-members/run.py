@@ -1325,7 +1325,18 @@ def list_7z(path, w, deadline, max_members, cov, out_dir):
         proc.kill()
         cov["limits_hit"].append(stopped)
     proc.stdout.close()
-    rc = proc.wait()
+    if stopped:
+        rc = proc.wait()
+    else:
+        try:
+            # A 7z that closed its output and went on running is waited for on the recipe's clock, not past it: at the clock it is
+            # ended, its exit status is not seen, and the listing is not claimed whole.
+            rc = proc.wait(timeout=max(0.1, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            stopped = "seconds: 7z closed its output after %d members but was still running at the deadline, so its exit status was not seen" % n
+            cov["limits_hit"].append(stopped)
+            proc.kill()
+            rc = proc.wait()
     end_leftovers()
     err.close()
     size = os.path.getsize(err_path)

@@ -229,7 +229,7 @@ import zipfile
 import zlib
 from pathlib import Path
 
-TOOL = {"name": "archive_extract", "version": 22}
+TOOL = {"name": "archive_extract", "version": 23}
 STARTED = time.monotonic()               # the run's clock starts with the tool: the archive hash and the 7z banner are on it too
 CHUNK = 1 << 20
 SHORT_MEMBER = 128                       # a member shorter than this has no digest and no CRC written
@@ -2640,7 +2640,12 @@ class Decomp:
                 self.consumed = max(self.consumed, self.fh.tell())
                 self._check()
                 yield piece
-            rc = self.proc.wait()
+            try:
+                # A zstd that closed its output and went on running is waited for on the tool's clock, not past it: at the clock the
+                # run stops there (close() ends the program with what it started).
+                rc = self.proc.wait(timeout=max(0.1, (self.deadline - time.monotonic()) if self.deadline is not None else PIPE_GRACE))
+            except subprocess.TimeoutExpired:
+                raise Budget("max_seconds", "the time budget was reached while the zstd program, which had closed its output, was still running: its exit status was not seen")
             if rc != 0:
                 raise EOFError("the zstd program exited %d: the compressed stream is damaged or truncated" % rc)
             return

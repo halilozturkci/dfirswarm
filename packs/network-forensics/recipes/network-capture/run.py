@@ -1577,7 +1577,17 @@ def field_names(tshark, wanted, seconds):
             proc.stdout.close()
         except OSError:
             pass
-        code = proc.wait()
+        if killed:
+            code = proc.wait()          # ended above
+        else:
+            try:
+                # A program that closed its output and went on running is waited for on the same clock, not past it: at the
+                # clock it is ended with what it started, as one still writing would be.
+                code = proc.wait(timeout=max(0.1, stop_at - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                killed = True
+                kill_tree(proc)
+                code = proc.wait()
         ACTIVE.remove(proc)
     if killed:
         return found, "tshark -G fields did not finish in time"

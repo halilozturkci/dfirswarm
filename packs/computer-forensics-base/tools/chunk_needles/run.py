@@ -414,7 +414,7 @@ CHILD = {"proc": None}      # the icat being read, ended by pid on a stop
 PROGRESS = {"scanned": 0}
 
 
-TOOL = {"name": "chunk_needles", "version": 22}
+TOOL = {"name": "chunk_needles", "version": 23}
 CHUNK_DEFAULT = 8 * 1024 * 1024
 CHUNK_MIN, CHUNK_MAX = 16, 256 * 1024 * 1024
 CONTEXT_MAX = 65536
@@ -1335,6 +1335,7 @@ def end_leftovers():
 
 
 HELD = [False]            # icat has ended and something it started kept its pipe open: the end of the stream was not seen
+LINGERED = [False]        # icat closed its output and was still running at the clock: its exit status was not seen
 ICAT_ENDED = [None]       # when icat was first seen to have ended
 
 
@@ -1510,7 +1511,17 @@ else:
         hits, scanned, stopped = scan_fh(proc.stdout, source)
         if stopped is not None:
             proc.kill()                       # icat is blocked writing to a pipe nobody reads any more; its exit is not a failure
-        rc = proc.wait()
+            rc = proc.wait()
+        else:
+            try:
+                # An icat that closed its output and went on running is waited for on the scan's clock, not past it: at the clock it is
+                # ended, its exit status is not seen, and the answer is partial from where the stream it gave ended.
+                rc = proc.wait(timeout=max(0.1, STARTED + max_seconds - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                LINGERED[0] = True
+                stopped = scanned
+                proc.kill()
+                rc = proc.wait()
         end_leftovers()
         errf.seek(0)
         err_text = errf.read().decode("utf-8", "replace").strip()
@@ -1532,6 +1543,7 @@ answer = {
     "status": "complete" if stopped is None and not lost and container is None else "partial",
     "status_basis": ("the whole stream was read and every occurrence in it is reported" if stopped is None
                      else "icat ended, but something it started kept its output pipe open, so the end of the stream was not seen (see stopped): only occurrences that start before next_start are reported" if HELD[0]
+                     else "icat closed its output but was still running when the scan's clock ran out, so it was ended and whether the stream it gave was whole is not known (see stopped): only occurrences that start before next_start are reported" if LINGERED[0]
                      else "the scan stopped at its clock before the end of the stream (see stopped): only occurrences that start before next_start are reported"),
     "match_policy": "every occurrence by its start offset in the scanned stream, overlapping ones included, case-sensitive; each needle as UTF-8 and as UTF-16LE",
     "context": {"bytes_each_side": context, "returned_inline": False,
@@ -1542,8 +1554,10 @@ if stopped is not None:
     answer["next_start"] = stopped
     answer["stopped"] = (("icat ended but something it started kept its output pipe open, so the end of the stream was not seen after %d bytes: the counts and hits are for the occurrences that start before offset %d; %s"
                           if HELD[0] else
+                          "icat closed its output after %d bytes and was still running when the scan's clock ran out; it was ended, its exit status was not seen, and the counts and hits are for the occurrences that start before offset %d; %s"
+                          if LINGERED[0] else
                           "the %d-second time budget was used after %d bytes of the stream: the counts and hits are for the occurrences that start before offset %d; %s")
-                         % (*((scanned, stopped) if HELD[0] else (max_seconds, scanned, stopped)),
+                         % (*((scanned, stopped) if HELD[0] or LINGERED[0] else (max_seconds, scanned, stopped)),
                             "go on with ioc_scan path=%s start=%d and the same needles" % (path, stopped) if path else
                             "extract the inode (icat_extract) and go on with ioc_scan on the file, start=%d" % stopped))
 if lost:

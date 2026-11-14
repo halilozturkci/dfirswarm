@@ -3,6 +3,7 @@ id: sessions/tls-keylogs
 title: Authorised TLS decryption from key logs
 when: You hold approved TLS secrets and need to know which sessions of a capture they decrypt.
 needs: [evidence/captured-secrets]
+card: tls_decrypt {"capture": "<capture>", "keylog_file": "<case-supplied key log file>", "out_dir": "<dir under $OUT>"} as a job with secret_output: true: the key log is a FILE input, its text is refused; use_embedded_secrets reads a pcapng's own blocks. Report each flow you rely on by its status and reason (status_counts totals them); a resumed session or a missing ClientHello is no_secret_for_session. Does not show: that a flow without the sign was not decrypted, or who held either end.
 tools: [tls_decrypt]
 requires_host: [tshark, editcap]
 ---

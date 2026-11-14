@@ -211,7 +211,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "pcap_extract", "version": 16}
+TOOL = {"name": "pcap_extract", "version": 17}
 PARSER = "pcap_extract/5"
 
 
@@ -2771,7 +2771,17 @@ def discover_fields(binary, wanted, seconds):
             proc.stdout.close()
         except OSError:
             pass
-        code = proc.wait()
+        if killed:
+            code = proc.wait()          # ended above
+        else:
+            try:
+                # A program that closed its output and went on running is waited for on the same clock, not past it: at the
+                # clock it is ended with what it started, as one still writing would be.
+                code = proc.wait(timeout=max(0.1, stop_at - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                killed = True
+                kill_tree(proc)
+                code = proc.wait()
         ACTIVE.remove(proc)
     if killed:
         return found, "tshark -G fields did not finish in time"
@@ -2839,7 +2849,17 @@ def stream_listing(argv, stderr_path, seconds, listing):
                 proc.stdout.close()
             except OSError:
                 pass
-            code = proc.wait()
+            if killed:
+                code = proc.wait()          # ended above
+            else:
+                try:
+                    # A program that closed its output and went on running is waited for on the same clock, not past it: at the
+                    # clock it is ended with what it started, as one still writing would be.
+                    code = proc.wait(timeout=max(0.1, stop_at - time.monotonic()))
+                except subprocess.TimeoutExpired:
+                    killed = True
+                    kill_tree(proc)
+                    code = proc.wait()
             ACTIVE.remove(proc)
         return (None if killed else code), killed, read_error
 
@@ -2931,7 +2951,8 @@ def run_everything(binary, path, out_dir, protocols, display_filter, deadline, o
                     argv += ["-e", field]
                 stderr_path = os.path.join(log_dir, "association.stderr")
                 began = time.monotonic()
-                code, timed_out, read_error = stream_listing(argv, stderr_path, remaining, listing)
+                # What is left of the shared deadline now: the field list above may have used some of it.
+                code, timed_out, read_error = stream_listing(argv, stderr_path, deadline - began, listing)
                 try:
                     os.chmod(stderr_path, 0o600)
                 except OSError:

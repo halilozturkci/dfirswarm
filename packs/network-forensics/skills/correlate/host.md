@@ -3,6 +3,7 @@ id: correlate/host
 title: Correlating network and host evidence
 when: Network and host records may corroborate an endpoint, a process, a transfer or a time window.
 needs: [capture/what-you-have]
+card: Clocks before joins: decode each host time with timestamp_decode {"value": "<raw value>"}, and name each clock and what its time means (start, completion, logging); one anchor gives a local offset only. Join on full tuples and transaction ids (zeek_run per-connection records), address ownership, NAT, proxy or VPN in the interval, and a process start time against PID reuse; label each link observed, inferred or unresolved. A disagreement is kept and explained: cleared logs or a missed capture is one explanation, not the conclusion. Does not show: who was at the keyboard, or intent.
 tools: [timestamp_decode, zeek_run]
 requires_host: []
 ---

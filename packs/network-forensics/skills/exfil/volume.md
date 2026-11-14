@@ -3,6 +3,7 @@ id: exfil/volume
 title: Assessing whether data left and how much
 when: The question is whether data left the network, and how much.
 needs: [capture/what-you-have]
+card: Volume is a proposition to test, not detection: backups, sync and ordinary uploads look the same. Decide the internal side at the capture point first: a Zeek originator or a summary's first address is not it. Rank pcap_summary {"path": "<capture>", "group": "endpoint"} rows or zeek_run connections as triage views, and look for what ranking hides (small repeated transfers, long channels, many destinations). Label every number with counter, layer and direction (exfil/counters). Keep volume, delivery, content and authorisation apart. Does not show: what the data was, that it arrived, or that it was unauthorised.
 tools: [pcap_summary, zeek_run]
 requires_host: []
 ---
