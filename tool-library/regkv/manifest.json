@@ -41,8 +41,22 @@
   "timeout_seconds": 30,
   "by": "s9f2005",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 23,
-  "sha256": "dc3af1d81cd27216d720a674900e05a261e0d0b5c9f1d26087fad2d9d75c44c2",
+  "not_for": [
+    {
+      "what": "a hive that is only in a memory image",
+      "use": "mem_registry"
+    },
+    {
+      "what": "UserAssist, BAM and ShimCache values decoded into runs and times",
+      "use": "userassist_bam_shimcache"
+    },
+    {
+      "what": "ShellBag values decoded into folder paths",
+      "use": "shellbags"
+    }
+  ],
+  "version": 24,
+  "sha256": "798e62e78ba9b524f030abc750342ff032ccf950a4d42aaaf68922880fa28ede",
   "use": {
     "extensions": [
       ".hve"

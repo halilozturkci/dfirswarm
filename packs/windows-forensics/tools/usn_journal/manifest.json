@@ -25,7 +25,13 @@
   "example": "{\"path\": \"work/extracted/UsnJrnl_J\", \"name\": \"\\\\.aspx$\", \"limit\": 200}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 8,
+  "not_for": [
+    {
+      "what": "the file records of an $MFT, with both time sets",
+      "use": "mft_records"
+    }
+  ],
+  "version": 9,
   "sha256": "fa27cdae5786522bfed636e0e990b6f54e8f6f7ddbb5029850fb89dae04f1109",
   "use": {
     "names": [

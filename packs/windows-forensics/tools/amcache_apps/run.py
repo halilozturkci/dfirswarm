@@ -1111,11 +1111,15 @@ def _library_for(node):
 
 
 def cell_short(buf, start, length, what):
-    """None when the cell whose data starts at `start` holds `length` bytes (its size, in the 4-byte header before it, counts the header), else
-    why not. A value's bytes are read only from inside their own cell: what is past it is the next cells' (another value's data, a name)."""
+    """None when the allocated cell whose data starts at `start` holds `length` bytes (its size, in the 4-byte header before it, counts the
+    header), else why not. A value's bytes are read only from inside their own cell: what is past it is the next cells' (another value's data, a
+    name). A cell whose size is zero or more is free: its bytes are what a deleted record left or nothing, not this value's data."""
     if start - 4 < HBIN_START or start > len(buf):
         return "%s at offset %d is not inside the hive bins" % (what, start)
-    held = abs(struct.unpack_from("<i", buf, start - 4)[0]) - 4
+    size = struct.unpack_from("<i", buf, start - 4)[0]
+    if size >= 0:
+        return "%s (offset %d) is a free cell (its size, %d, is not negative): its bytes are not allocated data" % (what, start - 4, size)
+    held = -size - 4
     if length > held:
         return ("it declares %d bytes of data and %s (offset %d) holds %d: the bytes past the cell are not its data"
                 % (length, what, start - 4, max(held, 0)))
@@ -3098,16 +3102,36 @@ def legacy_row(volume_name, sub, bounds, where, problems):
     # trim_values=False: regipy's default cuts a string to 256 characters and a binary value to 128 bytes. The values are taken in the order of
     # the name shown for each (withheld names in an order of their own, new every run), not the order the hive holds them in.
     values = RowValues(row, where, problems)
+    # The registry type and the FILETIME number (of a REG_FILETIME) of the value each time field was read from: a time is read only from a
+    # number. A REG_BINARY, REG_NONE or unknown type is given as hex text, and int() would read hex text whose digits are all 0-9 as a decimal.
+    kinds = {}
     for v in print_order(bounds.values(sub, where, problems, trim_values=False), "name", lambda v: LEGACY_VALUES.get(str(v.name).lower(), str(v.name))):
         name = LEGACY_VALUES.get(str(v.name).lower(), str(v.name))
+        if name not in row:
+            kinds[name] = (str(getattr(v, "value_type", "")), getattr(v, "filetime", None))
         values.put(name, v.name, render(v.value))
+
+    def number(name, read_as):
+        value = row[name]
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+        kind, number_of_filetime = kinds.get(name, ("", None))
+        if read_as == "a FILETIME" and kind == "REG_FILETIME" and isinstance(number_of_filetime, int) and not isinstance(number_of_filetime, bool):
+            return number_of_filetime
+        problems.append({"where": where, "what": "values",
+                         "error": "the value read as %s is of type %s, not a number: it is not read as %s (its data is in the row as it is)"
+                                  % (name, kind or "unknown", read_as)})
+        return None
+
     if "linker_compile_time" in row:
         # A Unix-epoch 32-bit value from the PE header; not a FILETIME. The raw value stays in the row.
-        row["linker_compile_time_utc"] = unix_seconds(row["linker_compile_time"])
+        raw = number("linker_compile_time", "a Unix time")
+        row["linker_compile_time_utc"] = unix_seconds(raw) if raw is not None else None
     for name in LEGACY_FILETIMES:
         if name in row:
-            row[name + "_utc"] = filetime(row[name])
-            row[name + "_filetime"] = str(row[name])
+            raw = number(name, "a FILETIME")
+            row[name + "_utc"] = filetime(raw) if raw is not None else None
+            row[name + "_filetime"] = str(raw) if raw is not None else None
     if "sha1" in row:
         row["sha1_raw"] = row["sha1"]
         row["sha1"] = stripped_hash(row["sha1_raw"])

@@ -54,7 +54,17 @@
   "example": "{\"path\":\"work/extracted/evtx/Security.evtx\",\"event_ids\":[4624,4672],\"limit\":5}",
   "by": "sbe1801",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 14,
+  "not_for": [
+    {
+      "what": "event records in unallocated space, a page file, a memory image or a truncated .evtx",
+      "use": "evtx_carve"
+    },
+    {
+      "what": "running Sigma detection rules over a set of logs",
+      "use": "sigma_hunt"
+    }
+  ],
+  "version": 15,
   "sha256": "0d03833bd81ca7c02c1e93cf7acb6f83e278950a47f6e1ca063358a6046432ad",
   "use": {
     "extensions": [

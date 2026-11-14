@@ -1130,11 +1130,15 @@ def _library_for(node):
 
 
 def cell_short(buf, start, length, what):
-    """None when the cell whose data starts at `start` holds `length` bytes (its size, in the 4-byte header before it, counts the header), else
-    why not. A value's bytes are read only from inside their own cell: what is past it is the next cells' (another value's data, a name)."""
+    """None when the allocated cell whose data starts at `start` holds `length` bytes (its size, in the 4-byte header before it, counts the
+    header), else why not. A value's bytes are read only from inside their own cell: what is past it is the next cells' (another value's data, a
+    name). A cell whose size is zero or more is free: its bytes are what a deleted record left or nothing, not this value's data."""
     if start - 4 < HBIN_START or start > len(buf):
         return "%s at offset %d is not inside the hive bins" % (what, start)
-    held = abs(struct.unpack_from("<i", buf, start - 4)[0]) - 4
+    size = struct.unpack_from("<i", buf, start - 4)[0]
+    if size >= 0:
+        return "%s (offset %d) is a free cell (its size, %d, is not negative): its bytes are not allocated data" % (what, start - 4, size)
+    held = -size - 4
     if length > held:
         return ("it declares %d bytes of data and %s (offset %d) holds %d: the bytes past the cell are not its data"
                 % (length, what, start - 4, max(held, 0)))
@@ -3414,8 +3418,14 @@ def main():
         values, again, named = {}, [], set()
         try:
             for value in values_of(key, bounds, key_path, bound_problems):
-                raw = binary(value.value)
+                # Only a value of a binary type is a shell item (or MRUListEx): text whose characters happen to be hex digits is text, not
+                # bytes, and a numbered slot of any other type is said rather than taken for a slot with no shell item.
+                kind = str(getattr(value, "value_type", ""))
+                raw = binary(value.value) if kind not in TEXT_TYPES else None
                 data = raw if raw is not None else value.value
+                if raw is None and slot_number(str(value.name)) is not None:
+                    problems.add({"key": key_path + "\\" + str(value.name),
+                                  "why": "the slot's value is of type %s, not binary data: it is not decoded as a shell item" % (kind or "unknown")})
                 # Windows matches a value name without regard to case and takes the first: a later value of a name the key already holds
                 # replaced the first and the answer said complete. The first is the slot's; a later one is kept and listed on its own.
                 folded = str(value.name).lower()

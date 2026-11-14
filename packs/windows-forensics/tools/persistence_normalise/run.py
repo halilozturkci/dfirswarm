@@ -1110,11 +1110,15 @@ def _library_for(node):
 
 
 def cell_short(buf, start, length, what):
-    """None when the cell whose data starts at `start` holds `length` bytes (its size, in the 4-byte header before it, counts the header), else
-    why not. A value's bytes are read only from inside their own cell: what is past it is the next cells' (another value's data, a name)."""
+    """None when the allocated cell whose data starts at `start` holds `length` bytes (its size, in the 4-byte header before it, counts the
+    header), else why not. A value's bytes are read only from inside their own cell: what is past it is the next cells' (another value's data, a
+    name). A cell whose size is zero or more is free: its bytes are what a deleted record left or nothing, not this value's data."""
     if start - 4 < HBIN_START or start > len(buf):
         return "%s at offset %d is not inside the hive bins" % (what, start)
-    held = abs(struct.unpack_from("<i", buf, start - 4)[0]) - 4
+    size = struct.unpack_from("<i", buf, start - 4)[0]
+    if size >= 0:
+        return "%s (offset %d) is a free cell (its size, %d, is not negative): its bytes are not allocated data" % (what, start - 4, size)
+    held = -size - 4
     if length > held:
         return ("it declares %d bytes of data and %s (offset %d) holds %d: the bytes past the cell are not its data"
                 % (length, what, start - 4, max(held, 0)))
@@ -3086,6 +3090,11 @@ DOCTYPE_BYTES = re.compile(rb"<!\s*(?:DOCTYPE|ENTITY)", re.I)
 XML_DECL = re.compile(r"^\s*<\?xml[^>]*\?>")
 
 
+# The registry types whose text is a command, a path or a name as written. A REG_FILETIME is given as an ISO time and a REG_LINK as the target
+# of a registry link: both are text too, but not a command line, so a service or autorun value of either is kept with its type and said.
+COMMAND_TYPES = ("REG_SZ", "REG_EXPAND_SZ")
+
+
 def other_value(v, what, expected):
     """(the value as typed text or hex, its registry type, the sentence that says it is not what was expected): a value that is not of the type the tool reads is never dropped."""
     data, vtype = v.value, str(v.value_type)
@@ -3327,7 +3336,7 @@ def main():
     records = SealedPage("persistence_normalise", [paths["software"], paths["system"], paths["ntuser"], paths["tasks_dir"], paths["evtx_results"], bool(contains)], limit)
     problem_page = SealedPage("persistence_normalise-problems", [paths["software"], paths["system"], paths["ntuser"], paths["tasks_dir"], paths["evtx_results"]], INLINE_PROBLEMS)
     n = {"unsupported": 0, "filtered_out": 0, "blind": 0, "failed": 0, "refused": 0, "not_read_for_time": 0, "events_not_listed": 0, "evtx_bad_lines": 0, "evtx_rows": 0,
-         "evtx_ignored": 0, "skipped_special": 0, "skipped_links": 0, "actions_cut": 0, "bad_number": 0, "unsupported_values": 0, "unsupported_autorun": 0, "keys_unstarted": 0,
+         "evtx_ignored": 0, "skipped_special": 0, "skipped_links": 0, "actions_cut": 0, "bad_number": 0, "unsupported_values": 0, "unsupported_autorun": 0, "autorun_other_type": 0, "keys_unstarted": 0,
          "not_written_for_time": 0, "unordered_lists": 0, "unordered_items": 0, "evtx_long_lines": 0, "items_not_held": 0, "events_not_held": 0, "events_held": 0,
          "repeated_names": 0}
     obs = collections.Counter()
@@ -3490,7 +3499,7 @@ def main():
                     repeated = []                     # a later value of a name the key already holds (said in a problem line too)
 
                     def put(field, v, what):
-                        if isinstance(v.value, str):
+                        if isinstance(v.value, str) and str(v.value_type) in COMMAND_TYPES:
                             row[field] = T("text", v.value)
                             texts.append(("text", v.value))
                         else:
@@ -3584,6 +3593,10 @@ def main():
                                "value_type": str(v.value_type)}
                         if isinstance(data, str):
                             row["command"] = T("text", data)
+                            if str(v.value_type) not in COMMAND_TYPES:
+                                row["unsupported"] = own("a %s value, not REG_SZ or REG_EXPAND_SZ: its data is given as text in command, and is not a "
+                                                         "command line as written" % v.value_type)
+                                n["autorun_other_type"] += 1
                         elif isinstance(data, list):
                             row["command"] = T("text", "\n".join(str(x) for x in data))
                         elif isinstance(data, (bytes, bytearray)):
@@ -3912,6 +3925,9 @@ def main():
                        % n["unsupported_values"])
     if n["unsupported_autorun"]:
         reasons.append("%d autorun value(s) are binary data, not text, and are kept as bytes (unsupported)" % n["unsupported_autorun"])
+    if n["autorun_other_type"]:
+        reasons.append("%d autorun value(s) are of a registry type that is not a command (REG_FILETIME, REG_LINK and others: value_type), given as text "
+                       "with a note (unsupported)" % n["autorun_other_type"])
     if n["evtx_long_lines"]:
         reasons.append("%d line(s) of the evtx result file are over %d bytes and were counted and dropped, not read" % (n["evtx_long_lines"], EVTX_LINE_CAP))
     if n["unordered_lists"]:

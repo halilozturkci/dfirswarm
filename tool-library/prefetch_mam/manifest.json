@@ -13,7 +13,13 @@
   "example": "{\"path\":\"work/extracted/prefetch/sample.pf\"}",
   "by": "sbe1803",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 6,
+  "not_for": [
+    {
+      "what": "Prefetch records inside a memory dump or unallocated space",
+      "use": "mam_scan"
+    }
+  ],
+  "version": 7,
   "sha256": "43052e9b53e40b9aa6345111230d4bac4ddbd69829f00824bd5445dd9ae96f95",
   "use": {
     "extensions": [

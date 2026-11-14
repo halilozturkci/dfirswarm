@@ -20,7 +20,13 @@ const u16z = (text: string): Buffer => Buffer.concat([Buffer.from(text, "utf16le
  * key with more children than an "li" list can count (65,535) has them in "li" lists of 1,000
  * under an "ri" index, as a real hive has a long list in leaves under an index root.
  */
-export type HiveValue = { name: string; type: "sz" | "expand_sz" | "binary" | "dword" | "qword" | "multi_sz"; value: string | number | bigint | Buffer | string[] };
+export type HiveValue = {
+  name: string;
+  type: "sz" | "expand_sz" | "binary" | "dword" | "qword" | "multi_sz";
+  value: string | number | bigint | Buffer | string[];
+  /** The registry type number written in the record, when it is not the one `type` names: the data is still laid out as `type` says. */
+  typeNumber?: number;
+};
 export type HiveKey = {
   name: string;
   lastWritten?: bigint;
@@ -122,7 +128,7 @@ export function hive(root: HiveKey, opts: { primarySeq?: number; secondarySeq?: 
         vk.writeUInt32LE(data.length, 4);
         vk.writeUInt32LE(cell(data), 8);
       }
-      vk.writeUInt32LE(REG_TYPE[v.type], 12);
+      vk.writeUInt32LE(v.typeNumber ?? REG_TYPE[v.type], 12);
       vk.writeUInt16LE(compressed ? 1 : 0, 16);
       name.copy(vk, 0x14);
       return cell(vk);

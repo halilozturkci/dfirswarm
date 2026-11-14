@@ -45,7 +45,13 @@
   "example": "{\"dump\": \"work/extracted/unallocated.bin\", \"offset\": 313125516, \"size\": 2048}",
   "by": "s183902",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 9,
+  "not_for": [
+    {
+      "what": "a Jump List's DestList (its entries, pin state and last access times)",
+      "use": "jumplist"
+    }
+  ],
+  "version": 10,
   "sha256": "22b4247bc2fa43082e01803e22a07f3c6edfb072c6978fb5b396827f589ac3b6",
   "use": {
     "extensions": [

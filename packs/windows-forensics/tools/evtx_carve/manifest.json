@@ -50,7 +50,13 @@
   "example": "{\"path\": \"work/unallocated.bin\", \"event_ids\": [4624, 4688, 1102]}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 15,
+  "not_for": [
+    {
+      "what": "an intact .evtx, filtered by event id, channel, time or data field",
+      "use": "evtx_query"
+    }
+  ],
+  "version": 16,
   "sha256": "7d52081d5eb0e239f2286c01b51cbbe4e93b96629ee458bbcfcbbef61cd50bd5",
   "requires": [],
   "use": {

@@ -38,7 +38,13 @@
   "example": "{\"hive\": \"work/extracted/NTUSER.DAT\", \"log1\": \"work/extracted/NTUSER.DAT.LOG1\", \"log2\": \"work/extracted/NTUSER.DAT.LOG2\", \"limit\": 20}",
   "by": "maintainer",
   "at": "2026-10-21T09:00:00.000Z",
-  "version": 17,
+  "not_for": [
+    {
+      "what": "a clean hive, or one key and its values (nothing to replay)",
+      "use": "regkv"
+    }
+  ],
+  "version": 18,
   "use": {
     "magic": [
       {
@@ -69,5 +75,5 @@
       "write_values"
     ]
   },
-  "sha256": "4ab065d9e42a3b195aa700268674011f01abfd1736c8f7ec32e368df23d18491"
+  "sha256": "b7e27c9d1a2a6ca2083818bc28fa20c3fe312258d7be5363f52ddad10a0e6625"
 }
