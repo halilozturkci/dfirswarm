@@ -170,6 +170,21 @@ files["rgb 4 samples no extrasamples"] = rewritten(rgba, [e for e in entries(rgb
 dfl = saved(im.convert("RGB"), compression="tiff_adobe_deflate")
 files["deflate whole"] = dfl
 files["deflate zeroed"] = zeroed(dfl)                                        # libtiff decodes the zero bits of a Huffman block as symbols, in silence
+pal = saved(im.convert("P"), compression="raw")
+files["palette whole"] = pal
+def short_map(data, values):
+    """The page with its ColorMap entry claiming that many values: Pillow paints the indices a short map lacks black, libtiff drops the map."""
+    ents = []
+    for e in entries(data):
+        if struct.unpack("<H", e[:2])[0] == 320: e = e[:4] + struct.pack("<I", values) + e[8:]
+        ents.append(e)
+    return rewritten(data, ents)
+files["palette short map"] = short_map(pal, 510)
+lzw_pages = saved(im.convert("RGB"), compression="tiff_lzw")
+def damaged_middle(data):
+    t = Image.open(io.BytesIO(data)); o, c = t.tag_v2[273][0], t.tag_v2[279][0]; out = bytearray(data); mid = o + c // 2
+    out[mid:mid + 4] = bytes(4); return bytes(out)
+files["lzw damaged in the middle"] = damaged_middle(lzw_pages)
 files["strips whole"] = strips_page(W // 8)
 files["strips two of many"] = strips_page(2)
 files["strips half of many"] = strips_page(W // 16)
@@ -225,14 +240,14 @@ test("the Pillow gate passes a TIFF page only in a shape its walk takes: a tag n
   await withRun(async (run, out) => {
     const report = JSON.parse(withPillow(BUILD, [join(ROOT, "scripts", "lib"), join(run, "work/s1")], run)) as Record<string, { loads: boolean; printed: boolean }>;
     // Each damaged case is one Pillow takes without an error: that is the case.
-    for (const name of ["g4 twice zeroed", "ycc lzw zeroed", "ycc deflate zeroed", "ycc packbits zeroed", "jpeg strip short", "raw strip and tiles", "header 14 half.png", "strips two of many", "strips half of many"]) {
+    for (const name of ["g4 twice zeroed", "ycc lzw zeroed", "ycc deflate zeroed", "ycc packbits zeroed", "jpeg strip short", "raw strip and tiles", "header 14 half.png", "strips two of many", "strips half of many", "palette short map"]) {
       assert.ok(report[name]!.loads, `Pillow does not load ${name} here, so it is not the case this test holds`);
     }
     const file = (name: string): string => (name.endsWith(".png") ? name : name + ".tif");
 
     // The whole controls: the shapes the walk takes (LZW in RGB, one JPEG strip of the page's size, an uncompressed strip, a PNG
     // whose header chunk is 14 bytes) are complete in both tools, and Pillow's decoder printed nothing on them.
-    for (const name of ["rgb lzw whole", "jpeg strip whole", "raw strip whole", "strips whole", "header 14 whole.png"]) {
+    for (const name of ["palette whole", "jpeg strip whole", "raw strip whole", "strips whole", "header 14 whole.png"]) {
       assert.equal(report[name]!.printed, false, `${name}: libtiff printed on a whole file`);
       const { qr, glyph } = await both(run, out, file(name));
       assert.equal(qr.status, "complete", `qr_read, ${name}: ${JSON.stringify(qr.row).slice(0, 600)}`);
@@ -260,9 +275,33 @@ test("the Pillow gate passes a TIFF page only in a shape its walk takes: a tag n
           if (state === "zeroed" && report[name]!.printed) {
             assert.match(seen.row.picture_damaged, /it printed \d+ line\(s\) on its standard error while it decoded, the first: /, `${who}, ${name}`);
           } else {
-            assert.match(seen.row.jpeg_data_not_walked, short === "deflate" ? /is coded with TIFF compression (8|32946)/ : /in photometric interpretation 6, which Pillow reads through libtiff's RGBA interface/, `${who}, ${name}`);
+            assert.match(seen.row.jpeg_data_not_walked, /is coded with TIFF compression (5|8|32773|32946), whose decoder may fill a cut or damaged strip/, `${who}, ${name}`);
           }
         }
+      }
+    }
+
+    // LZW and PackBits are not walked: libtiff raises on a cut or zeroed tail, not on a strip damaged in its middle (decoded out of step, in silence).
+    {
+      // This fixture's damage is one Pillow refuses (the verifier's, a few zeroed bytes in an LZW palette page, decodes silently): never complete.
+      const { qr, glyph } = await both(run, out, file("lzw damaged in the middle"));
+      assert.notEqual(qr.status, "complete", JSON.stringify(qr.row).slice(0, 600));
+      assert.notEqual(glyph.status, "complete", JSON.stringify(glyph.row).slice(0, 600));
+    }
+    for (const name of ["rgb lzw whole"]) {
+      const { qr, glyph } = await both(run, out, file(name));
+      for (const [who, seen] of [["qr_read", qr], ["glyph_strip", glyph]] as const) {
+        assert.equal(seen.status, "partial", `${who}, ${name}: ${JSON.stringify(seen.row).slice(0, 600)}`);
+        assert.match(seen.row.jpeg_data_not_walked, /is coded with TIFF compression 5/, `${who}, ${name}`);
+      }
+    }
+
+    // A palette page whose ColorMap is short (Pillow paints the indices it lacks black; libtiff drops the map): never complete.
+    {
+      const { qr, glyph } = await both(run, out, file("palette short map"));
+      for (const [who, seen] of [["qr_read", qr], ["glyph_strip", glyph]] as const) {
+        assert.equal(seen.status, "partial", `${who}: ${JSON.stringify(seen.row).slice(0, 600)}`);
+        assert.match(seen.row.jpeg_data_not_walked, /palette page whose ColorMap holds 510 values where 8-bit samples need 768/, who);
       }
     }
 

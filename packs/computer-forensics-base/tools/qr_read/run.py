@@ -447,7 +447,7 @@ sys.excepthook = _unexpected_tool
 install_signal_handlers(lambda signum: (kill_decoder(), interrupted_answer(signum)))
 
 
-TOOL = {"name": "qr_read", "version": 11}
+TOOL = {"name": "qr_read", "version": 12}
 PARSER = "qr_read/5"
 DEFAULT_SECONDS, MAX_SECONDS = 90, 100          # under the manifest's 120
 MAX_INPUTS = 64
@@ -1050,9 +1050,8 @@ def clock_deadline():
 #                          jpeg_check); TIFF pages whose shape is on the allowlist in tiff_check: uncompressed (as many pieces as its size needs, byte counts against
 #                          the rows, Pillow's own decoder) and JPEG (each strip or tile walked as a JPEG, its frame the strip's or
 #                          tile's size).
-#   shown to raise:        GIF and BMP (and BMP's RLE) data cut short; WebP cut short; TIFF pages coded with LZW, either Deflate or
-#                          PackBits in photometric 0 to 3 with one of strip or tile tags (Pillow reads them strip by strip through
-#                          libtiff, which fails the read on a strip that does not decode).
+#   shown to raise:        GIF and BMP (and BMP's RLE) data cut short; WebP cut short (a TIFF coded with LZW or PackBits is not on this list: libtiff
+#                          decodes a strip damaged in its middle out of step and says nothing).
 #   counted as not walked: every other TIFF shape (any other codec, YCbCr or another photometric that sends Pillow to libtiff's RGBA
 #                          interface, which fills and only prints, a tag named twice, strip and tile tags together, a directory the walk
 #                          cannot follow); the pictures of a JPEG past its first (MPO).
@@ -1501,13 +1500,13 @@ def jpeg_check(data, tick, budget):
 # the first), the tags of a size or a coding given once, strip tags or tile tags but not both (Pillow's own decoder takes the strips,
 # the walk would take the tiles), and one of: uncompressed (1) in photometric 0, 1, 2, 3 or 5, whose strips or tiles must hold the bytes
 # their rows need; JPEG (7) in photometric 0, 1, 2 or 6, of one plane, each strip or tile walked as a JPEG (the page's JPEGTables put
-# before its own data) whose frame is the strip's or tile's size with a component for each sample; or LZW or
-# PackBits in photometric 0 to 3, which Pillow reads strip by strip through libtiff and which fail the read on data that does not
-# decode. Every other page is counted as not walked.
+# before its own data) whose frame is the strip's or tile's size with a component for each sample. A page of a palette has a ColorMap of 3 x 2^bits values (Pillow paints the indices a short map lacks black, libtiff drops the map).
+# Every other page, any compressed one but JPEG included, is counted as not walked: a codec is not taken for safe because libtiff raises on
+# damage (it raises on a cut or zeroed tail, not on a strip damaged in its middle, nor on Deflate).
 TIFF_MAGICS = (b"II*\x00", b"MM\x00*", b"II+\x00", b"MM\x00+")
 TIFF_NUMBER_TYPES = (3, 4, 16)    # SHORT, LONG, LONG8: the types the walk reads the tags it uses as
 TIFF_TYPE_SIZES = {1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8, 13: 4, 16: 8, 17: 8, 18: 8}
-TIFF_TAGS = (256, 257, 258, 259, 262, 273, 277, 278, 279, 284, 322, 323, 324, 325, 339, 347)
+TIFF_TAGS = (256, 257, 258, 259, 262, 273, 277, 278, 279, 284, 320, 322, 323, 324, 325, 339, 347)
 TIFF_SINGLE_TAGS = (256, 257, 259, 262, 277, 278, 284, 322, 323)    # tags of one value: a page that gives more is not walked
 MAX_TIFF_PIECES = 1 << 20          # the strips or tiles of one page that are walked; a page with more is not walked
 
@@ -1639,15 +1638,7 @@ def _jpeg_frame(data):
     return None
 
 
-# The TIFF codecs whose decoder in Pillow's libtiff was shown to raise on a cut or damaged strip when Pillow reads the page strip by
-# strip (LZW, PackBits): their pages need no walk of their own, in the photometric interpretations that keep
-# Pillow off libtiff's RGBA interface. Every other codec but none (1) and JPEG (7), which the walk takes, is counted as not walked:
-# CCITT (2, 3, 4) fills a damaged strip and says nothing.
-TIFF_CODECS_THAT_RAISE = (5, 32773)
-# Deflate (8, 32946) is not on the list: libtiff stops when its output buffer is full, and the zero bits of a zeroed tail decode as symbols of a
-# dynamic Huffman block, so a page whose tail was overwritten is decoded as noise with nothing on stderr. It is counted as not walked.
 TIFF_SAMPLES_OF = {0: 1, 1: 1, 2: 3, 3: 1, 5: 4, 6: 3}      # the samples a photometric interpretation needs: no extra sample is walked
-TIFF_PHOTOMETRIC_STRIP_BY_STRIP = (0, 1, 2, 3)      # grey (either way), RGB, palette: not YCbCr (6), which Pillow reads through RGBA
 TIFF_PHOTOMETRIC_UNCOMPRESSED = (0, 1, 2, 3, 5)     # Pillow's own decoder, the bytes of whose rows the walk counts (5: CMYK)
 TIFF_PHOTOMETRIC_JPEG = (0, 1, 2, 6)                # libjpeg's frame of one plane, YCbCr given back as RGB by libjpeg itself
 TIFF_STRIP_TAGS, TIFF_TILE_TAGS = (273, 278, 279), (322, 323, 324, 325)
@@ -1685,6 +1676,9 @@ def tiff_check(data, pages, tick, budget):
             # missing (and flattens the picture on white), libtiff takes it as undefined and the picture as opaque.
             raise JpegUnchecked("page %d has %d sample(s) in photometric interpretation %d, which needs %s; the walk does not take it" % (
                 page, samples, photometric, TIFF_SAMPLES_OF.get(photometric, "no number it takes")))
+        if photometric == 3 and len(tags.get(320, [])) != 3 * (1 << depths[0]):
+            raise JpegUnchecked("page %d is a palette page whose ColorMap holds %d values where %d-bit samples need %d; Pillow paints the indices "
+                                "a short map lacks black and libtiff drops the map; the walk does not take it" % (page, len(tags.get(320, [])), depths[0], 3 * (1 << depths[0])))
         if any(value != 1 for value in tags.get(339, [1])):
             # SampleFormat 2 (signed), 3 (floating point) or 4 (undefined): Pillow's mode table reads the bytes as unsigned integers.
             raise JpegUnchecked("page %d has a SampleFormat other than unsigned integer; Pillow reads those bytes as unsigned integers; the "
@@ -1695,15 +1689,9 @@ def tiff_check(data, pages, tick, budget):
                                 "does not take it" % page)
         if compression == 6:
             raise JpegUnchecked("page %d is coded as old-style JPEG (TIFF compression 6), whose data the walk does not take" % page)
-        if compression in TIFF_CODECS_THAT_RAISE:
-            if photometric not in TIFF_PHOTOMETRIC_STRIP_BY_STRIP:
-                raise JpegUnchecked("page %d is coded with TIFF compression %d in photometric interpretation %d, which Pillow reads through "
-                                    "libtiff's RGBA interface; that fills a strip that does not decode and only prints; the walk does not "
-                                    "take it" % (page, compression, photometric))
-            continue
         if compression not in (1, 7):
-            raise JpegUnchecked("page %d is coded with TIFF compression %d, whose decoder may fill a cut strip and only warn; the walk does "
-                                "not take it" % (page, compression))
+            raise JpegUnchecked("page %d is coded with TIFF compression %d, whose decoder may fill a cut or damaged strip with noise or zeros "
+                                "and say nothing; the walk does not take it" % (page, compression))
         if photometric not in (TIFF_PHOTOMETRIC_UNCOMPRESSED if compression == 1 else TIFF_PHOTOMETRIC_JPEG) or (compression == 7 and planar != 1):
             raise JpegUnchecked("page %d is coded with TIFF compression %d in photometric interpretation %d%s, which the walk does not "
                                 "take" % (page, compression, photometric, "" if planar == 1 else " in separate planes"))
