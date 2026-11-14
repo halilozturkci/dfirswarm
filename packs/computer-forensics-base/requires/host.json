@@ -443,6 +443,29 @@
       },
       "licence": "Apache-2.0 (the DejaVu fonts under the Bitstream Vera licence)",
       "redistributable": false
+    },
+    {
+      "name": "r2",
+      "package": "radare2",
+      "optional": true,
+      "why": "Disassembly, cross-references and function discovery from the command line, scriptable. Declared by the base pack too, so that every image holds a disassembler of more than one architecture (an image of a macOS or an aarch64 host has objdump for its own architecture only); the pin is the reverse-engineering pack's, the same download.",
+      "install": {
+        "brew": "brew install radare2",
+        "apt": "pinned download 6.2.2 (install.download): upstream's .deb per architecture; radare2 is not in Debian 12, only in unstable",
+        "download": {
+          "version": "6.2.2",
+          "amd64": {
+            "url": "https://github.com/radareorg/radare2/releases/download/6.2.2/radare2_6.2.2_amd64.deb",
+            "sha256": "09234e4139bf8dfcbb7fc1fdb2519859ad516e63c19d3c27d92aaecdf463b1ad"
+          },
+          "arm64": {
+            "url": "https://github.com/radareorg/radare2/releases/download/6.2.2/radare2_6.2.2_arm64.deb",
+            "sha256": "6e3ccf220e5b53adedc9dccc67825e908b545aabd4cf8723f0c43ebfd0c4f437"
+          }
+        }
+      },
+      "licence": "LGPL-3.0-only; some plugins GPL (radare2's doc/licenses.md)",
+      "redistributable": false
     }
   ]
 }
