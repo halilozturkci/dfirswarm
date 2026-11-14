@@ -1530,7 +1530,7 @@ def _unexpected_tool(kind, value, _tb):
 sys.excepthook = _unexpected_tool
 
 
-TOOL = {"name": "glyph_strip", "version": 6}
+TOOL = {"name": "glyph_strip", "version": 7}
 PARSER = "glyph_strip/4"
 DEFAULT_SECONDS, MAX_SECONDS = 50, 55           # under the manifest's 60
 OCR_SECONDS = 20
@@ -2587,6 +2587,12 @@ def _tiff_needs(tags, tiled, pieces):
     return need, read
 
 
+# The TIFF codecs whose decoder in Pillow's libtiff was shown to raise on a cut or damaged strip (LZW, Adobe and zlib Deflate,
+# PackBits): their pictures need no walk of their own. Every other codec but none (1) and JPEG (7), which the walk takes, is counted
+# as not walked: CCITT (2, 3, 4) fills a damaged strip and only warns.
+TIFF_CODECS_THAT_RAISE = (5, 8, 32773, 32946)
+
+
 def tiff_check(data, pages, tick, budget):
     """The tool's own walk of the strips and tiles of a TIFF's first `pages` pages (see above). Returns None when every one Pillow reads
     holds what its rows need, or a sentence saying where one does not. JpegUnchecked for what the walk does not take (old-style JPEG, a
@@ -2596,8 +2602,11 @@ def tiff_check(data, pages, tick, budget):
         compression = (tags.get(259) or [1])[0]
         if compression == 6:
             raise JpegUnchecked("page %d is coded as old-style JPEG (TIFF compression 6), whose data the walk does not take" % page)
-        if compression not in (1, 7):
+        if compression in TIFF_CODECS_THAT_RAISE:
             continue
+        if compression not in (1, 7):
+            raise JpegUnchecked("page %d is coded with TIFF compression %d, whose decoder may fill a cut strip and only warn; the walk does "
+                                "not take it" % (page, compression))
         tiled = 324 in tags
         what = "tile" if tiled else "strip"
         offsets, counts = tags.get(324 if tiled else 273), tags.get(325 if tiled else 279)
@@ -3377,8 +3386,8 @@ def main():
         unread.add("picture_damaged", 1, "the picture is cut or corrupt (%s: %s): Pillow read it all the same and filled what is missing, so ink may be "
                                          "missing from the line" % (picture.damage_by, picture.damage))
     if picture.unchecked:
-        unread.add("jpeg_data_not_walked", 1, "the tool's own walk of the picture's JPEG data did not reach it (%s): JPEG data cut short and given its "
-                                              "end marker back (a JPEG, or a TIFF's strip or tile) is not told from whole data" % picture.unchecked)
+        unread.add("jpeg_data_not_walked", 1, "the tool's own walk of the picture's coded data did not reach it (%s): coded data cut short (a JPEG's "
+                                              "given its end marker back, or a TIFF strip's or tile's) is not told from whole data" % picture.unchecked)
     common = {"tool": TOOL, "parser": PARSER, "image": printable(image), "sha256": hashlib.sha256(data).hexdigest(), "pixels": "%d x %d" % (picture.width, picture.height),
               "picture_reader": picture.reader, "rules": RULES, **({"unrecognised_parameters": unknown} if unknown else {}),
               **({"frames_not_read": frames_not_read} if frames_not_read else {}),

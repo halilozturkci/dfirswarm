@@ -842,6 +842,48 @@ for name, kw in (("base", {}), ("prog", {"progressive": True}), ("rst", {"restar
   });
 });
 
+test("a TIFF coded with CCITT (compression 2 or 4), whose decoder fills a damaged strip and only warns, is counted as not walked; LZW and Deflate are read whole", { skip: pillowHere(ROOT) ? false : "Pillow does not import here: the tool reads no TIFF without it" }, async () => {
+  await withRun(async (run, out) => {
+    encode(String.raw`
+d = sys.argv[1]
+rows = draw(symbol(b"fixture ccitt 0042", 2, "M", 3), 4, 4)
+open(d + "/sym.raw", "wb").write(b"".join(rows))
+open(d + "/size", "w").write("%d %d" % (len(rows[0]), len(rows)))
+`, [join(run, "work/s1")], run);
+    const made = withPillow(String.raw`
+import io, sys
+from PIL import Image, features
+d = sys.argv[1]; w, h = map(int, open(d + "/size").read().split())
+im = Image.frombytes("L", (w, h), open(d + "/sym.raw", "rb").read())
+if not features.check_codec("libtiff"):
+    print("no libtiff"); sys.exit(0)
+for comp in ("group4", "tiff_ccitt", "tiff_lzw", "tiff_adobe_deflate"):
+    b = io.BytesIO(); (im.convert("1") if comp in ("group4", "tiff_ccitt") else im).save(b, "TIFF", compression=comp)
+    open(d + "/" + comp + ".tif", "wb").write(b.getvalue())
+    if comp == "group4":
+        data = bytearray(b.getvalue()); t = Image.open(io.BytesIO(bytes(data)))
+        o, c = t.tag_v2[273][0], t.tag_v2[279][0]
+        data[o + c // 3:o + c] = bytes(c - c // 3)          # sectors not recovered, given back as zeros
+        open(d + "/group4 zeroed.tif", "wb").write(data)
+        Image.open(d + "/group4 zeroed.tif").load()          # libtiff fills it and only warns: that is the case
+print("made")
+`, [join(run, "work/s1")], run);
+    if (made.includes("no libtiff")) return;
+    for (const name of ["group4", "tiff_ccitt", "group4 zeroed"]) {
+      const r = await call("qr_read", run, { image: `work/s1/${name}.tif` }, { out });
+      assert.equal(r.doc.status, "partial", `${name}: ${r.stdout.slice(0, 900)}`);
+      assert.match((r.doc.rows[0] as Doc).jpeg_data_not_walked, /TIFF compression [24], whose decoder may fill a cut strip and only warn/, name);
+      assert.equal(r.doc.not_read_or_judged.jpeg_data_not_walked, 1, name);
+      assert.doesNotMatch(r.doc.status_basis, /read whole/, name);
+    }
+    for (const name of ["tiff_lzw", "tiff_adobe_deflate"]) {
+      const r = await call("qr_read", run, { image: `work/s1/${name}.tif` }, { out });
+      assert.equal(r.doc.status, "complete", `${name}: ${r.stdout.slice(0, 900)}`);
+      assert.equal((r.doc.rows[0] as Doc).result, "decoded", name);
+    }
+  });
+});
+
 test("every symbol of a frame is read: two side by side, one of them light on dark; a ninth past the bound and finder patterns no reading explains are partial", async () => {
   await withRun(async (run, out) => {
     encode(String.raw`
