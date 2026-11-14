@@ -89,6 +89,11 @@ could read no image. At kickoff one job per job image tries x86-64 disassembly, 
 brotli, numpy, a C compiler and a crypto library against inputs whose answers are known, and posts the result
 (`job-capabilities.json`).
 
+### Changed: every image holds a disassembler of more than one architecture
+
+computer-forensics-base 1.17.18 declares radare2 6.2.2 (upstream's package per architecture, a pinned download), so each image
+built from a recipe has `r2`, `rasm2` and `rabin2`, whatever the architecture of the sample.
+
 ### Added: the hub's health on the trace, a Harness row in metrics, and capacity across runs
 
 `hub_health` each minute (heap, event-loop delay, host load and free memory, what the hub holds); one heap snapshot at 60% of
@@ -220,7 +225,7 @@ more entries than can be listed is refused before the job runs, with what to do.
 ### Added: a tool's manifest says what it is not for
 
 `not_for: [{what, use}]`, at most four lines, each naming another tool; the description a seat sees ends with them, and a test holds
-every pack's lines to a tool that exists. Lines are on the tools seats confused with a sibling in eight packs.
+every pack's lines to a tool that exists. Lines are on 31 tools of nine packs, the ones seats confused with a sibling.
 
 ### Added: hand cards for the notes of every pack
 
