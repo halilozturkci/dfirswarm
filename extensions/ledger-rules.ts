@@ -4528,7 +4528,7 @@ export function carriersOpen(alternativesOpen: string, cited: ReadonlyArray<Ledg
 
 /**
  * The candidates a record holds beside its value (docs/protocol.md, "Ledger"): each still open, ruled out by
- * a machine check it names, or a decoy. The review of the Batman III runs found right answers replaced on a
+ * a machine check it names, or a decoy. The review of earlier runs found right answers replaced on a
  * critic's doubt (s68ce47 E-253 to E-262) and a reading dropped by argument; the digests a qualifier held were
  * the only candidates the hub tracked (reviewValueRule). Here a candidate is a row of the record itself: a
  * revision carries every row of the entry it corrects, and a reading a dispute in force says (its reading),

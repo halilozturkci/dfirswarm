@@ -349,7 +349,7 @@ export type ImportSweepRecord = {
 };
 /**
  * What a sweep found, when it is too long for its line (the runs of
- * Batman III held up to 920 hits a line): how many in all and in each list
+ * one case held up to 920 hits a line): how many in all and in each list
  * (`counts`), by string and by directory (the SWEEP_HITS_KEYS largest, the
  * rest as one row `(other)`), each row with how many of them hold
  * (`hits`, the list a gate holds a negative to) and how many in all
