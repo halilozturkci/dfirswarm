@@ -1530,7 +1530,7 @@ def _unexpected_tool(kind, value, _tb):
 sys.excepthook = _unexpected_tool
 
 
-TOOL = {"name": "glyph_strip", "version": 10}
+TOOL = {"name": "glyph_strip", "version": 11}
 PARSER = "glyph_strip/5"
 DEFAULT_SECONDS, MAX_SECONDS = 50, 55           # under the manifest's 60
 OCR_SECONDS = 20
@@ -2531,7 +2531,7 @@ def jpeg_check(data, tick, budget):
 TIFF_MAGICS = (b"II*\x00", b"MM\x00*", b"II+\x00", b"MM\x00+")
 TIFF_NUMBER_TYPES = (3, 4, 16)    # SHORT, LONG, LONG8: the types the walk reads the tags it uses as
 TIFF_TYPE_SIZES = {1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8, 13: 4, 16: 8, 17: 8, 18: 8}
-TIFF_TAGS = (256, 257, 258, 259, 262, 273, 277, 278, 279, 284, 322, 323, 324, 325, 347)
+TIFF_TAGS = (256, 257, 258, 259, 262, 273, 277, 278, 279, 284, 322, 323, 324, 325, 339, 347)
 TIFF_SINGLE_TAGS = (256, 257, 259, 262, 277, 278, 284, 322, 323)    # tags of one value: a page that gives more is not walked
 MAX_TIFF_PIECES = 1 << 20          # the strips or tiles of one page that are walked; a page with more is not walked
 
@@ -2614,6 +2614,10 @@ def _tiff_needs(tags, tiled, pieces):
         across, down = width, (tags.get(278) or [height])[0]
     if not width or not height or not across or not down or not bits:
         raise JpegUnchecked("an uncompressed page whose size, strips or tiles are not given")
+    if tiled and (across * bits) % 8:
+        # Pillow's raw decoder takes the row stride of an edge tile rounded down (int(width * bits / 8)); libtiff and this walk round it up:
+        # the TIFF specification asks a tile width of a multiple of 16, and a page that is not so is decoded with its right edge misread.
+        raise JpegUnchecked("an uncompressed page whose tile rows (%d pixels of %d bits) do not end on a byte; the walk does not take it" % (across, bits))
     per_row = -(-width // across)
     per_plane = per_row * -(-height // down)
     stride = -(-across * bits // 8)
@@ -2686,6 +2690,15 @@ def tiff_check(data, pages, tick, budget):
         compression = (tags.get(259) or [1])[0]
         photometric = (tags.get(262) or [0])[0]
         planar = (tags.get(284) or [1])[0]
+        if planar != 1:
+            # Pillow takes each separate plane's mode from one character of the page's mode ("RGB;16B" gives "R", "G", "B"; "L;I" gives "L";
+            # a bit-reversed "L;R" gives "L"): a plane loses its width, its inversion or its bit order, with no error and nothing on stderr.
+            raise JpegUnchecked("page %d is in separate planes (PlanarConfiguration %d); Pillow reads each plane without the page's "
+                                "inversion, bit order or sample width; the walk does not take it" % (page, planar))
+        if any(value != 1 for value in tags.get(339, [1])):
+            # SampleFormat 2 (signed), 3 (floating point) or 4 (undefined): Pillow's mode table reads the bytes as unsigned integers.
+            raise JpegUnchecked("page %d has a SampleFormat other than unsigned integer; Pillow reads those bytes as unsigned integers; the "
+                                "walk does not take it" % page)
         stripped, tiled = any(t in tags for t in TIFF_STRIP_TAGS), any(t in tags for t in TIFF_TILE_TAGS)
         if stripped and tiled:
             raise JpegUnchecked("page %d holds both strip and tile tags (Pillow's decoder and libtiff may read different ones); the walk "

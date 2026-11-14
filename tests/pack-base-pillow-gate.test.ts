@@ -161,13 +161,18 @@ def planar_page(bits, kind284=3):
     at = len(out); struct.pack_into("<I", out, 4, at)
     out += struct.pack("<H", len(ents)) + b"".join(ents) + b"\x00\x00\x00\x00"
     return bytes(out)
-files["planar 8 whole"] = planar_page(8)
+files["planar 8"] = planar_page(8)
 files["planar 16"] = planar_page(16)
 files["planar tag of type byte"] = planar_page(8, 1) + bytes(3 * W * W)
 files["strips whole"] = strips_page(W // 8)
 files["strips two of many"] = strips_page(2)
 files["strips half of many"] = strips_page(W // 16)
 files["raw strip whole"] = raw_page(False)
+def signed_samples(data):
+    """The uncompressed page with SampleFormat 2 (signed) added: Pillow's mode table reads the bytes as unsigned."""
+    ents = sorted(entries(data) + [entry(339, 3, 2)], key=lambda e: struct.unpack("<H", e[:2])[0])
+    return rewritten(data, ents)
+files["sample format signed"] = signed_samples(files["raw strip whole"])
 files["raw strip and tiles"] = raw_page(True)
 rows = b"".join(b"\x00" + pix[y * W:(y + 1) * W] for y in range(W))
 long_header = struct.pack(">IIBBBBB", W, W, 8, 0, 0, 0, 0) + b"\x00"      # 14 bytes: Pillow reads the first 13
@@ -221,7 +226,7 @@ test("the Pillow gate passes a TIFF page only in a shape its walk takes: a tag n
 
     // The whole controls: the shapes the walk takes (LZW in RGB, one JPEG strip of the page's size, an uncompressed strip, a PNG
     // whose header chunk is 14 bytes) are complete in both tools, and Pillow's decoder printed nothing on them.
-    for (const name of ["rgb lzw whole", "jpeg strip whole", "raw strip whole", "strips whole", "planar 8 whole", "header 14 whole.png"]) {
+    for (const name of ["rgb lzw whole", "jpeg strip whole", "raw strip whole", "strips whole", "header 14 whole.png"]) {
       assert.equal(report[name]!.printed, false, `${name}: libtiff printed on a whole file`);
       const { qr, glyph } = await both(run, out, file(name));
       assert.equal(qr.status, "complete", `qr_read, ${name}: ${JSON.stringify(qr.row).slice(0, 600)}`);
@@ -290,9 +295,11 @@ test("the Pillow gate passes a TIFF page only in a shape its walk takes: a tag n
       }
     }
 
-    // Separate planes of 16-bit samples (Pillow decodes each plane as 8-bit, in silence), and a PlanarConfiguration of the type BYTE (Pillow
-    // keeps it as bytes and reads the page as contiguous; the walk reads it as 2).
-    for (const [name, why] of [["planar 16", /separate planes whose samples are not all 8 bits/], ["planar tag of type byte", /tag 284 of page 1 is of the type 1; the walk takes the tags it reads only as SHORT, LONG or LONG8/]] as const) {
+    // Separate planes (Pillow takes each plane's mode from one character of the page's, so a plane loses its width, its inversion or its bit
+    // order, in silence), signed samples (read as unsigned), and a PlanarConfiguration of the type BYTE (Pillow keeps it as bytes and reads
+    // the page as contiguous; the walk reads it as 2): none is walked.
+    for (const [name, why] of [["planar 16", /is in separate planes \(PlanarConfiguration 2\)/], ["planar 8", /is in separate planes \(PlanarConfiguration 2\)/], ["sample format signed", /has a SampleFormat other than unsigned integer/],
+      ["planar tag of type byte", /tag 284 of page 1 is of the type 1; the walk takes the tags it reads only as SHORT, LONG or LONG8/]] as const) {
       const { qr, glyph } = await both(run, out, file(name));
       for (const [who, seen] of [["qr_read", qr], ["glyph_strip", glyph]] as const) {
         assert.equal(seen.status, "partial", `${who}, ${name}: ${JSON.stringify(seen.row).slice(0, 600)}`);
