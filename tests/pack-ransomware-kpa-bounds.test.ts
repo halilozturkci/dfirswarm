@@ -215,12 +215,12 @@ test("20,000 keys that each open both members on a 1-byte crib: 64 matches kept 
     assert.deepEqual(kpa.files.map((r: Doc) => [r.verdict, r.matches_not_kept]), [["match", 20_000 - 64], ["match", 20_000 - 64]]);
     assert.ok(kpa.partial_reasons.some((r: string) => /^39872 matching combinations were counted and not kept: more than 64 matched on 2 members/.test(r)), kpa.status_basis);
     if (derive) {
-      // One pair a key per crib length: the 64 keys kept on the first member are not paired again with the second.
-      assert.equal(kpa.tried.derivation.pairs, 64);
-      assert.equal(kpa.tried.derivation.pairs_not_used, 64);
-      assert.equal(kpa.tried.derivation.places, 64 * 65);
+      // Every (key, member it opened) is a pair (1.14.4: a key is no longer paired once per crib length, which chose the member by
+      // name): the 64 keys kept on each member make 128 pairs and 128 x 65 places.
+      assert.equal(kpa.tried.derivation.pairs, 128);
+      assert.equal("pairs_not_used" in kpa.tried.derivation, false);
+      assert.equal(kpa.tried.derivation.places, 128 * 65);
       assert.equal(kpa.tried.derivation.places_not_listed, 0);
-      assert.ok(kpa.not_tried.some((l: string) => /^the footer hypothesis from a key paired with a second member of the same crib length: 64 such pairs/.test(l)));
     } else {
       assert.equal(kpa.trials, 40_000);
       assert.deepEqual(kpa.tried.derivation, { made: false });
@@ -297,7 +297,7 @@ test("the recipe is written under a temporary name and given a free one; a stop 
   assert.deepEqual(await readdir(plain.out), ["stream-recipe.json"]);
   const recipe = JSON.parse(await readFile(join(plain.out, "stream-recipe.json"), "utf8")) as Doc;
   assert.equal(recipe.key.hex, key.toString("hex"));
-  assert.equal(recipe.made_by, "stream_kpa_check/3");
+  assert.equal(recipe.made_by, "stream_kpa_check/4");
   // A recipe already there is not replaced.
   const second = join(cwd, "store", "jobs", "j000002", "out");
   await mkdir(second, { recursive: true });

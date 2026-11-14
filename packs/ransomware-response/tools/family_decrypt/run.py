@@ -782,9 +782,11 @@ def member_keys(args, paths):
 
 
 def list_members(args, max_files, suffix=None):
-    """The files a call names: `files` (paths), or `dir` with `glob` (a pattern on the file's name) and `recursive`. Regular files only,
-    no link followed, in the order of their names. With `suffix` and no glob, the files of dir whose name carries that suffix (in any
-    case). Returns (paths, how many more there were past max_files, what was skipped)."""
+    """The files a call names: `files` (paths, the first max_files in the order given), or `dir` with `glob` (a pattern on the file's
+    name) and `recursive` (regular files only, no link followed, in the order of their names). With `suffix` and no glob, the files of dir
+    whose name carries that suffix (in any case). Returns (paths, how many more there were past max_files, what was skipped). Once
+    max_files names are kept, the directories still to list are not listed (counted in directories_not_listed_past_max_files): `more`
+    is then a lower bound."""
     files, directory = args.get("files"), args.get("dir")
     if (files is None) == (directory is None):
         raise Refused("give either files (a list of paths) or dir (a directory, with glob and recursive), not both and not neither")
@@ -805,13 +807,17 @@ def list_members(args, max_files, suffix=None):
         raise Refused("dir is not a directory")
     # One directory's entries are read one at a time, the clock read every 1024 of them, and what is kept of them is bounded: the files
     # that match, at most twice the room left under max_files (cut to the room, in the order of their names, whenever that is passed;
-    # the others are counted in `more`), and the directories still to list, at most 100000 (the others are counted).
+    # the others are counted in `more`), and the directories still to list, at most 100000 (the others are counted). Once max_files
+    # names are kept, listing stops: the directories left are counted, not listed, and `more` is a lower bound.
     found, more = [], 0
     stack = [directory]
     pending_most = 100000                                   # the directories still to list that are kept, at most
     while stack:
         if out_of_time():
             skipped["directories_not_listed_time_limit"] = skipped.get("directories_not_listed_time_limit", 0) + len(stack)
+            break
+        if len(found) >= max_files:
+            skipped["directories_not_listed_past_max_files"] = skipped.get("directories_not_listed_past_max_files", 0) + len(stack)
             break
         here = stack.pop()
         room = max_files - len(found)
@@ -868,7 +874,7 @@ def list_members(args, max_files, suffix=None):
 # FAMILY: end
 
 TOOL = "family_decrypt"
-VERSION = 4
+VERSION = 5
 PARSER = "family_decrypt/2"
 DEFAULT_SECONDS, MAX_SECONDS = 1500, 1740
 PIECE = 1 << 20
@@ -1199,7 +1205,7 @@ def main():
     promised_unconfirmed = sum(1 for r in rows if r["verdict"] == "decrypted, type not confirmed" and r["expected_type"])
     reasons = []
     if more:
-        reasons.append("%d more files matched and were not decrypted: max_files is %d" % (more, max_files))
+        reasons.append("%s%d more files matched and were not decrypted: max_files is %d" % ("at least " if skipped.get("directories_not_listed_past_max_files") else "", more, max_files))
     if counts["failed"]:
         reasons.append("%d members failed (see their rows)" % counts["failed"])
     if counts["not_decrypted_budget"]:

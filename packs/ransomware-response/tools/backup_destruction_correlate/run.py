@@ -2074,6 +2074,18 @@ def read_rows(handler, doc, key, rows_file, facts, cut_note):
     stream_file(handler, rows_file, facts)
 
 
+def named_before(path, named, use):
+    """Whether a file streamed line by line (not read whole by read_doc) was read already for the same use (its kind, host and the other
+    fields of its entry), the same file by (st_dev, st_ino): its rows would only be counted twice. A file seen first is marked."""
+    fd, st = open_regular(path)
+    os.close(fd)
+    mark = (use, st.st_dev, st.st_ino)
+    if mark in named:
+        return True
+    named.add(mark)
+    return False
+
+
 def stream_file(handler, path, facts):
     fd, st = open_regular(path)
     try:
@@ -2358,6 +2370,11 @@ def main():
             facts = {"rows": 0, "skipped": 0, "problems": [], "stopped_by_clock": False, "no_command": 0}
             try:
                 if kind == "shell_histories":
+                    # The same history named again for the same host and fields is not read again (its rows would be counted twice);
+                    # it is checked before its answer is read or a row is counted.
+                    if named_before(path, named, (kind, host, json.dumps(extra, sort_keys=True))):
+                        named_again[kind] += 1
+                        continue
                     if extra["answer"] is None:
                         unchecked["shell_histories"] += 1
                     else:
