@@ -440,7 +440,7 @@ test("a signal while the tool is secret-output spooling removes the spool and th
 
 test("the tool's manifest says what the code does", async () => {
   const manifest = JSON.parse(await readFile(join(WIN, "powershell_blocks", "manifest.json"), "utf8")) as Answer;
-  assert.equal(manifest.version, 3);
+  assert.equal(manifest.version, 4);
   assert.ok(manifest.timeout_seconds >= 60);
   assert.deepEqual(manifest.secret_output, { when_args: ["write_text", "write_values"] });
   const text = await readFile(join(WIN, "powershell_blocks", "run.py"), "utf8");

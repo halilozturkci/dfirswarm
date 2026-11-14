@@ -529,22 +529,29 @@ install_signal_handlers(lambda signum: interrupted_answer(signum))
 # A hive of N bytes holds at most N // 76 key cells (an nk cell is at least 76 bytes) and N // 20 value cells (a vk cell is at least 20), however
 # many elements an index claims: regipy follows a subkey index (ri) element by element, so one list repeated by an index is read as many times as
 # it is repeated (a 61 KB hive listed a million keys and took 1.2 GB). Every list of subkeys and values is read through these bounds, and what is
-# past one is said, never followed. The bounds are also of memory: a list keeps only the distinct keys it names, a value's data is read up to
-# VALUE_DATA_BYTES, and a key's values are handed out one at a time, at most LIST_DATA_BYTES of data of them. A hive is opened through open_hive,
-# which checks the base block and the root cell before regipy reads the file.
+# past one is said, never followed. The bounds are also of memory: a list keeps only the distinct keys it names, counted by what each takes (its
+# record and its name, as stored and as decoded: a name can be 65,535 bytes), and the names of the keys a walk keeps add up to at most twice the
+# hive's bytes (key cells that overlap, an element pointing into another key's name, are each read as a key of their own); a value's data is read
+# up to VALUE_DATA_BYTES, data that is not wholly inside the file is said and not read, and a key's values are handed out one at a time, at most
+# LIST_DATA_BYTES of their names and data. A hive is opened through open_hive, which checks the base block and the root cell before regipy reads
+# the file.
 import binascii
+import hashlib
 import itertools
 import logging
 import re
 import struct
+import sys
 import time
 import warnings
 
 KEY_CELL_BYTES = 76
 VALUE_CELL_BYTES = 20
 REPEAT_RUN = 4096                         # elements in a row naming keys a list already named: the list repeats, and is read no further
-HELD_KEY_BYTES = 1400                     # what one of regipy's key records holds in memory, with its identity kept, about
-HELD_KEYS_BYTES = 256 << 20               # the memory the distinct keys of one list may hold
+HELD_KEY_BYTES = 1400                     # what one of regipy's key records holds in memory besides its name (measured: 1.47 KB, a 64 KiB name counted apart)
+HELD_KEYS_BYTES = 256 << 20               # the memory the distinct keys of one list may hold: each its record, and its name as stored and as decoded
+HELD_NAMES_PER_BYTE = 2                   # the names of the keys a walk keeps add up to at most this many times the hive's bytes (each name is inside its own cell)
+IDENTITY_NAME = 64                        # a longer name is known among a list's identities by its length and a digest, not by a copy of it
 VALUE_DATA_BYTES = 16 << 20               # the data of one value read at most: a value that declares more is said with its length, its data not read
 LIST_DATA_BYTES = 64 << 20                # the data of one key's values handed out at most (a caller may hold them all)
 LATE_ELEMENTS = 16384                     # the elements read of a subkey list begun after the deadline
@@ -698,6 +705,7 @@ class HiveBounds:
         self.key_cells = max(size // KEY_CELL_BYTES, 1)
         self.value_cells = max(size // VALUE_CELL_BYTES, 1)
         self.keys_read = 0                      # subkey elements read over the whole walk
+        self.names_held = 0                     # bytes of the stored names of the distinct keys the lists of the walk handed out
         self.data_read = 0                      # bytes of value data read over the whole walk
         self.repeats = 0                        # elements that named a key already named in the same list
         self.not_read = 0                       # values a key lists that this block did not read (refused, or past a bound or the clock)
@@ -706,15 +714,18 @@ class HiveBounds:
     def subkeys(self, node, where, problems):
         """The distinct subkeys of `node`, at most the keys the hive can still hold; what is past that, or repeated, is a problem line. A key is
         kept the first time the list names it, and only then: an index that names one list again and again (65,535 lists of 65,535 elements)
-        costs the elements read, not a record kept for each (one of regipy's key records is about 1.2 KB, and such a list held them all past
-        2 GB). The list is read no further after REPEAT_RUN elements in a row that name keys it already named, after the distinct keys reach
-        HELD_KEYS_BYTES of memory, at the deadline, and, for a list begun after the deadline (a tool that finishes what it needs), after
+        costs the elements read, not a record kept for each (one of regipy's key records is about 1.4 KB besides its name, and such a list held
+        them all past 2 GB). What a kept key takes is counted by its own size: the record, its name as stored (up to 65,535 bytes) and as decoded
+        (up to twice that); regipy does not check that an element points at a key, so elements a byte apart in a run of random bytes are each a
+        key with a name of up to 64 KiB (65,000 of them held 11.8 GB). The list is read no further after REPEAT_RUN elements in a row that name
+        keys it already named, after the distinct keys reach HELD_KEYS_BYTES of memory, after the names the walk kept reach HELD_NAMES_PER_BYTE
+        times the hive's bytes, at the deadline, and, for a list begun after the deadline (a tool that finishes what it needs), after
         LATE_ELEMENTS elements; each such stop is a problem line."""
         room = max(self.key_cells - self.keys_read, 0)
         late = self.past_deadline()
-        most_held = max(HELD_KEYS_BYTES // HELD_KEY_BYTES, 1)
+        most_names = HELD_NAMES_PER_BYTE * self.hive_bytes
         seen, distinct = set(), []
-        read = repeated = run = 0
+        read = repeated = run = held = 0
         source = node.iter_subkeys() or iter(())
         try:
             for sub in source:
@@ -728,7 +739,11 @@ class HiveBounds:
                                      "error": "its subkey list was begun after the time limit and %d of its elements were read: the elements past that are not read" % read})
                     break
                 header = getattr(sub, "header", None)
-                identity = (str(getattr(sub, "name", "")).lower(), getattr(header, "last_modified", None),
+                name = str(getattr(sub, "name", "") or "")
+                said = name.lower()
+                if len(said) > IDENTITY_NAME:
+                    said = (len(said), hashlib.blake2b(said.encode("utf-8", "surrogatepass"), digest_size=16).digest())
+                identity = (said, getattr(header, "last_modified", None),
                             getattr(header, "subkeys_list_offset", None), getattr(header, "values_list_offset", None))
                 if identity in seen:
                     read += 1
@@ -740,11 +755,22 @@ class HiveBounds:
                                                   "a list; the elements past that are not read" % (run, read)})
                         break
                 else:
-                    if len(distinct) >= most_held:
+                    stored = getattr(header, "key_name_string", None)
+                    stored = len(stored) if isinstance(stored, (bytes, bytearray)) else len(name)
+                    cost = HELD_KEY_BYTES + stored + sys.getsizeof(name) + sys.getsizeof(said)
+                    if held + cost > HELD_KEYS_BYTES:
                         problems.append({"where": where, "what": "subkeys",
-                                         "error": "its subkey list names more than %d distinct keys, the most this tool holds for one list (%d MiB of memory): "
-                                                  "the elements past that are not read" % (most_held, HELD_KEYS_BYTES >> 20)})
+                                         "error": "its subkey list names more distinct keys than this tool holds for one list (%d MiB of memory, their names "
+                                                  "counted; %d were kept): the elements past that are not read" % (HELD_KEYS_BYTES >> 20, len(distinct))})
                         break
+                    if self.names_held + stored > most_names:
+                        problems.append({"where": where, "what": "subkeys",
+                                         "error": "the names of the keys this walk kept add up to more than %d times the %d bytes of the hive, and each name is "
+                                                  "inside a cell of its own: key cells that overlap, elements that point into other keys; the elements past that "
+                                                  "are not read" % (HELD_NAMES_PER_BYTE, self.hive_bytes)})
+                        break
+                    held += cost
+                    self.names_held += stored
                     read += 1
                     run = 0
                     seen.add(identity)
@@ -777,12 +803,12 @@ class HiveBounds:
         parts = [p for p in str(path).replace("/", "\\").split("\\") if p]
         node = root
         for i, part in enumerate(parts):
-            said, walked = [], self.keys_read
-            self.keys_read = 0
+            said, walked, names = [], self.keys_read, self.names_held
+            self.keys_read = self.names_held = 0
             try:
                 kids = self.subkeys(node, "\\" + "\\".join(parts[:i]), said)
             finally:
-                self.keys_read = walked
+                self.keys_read, self.names_held = walked, names
             # What a list on the way was cut or de-duplicated for is the caller's; names of keys that are not on the path are not.
             lost = _lost_names_problem("", "subkeys", 0)["error"].split(" ", 1)[1]
             for item in said:
@@ -808,8 +834,9 @@ class HiveBounds:
 
     def values(self, node, where, problems, **kwargs):
         """The values of `node`, handed out one at a time: at most the values the hive can hold, at most the data it can hold over the whole walk
-        (a value list that names one big record again and again reads that record every time), at most LIST_DATA_BYTES of data for the key (a
-        caller may keep every value of it), and, for a list begun after the deadline, at most LATE_VALUES; a key that lists more is a problem
+        (a value list that names one big record again and again reads that record every time), at most LIST_DATA_BYTES of names and data for
+        the key (a caller may keep every value of it, and a name can be 65,535 bytes: a list naming one such record 50,000 times is 3 GB of names),
+        and, for a list begun after the deadline, at most LATE_VALUES; a key that lists more is a problem
         line. The deadline is read before every value of a list begun before it: a key whose values are not all read in time is a problem line.
         With the real library the values are read here (read_values), every value's size checked before its data is read; with a stand-in that
         has no stream, through its iter_values. What the list declares and was not handed out, other than what regipy itself leaves out, is
@@ -884,10 +911,12 @@ class HiveBounds:
         where its own reading costs without bound: a big data value (a "db" record and its list of segments) is checked before its data is put
         together, and refused when it declares more data than the file holds past its base block, when its list holds fewer segments than its
         size needs, runs past the file or names a segment twice, or when a segment lies outside the file (regipy put together whatever the list
-        named: one 16 KB segment named 160 times was a 2.5 MiB value, and a 548 KB hive declared a value of 2 GiB); every value's data is counted
-        against the walk's data budget and the key's (`tally`, which also counts the values regipy itself leaves out) before it is read, and a
-        value that declares more than VALUE_DATA_BYTES is said with its length and not read (a value list naming one 250 MB string four times
-        held a gigabyte of text at once); REG_MULTI_SZ is split by multi_strings. A refused value is a problem line and is not in the list."""
+        named: one 16 KB segment named 160 times was a 2.5 MiB value, and a 548 KB hive declared a value of 2 GiB); every value's data and name are
+        counted against the walk's budget and the key's (`tally`, which also counts the values regipy itself leaves out) before its data is read,
+        and a value that declares more than VALUE_DATA_BYTES is said with its length and not read (a value list naming one 250 MB string four times
+        held a gigabyte of text at once); a value whose data is not wholly inside the file (it runs past the end or starts past it), or that
+        declares more than the four bytes a record holds, is not read (regipy printed the part inside, or nothing, as the whole value);
+        REG_MULTI_SZ is split by multi_strings. A refused value is a problem line and is not in the list."""
         count = node.values_count
         if not count:
             return
@@ -931,9 +960,14 @@ class HiveBounds:
                     name = vk.name.decode("utf-16-le", errors="replace")
                 size, offset = vk.data_size, vk.data_offset
                 inline = size >= INLINE_DATA
+                big = False
                 if inline:
-                    data = struct.pack("<I", offset & 0xFFFFFFFF)[:min(size - INLINE_DATA, 4)]
-                    big = False
+                    if size - INLINE_DATA > 4:
+                        # the record holds four bytes of data at most: what it declares past them is nowhere, and four bytes of it are not its value
+                        problems.append({"where": where, "what": "values",
+                                         "error": "%s is not read: it declares %d bytes of data held in its record, which holds 4 at most" % (where_value, size - INLINE_DATA)})
+                        continue
+                    cost = 0
                 else:
                     start = HBIN_START + 4 + offset
                     big = (size > SEGMENT_DATA and bytes(buf[start:start + 2]) == b"db"
@@ -943,27 +977,36 @@ class HiveBounds:
                         if why:
                             problems.append({"where": where, "what": "values", "error": "%s is not read: %s" % (where_value, why)})
                             continue
-                        cost = size
-                    else:
-                        cost = max(min(size, end - start), 0) if start < end else 0
+                    elif size and start + size > end:
+                        # data that runs past the end of the file, or starts past it, is not the value: the part inside (or nothing) is not printed as it
+                        problems.append({"where": where, "what": "values",
+                                         "error": "%s is not read: it declares %d bytes of data at offset %d of a hive file of %d bytes, %s" % (
+                                             where_value, size, start, end, "which starts past its end" if start >= end else
+                                             "and %d of them are past its end" % (start + size - end))})
+                        continue
+                    cost = size
                     if cost > VALUE_DATA_BYTES:
                         problems.append({"where": where, "what": "values",
                                          "error": "%s is not read: it declares %d bytes of data, more than the %d MiB this tool reads of one value; its length "
                                                   "is all that is read" % (where_value, size, VALUE_DATA_BYTES >> 20)})
                         continue
-                    if tally["data"] + cost > LIST_DATA_BYTES:
-                        problems.append({"where": where, "what": "values",
-                                         "error": "the values of this key hold more than %d MiB of data, the most this tool holds for one key: the values past "
-                                                  "that are not read" % (LIST_DATA_BYTES >> 20)})
-                        return
-                    if self.data_read + cost > 4 * self.hive_bytes:
-                        problems.append({"where": where, "what": "values",
-                                         "error": "the values read in this walk hold more data than a %d-byte hive can: records that a value list names again "
-                                                  "and again; the values past that are not read" % self.hive_bytes})
-                        return
-                    self.data_read += cost
-                    tally["data"] += cost
-                    data = b"".join(bytes(buf[s:s + n]) for s, n in segments) if big else bytes(buf[start:start + size]) if start < end else b""
+                cost += len(vk.name)                # the name is held too, as stored and as decoded: a list that names one long-named record again and again
+                if tally["data"] + cost > LIST_DATA_BYTES:
+                    problems.append({"where": where, "what": "values",
+                                     "error": "the values of this key hold more than %d MiB of names and data, the most this tool holds for one key: the values past "
+                                              "that are not read" % (LIST_DATA_BYTES >> 20)})
+                    return
+                if self.data_read + cost > 4 * self.hive_bytes:
+                    problems.append({"where": where, "what": "values",
+                                     "error": "the values read in this walk hold more names and data than a %d-byte hive can: records that a value list names "
+                                              "again and again; the values past that are not read" % self.hive_bytes})
+                    return
+                self.data_read += cost
+                tally["data"] += cost
+                if inline:
+                    data = struct.pack("<I", offset & 0xFFFFFFFF)[:size - INLINE_DATA]
+                else:
+                    data = b"".join(bytes(buf[s:s + n]) for s, n in segments) if big else bytes(buf[start:start + size])
                 if data_type in ("REG_SZ", "REG_EXPAND", "REG_EXPAND_SZ"):
                     value = reg.try_decode_binary(data, as_json=as_json, trim_values=trim_values)
                 elif data_type in ("REG_BINARY", "REG_NONE"):
@@ -1107,6 +1150,9 @@ def big_data_segments(buf, start, size, room):
 # tool's time limit: the string in progress finishes after it, and one string of 256 KiB takes up to 2.3 seconds to judge on a loaded machine (the worst measured).
 # A run has a second bound: past MAX_JUDGED_CHARS characters judged (the final answer is always judged), a string not judged before is withheld by its size in the
 # same way. boundary.stopped_by says which bound stopped the judging and boundary.strings_withheld_by_the_stop how many strings it withheld; the answer is partial.
+# The judging that only sees what an answer would print (the order of a list, print_order; a filter, sealed_text and contains_check) runs under the same
+# clock and counts toward the same cap: past either, the items of a list not judged yet come after the judged ones in a random order, a filter is blind to
+# a string it did not judge, each such string is counted (boundary.strings_not_judged_for_order_or_filter), and the answer is partial.
 # NOT RECOGNISED, by design: a secret that does not look like one (a plain password, a pronounceable passphrase, a UUID-shaped key,
 # anything under 16 characters in a name, a secret hidden in words or in an encoding this block does not read).
 import collections
@@ -1131,7 +1177,8 @@ KEY_KINDS = {}                  # a JSON key holding a dict -> the kind of that 
 MAX_WHERE = 200
 MAX_JUDGED_CHARS = 400000000    # characters one run may have judged (every string of its answers and paging files); past it a string not judged before is withheld by its size
 FINAL_GRACE_CHARS = 4000000     # the final answer may always be judged: the cap is raised by this much, and is not spent again by the strings already withheld
-_STOP = {"cap": MAX_JUDGED_CHARS, "chars": 0, "by": None, "strings": 0}   # why judging stopped (None: it did not), and how many strings it withheld by their size
+_STOP = {"cap": MAX_JUDGED_CHARS, "chars": 0, "by": None, "strings": 0, "quiet": 0}   # why judging stopped (None: it did not), how many strings it withheld by
+                                                                                        # their size, and how many it left unjudged in an order or a filter
 
 
 class T(str):
@@ -2068,28 +2115,43 @@ def _quietly(fn):
 def sealed_text(text, kind="text", field=""):
     """The exact text an answer prints for the string `text` of a field of type `kind`: the layers, then the backstop (a string it replaces comes
     out as its placeholder). Nothing is counted, listed or written to the values file: this is for what must see what the answer shows (a
-    `contains` filter, the order of a list)."""
+    `contains` filter, the order of a list). It runs under the clock of the seal and counts toward the cap of characters (_timed, _late): a string
+    it does not judge comes out as its placeholder, and is counted."""
     if not isinstance(text, str) or not text:
         return text
-    return _quietly(lambda: _seal(text, kind, field, (), True))
+    return _quietly(lambda: _timed(lambda: _seal(text, kind, field, (), True)))
 
 
 def print_order(items, kind="name", text=str):
     """`items` in the order an answer prints them: by the text the answer PRINTS for each (the layers and the backstop, sealed_text), and the items
     whose text is the same placeholder in a random order that is new for every run. The rank of the withheld texts themselves (the order `sorted`
     would give, the order a directory or a hive lists them in) must never show in what an answer lists. `kind` is the kind of the field the items
-    are printed in; `text` gives the string of an item."""
+    are printed in; `text` gives the string of an item. The judging runs under the clock of the seal (SEAL_BUDGET from the outermost call, never past
+    the seal stop) and counts toward the cap of characters, as the judging of an answer does: once either stops it (a list of 13,000 names of 64 KiB
+    ran for minutes without a clock), the items not judged come after the judged ones in a random order of their own, each is counted
+    (_STOP["quiet"]), and the answer is partial (boundary.stopped_by)."""
     def judge():
-        out = []
+        out, rest = [], []
         for n, i in enumerate(items):
             raw = text(i)
-            shown = _seal(raw, kind, "", (), True) if isinstance(raw, str) and raw else raw
-            out.append((shown, hashlib.blake2b(_ORDER_SALT + raw.encode("utf-8", "surrogatepass"), digest_size=8).digest(), n, i))
-        return out
+            rank = hashlib.blake2b(_ORDER_SALT + str(raw).encode("utf-8", "surrogatepass"), digest_size=8).digest()
+            if not rest:
+                if not isinstance(raw, str) or not raw:
+                    out.append((raw, rank, n, i))
+                    continue
+                left = _STOP["quiet"]
+                shown = _seal(raw, kind, "", (), True)
+                if _STOP["quiet"] == left:
+                    out.append((shown, rank, n, i))
+                    continue
+            rest.append((rank, n, i))                 # (the first of them was counted when judging stopped on it; the rest are counted below)
+        _STOP["quiet"] += max(len(rest) - 1, 0)
+        return out, rest
     items = list(items)
-    keyed = _quietly(judge)
+    keyed, rest = _quietly(lambda: _timed(judge))
     keyed.sort(key=lambda k: (k[0], k[1], k[2]))
-    return [k[3] for k in keyed]
+    rest.sort()
+    return [k[3] for k in keyed] + [r[2] for r in rest]
 
 
 def contains_check(needle_lower, text, kind="text", field=""):
@@ -2410,9 +2472,10 @@ def _unjudged(text, kind=None):
 
 
 def _late(n=0):
-    """Whether judging must stop for the string about to be judged, which has `n` characters (counted against the cap of the run, unless the string is
-    only being judged to see what an answer would print). It says why, once, in _STOP["by"]: the cap of characters, or the clock of the seal."""
-    if n and not _QUIET[0]:
+    """Whether judging must stop for the string about to be judged, which has `n` characters (counted against the cap of the run, also when the string is
+    only being judged to see what an answer would print: an order or a filter costs what an answer does). It says why, once, in _STOP["by"]: the cap of
+    characters, or the clock of the seal."""
+    if n:
         _STOP["chars"] += n
         if _STOP["chars"] > _STOP["cap"]:
             if _STOP["by"] is None:
@@ -2427,9 +2490,9 @@ def _late(n=0):
 
 
 def _stopped(value, where):
-    """A string not judged because judging stopped: withheld whole, by its size, counted (what is let through is only _unjudged)."""
-    if not _QUIET[0]:
-        _STOP["strings"] += 1
+    """A string not judged because judging stopped: withheld whole, by its size, counted (what is let through is only _unjudged). One judged only to see
+    what an answer would print (an order, a filter) is counted apart: the answer may still print it, judged then."""
+    _STOP["quiet" if _QUIET[0] else "strings"] += 1
     return _replace(value, where, "the judging time ran out", True)
 
 
@@ -2695,7 +2758,8 @@ def row_object(row):
 
 
 def boundary_summary():
-    stopped = {"stopped_by": _STOP["by"], "strings_withheld_by_the_stop": _STOP["strings"]} if _STOP["by"] is not None else {}
+    stopped = {"stopped_by": _STOP["by"], "strings_withheld_by_the_stop": _STOP["strings"],
+               "strings_not_judged_for_order_or_filter": _STOP["quiet"]} if _STOP["by"] is not None else {}
     return {"strings_withheld": BOUNDARY["withheld"], "withheld_by_reason": dict(BOUNDARY["by"]),
             "strings_replaced_by_the_backstop": BOUNDARY["replaced"], "replaced_by_check": dict(BOUNDARY["replaced_by"]),
             "replaced_at": list(BOUNDARY["where"]), "replaced_not_listed": BOUNDARY["not_listed"], "values": values_summary(), **stopped,
@@ -2731,7 +2795,9 @@ def answer_object(doc):
             if shaped > 0:
                 why.append("%d string(s) still held a secret-shaped text when the answer was checked on its way out and were replaced" % shaped)
             if _STOP["by"] is not None:
-                why.append("judging the strings stopped at %s: %d string(s) after it were withheld by their size" % (_STOP["by"], _STOP["strings"]))
+                why.append("judging the strings stopped at %s: %d string(s) after it were withheld by their size%s" % (
+                    _STOP["by"], _STOP["strings"], "" if not _STOP["quiet"] else ", and %d were put in order or filtered without being judged (an order "
+                    "of their own, a filter blind to them)" % _STOP["quiet"]))
             out["status_basis"] = "%s%s (see boundary)" % (basis + "; " if isinstance(basis, str) and basis else "", "; ".join(why))
     return out
 

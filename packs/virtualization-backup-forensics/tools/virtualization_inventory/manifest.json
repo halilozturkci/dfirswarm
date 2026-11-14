@@ -50,7 +50,7 @@
   "example": "{\"root\": \"work/extracted/config\"}",
   "by": "maintainer",
   "at": "2026-10-15T09:00:00.000Z",
-  "version": 10,
+  "version": 11,
   "use": {
     "extensions": [
       ".vmx",
@@ -64,5 +64,5 @@
       "storage.cfg"
     ]
   },
-  "sha256": "33a41d4755cc9ebb8d5f4f72bd3153cdf29579a211ac3727c3d4357cee47e652"
+  "sha256": "90fc0c0afe25594859ddd1c90b0416530c3a1cfb0a086fd267fd0619c316908e"
 }

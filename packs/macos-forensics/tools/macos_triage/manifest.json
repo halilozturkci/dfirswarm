@@ -42,8 +42,8 @@
   "example": "{\"path\": \"work/extracted/mac.E01\", \"input_type\": \"E01\", \"plugins\": [\"TCC\", \"BASHSESSIONS\"]}",
   "by": "maintainer",
   "at": "2026-11-04T12:00:00.000Z",
-  "version": 8,
-  "sha256": "caceecf17296fd59af3727edc508d6b03db10bee738f5bb738b4ed9be6bbf5f3",
+  "version": 9,
+  "sha256": "c3d849c3172eae3c06c959533dd6e696d9e5d26446db455ec20d59b4d2a87d52",
   "use": {
     "extensions": [
       ".e01",

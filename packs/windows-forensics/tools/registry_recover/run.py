@@ -1664,22 +1664,29 @@ def install_signal_handlers():
 # A hive of N bytes holds at most N // 76 key cells (an nk cell is at least 76 bytes) and N // 20 value cells (a vk cell is at least 20), however
 # many elements an index claims: regipy follows a subkey index (ri) element by element, so one list repeated by an index is read as many times as
 # it is repeated (a 61 KB hive listed a million keys and took 1.2 GB). Every list of subkeys and values is read through these bounds, and what is
-# past one is said, never followed. The bounds are also of memory: a list keeps only the distinct keys it names, a value's data is read up to
-# VALUE_DATA_BYTES, and a key's values are handed out one at a time, at most LIST_DATA_BYTES of data of them. A hive is opened through open_hive,
-# which checks the base block and the root cell before regipy reads the file.
+# past one is said, never followed. The bounds are also of memory: a list keeps only the distinct keys it names, counted by what each takes (its
+# record and its name, as stored and as decoded: a name can be 65,535 bytes), and the names of the keys a walk keeps add up to at most twice the
+# hive's bytes (key cells that overlap, an element pointing into another key's name, are each read as a key of their own); a value's data is read
+# up to VALUE_DATA_BYTES, data that is not wholly inside the file is said and not read, and a key's values are handed out one at a time, at most
+# LIST_DATA_BYTES of their names and data. A hive is opened through open_hive, which checks the base block and the root cell before regipy reads
+# the file.
 import binascii
+import hashlib
 import itertools
 import logging
 import re
 import struct
+import sys
 import time
 import warnings
 
 KEY_CELL_BYTES = 76
 VALUE_CELL_BYTES = 20
 REPEAT_RUN = 4096                         # elements in a row naming keys a list already named: the list repeats, and is read no further
-HELD_KEY_BYTES = 1400                     # what one of regipy's key records holds in memory, with its identity kept, about
-HELD_KEYS_BYTES = 256 << 20               # the memory the distinct keys of one list may hold
+HELD_KEY_BYTES = 1400                     # what one of regipy's key records holds in memory besides its name (measured: 1.47 KB, a 64 KiB name counted apart)
+HELD_KEYS_BYTES = 256 << 20               # the memory the distinct keys of one list may hold: each its record, and its name as stored and as decoded
+HELD_NAMES_PER_BYTE = 2                   # the names of the keys a walk keeps add up to at most this many times the hive's bytes (each name is inside its own cell)
+IDENTITY_NAME = 64                        # a longer name is known among a list's identities by its length and a digest, not by a copy of it
 VALUE_DATA_BYTES = 16 << 20               # the data of one value read at most: a value that declares more is said with its length, its data not read
 LIST_DATA_BYTES = 64 << 20                # the data of one key's values handed out at most (a caller may hold them all)
 LATE_ELEMENTS = 16384                     # the elements read of a subkey list begun after the deadline
@@ -1833,6 +1840,7 @@ class HiveBounds:
         self.key_cells = max(size // KEY_CELL_BYTES, 1)
         self.value_cells = max(size // VALUE_CELL_BYTES, 1)
         self.keys_read = 0                      # subkey elements read over the whole walk
+        self.names_held = 0                     # bytes of the stored names of the distinct keys the lists of the walk handed out
         self.data_read = 0                      # bytes of value data read over the whole walk
         self.repeats = 0                        # elements that named a key already named in the same list
         self.not_read = 0                       # values a key lists that this block did not read (refused, or past a bound or the clock)
@@ -1841,15 +1849,18 @@ class HiveBounds:
     def subkeys(self, node, where, problems):
         """The distinct subkeys of `node`, at most the keys the hive can still hold; what is past that, or repeated, is a problem line. A key is
         kept the first time the list names it, and only then: an index that names one list again and again (65,535 lists of 65,535 elements)
-        costs the elements read, not a record kept for each (one of regipy's key records is about 1.2 KB, and such a list held them all past
-        2 GB). The list is read no further after REPEAT_RUN elements in a row that name keys it already named, after the distinct keys reach
-        HELD_KEYS_BYTES of memory, at the deadline, and, for a list begun after the deadline (a tool that finishes what it needs), after
+        costs the elements read, not a record kept for each (one of regipy's key records is about 1.4 KB besides its name, and such a list held
+        them all past 2 GB). What a kept key takes is counted by its own size: the record, its name as stored (up to 65,535 bytes) and as decoded
+        (up to twice that); regipy does not check that an element points at a key, so elements a byte apart in a run of random bytes are each a
+        key with a name of up to 64 KiB (65,000 of them held 11.8 GB). The list is read no further after REPEAT_RUN elements in a row that name
+        keys it already named, after the distinct keys reach HELD_KEYS_BYTES of memory, after the names the walk kept reach HELD_NAMES_PER_BYTE
+        times the hive's bytes, at the deadline, and, for a list begun after the deadline (a tool that finishes what it needs), after
         LATE_ELEMENTS elements; each such stop is a problem line."""
         room = max(self.key_cells - self.keys_read, 0)
         late = self.past_deadline()
-        most_held = max(HELD_KEYS_BYTES // HELD_KEY_BYTES, 1)
+        most_names = HELD_NAMES_PER_BYTE * self.hive_bytes
         seen, distinct = set(), []
-        read = repeated = run = 0
+        read = repeated = run = held = 0
         source = node.iter_subkeys() or iter(())
         try:
             for sub in source:
@@ -1863,7 +1874,11 @@ class HiveBounds:
                                      "error": "its subkey list was begun after the time limit and %d of its elements were read: the elements past that are not read" % read})
                     break
                 header = getattr(sub, "header", None)
-                identity = (str(getattr(sub, "name", "")).lower(), getattr(header, "last_modified", None),
+                name = str(getattr(sub, "name", "") or "")
+                said = name.lower()
+                if len(said) > IDENTITY_NAME:
+                    said = (len(said), hashlib.blake2b(said.encode("utf-8", "surrogatepass"), digest_size=16).digest())
+                identity = (said, getattr(header, "last_modified", None),
                             getattr(header, "subkeys_list_offset", None), getattr(header, "values_list_offset", None))
                 if identity in seen:
                     read += 1
@@ -1875,11 +1890,22 @@ class HiveBounds:
                                                   "a list; the elements past that are not read" % (run, read)})
                         break
                 else:
-                    if len(distinct) >= most_held:
+                    stored = getattr(header, "key_name_string", None)
+                    stored = len(stored) if isinstance(stored, (bytes, bytearray)) else len(name)
+                    cost = HELD_KEY_BYTES + stored + sys.getsizeof(name) + sys.getsizeof(said)
+                    if held + cost > HELD_KEYS_BYTES:
                         problems.append({"where": where, "what": "subkeys",
-                                         "error": "its subkey list names more than %d distinct keys, the most this tool holds for one list (%d MiB of memory): "
-                                                  "the elements past that are not read" % (most_held, HELD_KEYS_BYTES >> 20)})
+                                         "error": "its subkey list names more distinct keys than this tool holds for one list (%d MiB of memory, their names "
+                                                  "counted; %d were kept): the elements past that are not read" % (HELD_KEYS_BYTES >> 20, len(distinct))})
                         break
+                    if self.names_held + stored > most_names:
+                        problems.append({"where": where, "what": "subkeys",
+                                         "error": "the names of the keys this walk kept add up to more than %d times the %d bytes of the hive, and each name is "
+                                                  "inside a cell of its own: key cells that overlap, elements that point into other keys; the elements past that "
+                                                  "are not read" % (HELD_NAMES_PER_BYTE, self.hive_bytes)})
+                        break
+                    held += cost
+                    self.names_held += stored
                     read += 1
                     run = 0
                     seen.add(identity)
@@ -1912,12 +1938,12 @@ class HiveBounds:
         parts = [p for p in str(path).replace("/", "\\").split("\\") if p]
         node = root
         for i, part in enumerate(parts):
-            said, walked = [], self.keys_read
-            self.keys_read = 0
+            said, walked, names = [], self.keys_read, self.names_held
+            self.keys_read = self.names_held = 0
             try:
                 kids = self.subkeys(node, "\\" + "\\".join(parts[:i]), said)
             finally:
-                self.keys_read = walked
+                self.keys_read, self.names_held = walked, names
             # What a list on the way was cut or de-duplicated for is the caller's; names of keys that are not on the path are not.
             lost = _lost_names_problem("", "subkeys", 0)["error"].split(" ", 1)[1]
             for item in said:
@@ -1943,8 +1969,9 @@ class HiveBounds:
 
     def values(self, node, where, problems, **kwargs):
         """The values of `node`, handed out one at a time: at most the values the hive can hold, at most the data it can hold over the whole walk
-        (a value list that names one big record again and again reads that record every time), at most LIST_DATA_BYTES of data for the key (a
-        caller may keep every value of it), and, for a list begun after the deadline, at most LATE_VALUES; a key that lists more is a problem
+        (a value list that names one big record again and again reads that record every time), at most LIST_DATA_BYTES of names and data for
+        the key (a caller may keep every value of it, and a name can be 65,535 bytes: a list naming one such record 50,000 times is 3 GB of names),
+        and, for a list begun after the deadline, at most LATE_VALUES; a key that lists more is a problem
         line. The deadline is read before every value of a list begun before it: a key whose values are not all read in time is a problem line.
         With the real library the values are read here (read_values), every value's size checked before its data is read; with a stand-in that
         has no stream, through its iter_values. What the list declares and was not handed out, other than what regipy itself leaves out, is
@@ -2019,10 +2046,12 @@ class HiveBounds:
         where its own reading costs without bound: a big data value (a "db" record and its list of segments) is checked before its data is put
         together, and refused when it declares more data than the file holds past its base block, when its list holds fewer segments than its
         size needs, runs past the file or names a segment twice, or when a segment lies outside the file (regipy put together whatever the list
-        named: one 16 KB segment named 160 times was a 2.5 MiB value, and a 548 KB hive declared a value of 2 GiB); every value's data is counted
-        against the walk's data budget and the key's (`tally`, which also counts the values regipy itself leaves out) before it is read, and a
-        value that declares more than VALUE_DATA_BYTES is said with its length and not read (a value list naming one 250 MB string four times
-        held a gigabyte of text at once); REG_MULTI_SZ is split by multi_strings. A refused value is a problem line and is not in the list."""
+        named: one 16 KB segment named 160 times was a 2.5 MiB value, and a 548 KB hive declared a value of 2 GiB); every value's data and name are
+        counted against the walk's budget and the key's (`tally`, which also counts the values regipy itself leaves out) before its data is read,
+        and a value that declares more than VALUE_DATA_BYTES is said with its length and not read (a value list naming one 250 MB string four times
+        held a gigabyte of text at once); a value whose data is not wholly inside the file (it runs past the end or starts past it), or that
+        declares more than the four bytes a record holds, is not read (regipy printed the part inside, or nothing, as the whole value);
+        REG_MULTI_SZ is split by multi_strings. A refused value is a problem line and is not in the list."""
         count = node.values_count
         if not count:
             return
@@ -2066,9 +2095,14 @@ class HiveBounds:
                     name = vk.name.decode("utf-16-le", errors="replace")
                 size, offset = vk.data_size, vk.data_offset
                 inline = size >= INLINE_DATA
+                big = False
                 if inline:
-                    data = struct.pack("<I", offset & 0xFFFFFFFF)[:min(size - INLINE_DATA, 4)]
-                    big = False
+                    if size - INLINE_DATA > 4:
+                        # the record holds four bytes of data at most: what it declares past them is nowhere, and four bytes of it are not its value
+                        problems.append({"where": where, "what": "values",
+                                         "error": "%s is not read: it declares %d bytes of data held in its record, which holds 4 at most" % (where_value, size - INLINE_DATA)})
+                        continue
+                    cost = 0
                 else:
                     start = HBIN_START + 4 + offset
                     big = (size > SEGMENT_DATA and bytes(buf[start:start + 2]) == b"db"
@@ -2078,27 +2112,36 @@ class HiveBounds:
                         if why:
                             problems.append({"where": where, "what": "values", "error": "%s is not read: %s" % (where_value, why)})
                             continue
-                        cost = size
-                    else:
-                        cost = max(min(size, end - start), 0) if start < end else 0
+                    elif size and start + size > end:
+                        # data that runs past the end of the file, or starts past it, is not the value: the part inside (or nothing) is not printed as it
+                        problems.append({"where": where, "what": "values",
+                                         "error": "%s is not read: it declares %d bytes of data at offset %d of a hive file of %d bytes, %s" % (
+                                             where_value, size, start, end, "which starts past its end" if start >= end else
+                                             "and %d of them are past its end" % (start + size - end))})
+                        continue
+                    cost = size
                     if cost > VALUE_DATA_BYTES:
                         problems.append({"where": where, "what": "values",
                                          "error": "%s is not read: it declares %d bytes of data, more than the %d MiB this tool reads of one value; its length "
                                                   "is all that is read" % (where_value, size, VALUE_DATA_BYTES >> 20)})
                         continue
-                    if tally["data"] + cost > LIST_DATA_BYTES:
-                        problems.append({"where": where, "what": "values",
-                                         "error": "the values of this key hold more than %d MiB of data, the most this tool holds for one key: the values past "
-                                                  "that are not read" % (LIST_DATA_BYTES >> 20)})
-                        return
-                    if self.data_read + cost > 4 * self.hive_bytes:
-                        problems.append({"where": where, "what": "values",
-                                         "error": "the values read in this walk hold more data than a %d-byte hive can: records that a value list names again "
-                                                  "and again; the values past that are not read" % self.hive_bytes})
-                        return
-                    self.data_read += cost
-                    tally["data"] += cost
-                    data = b"".join(bytes(buf[s:s + n]) for s, n in segments) if big else bytes(buf[start:start + size]) if start < end else b""
+                cost += len(vk.name)                # the name is held too, as stored and as decoded: a list that names one long-named record again and again
+                if tally["data"] + cost > LIST_DATA_BYTES:
+                    problems.append({"where": where, "what": "values",
+                                     "error": "the values of this key hold more than %d MiB of names and data, the most this tool holds for one key: the values past "
+                                              "that are not read" % (LIST_DATA_BYTES >> 20)})
+                    return
+                if self.data_read + cost > 4 * self.hive_bytes:
+                    problems.append({"where": where, "what": "values",
+                                     "error": "the values read in this walk hold more names and data than a %d-byte hive can: records that a value list names "
+                                              "again and again; the values past that are not read" % self.hive_bytes})
+                    return
+                self.data_read += cost
+                tally["data"] += cost
+                if inline:
+                    data = struct.pack("<I", offset & 0xFFFFFFFF)[:size - INLINE_DATA]
+                else:
+                    data = b"".join(bytes(buf[s:s + n]) for s, n in segments) if big else bytes(buf[start:start + size])
                 if data_type in ("REG_SZ", "REG_EXPAND", "REG_EXPAND_SZ"):
                     value = reg.try_decode_binary(data, as_json=as_json, trim_values=trim_values)
                 elif data_type in ("REG_BINARY", "REG_NONE"):
@@ -3412,7 +3455,7 @@ def regfexport_counts(path, seconds):
     keys = values = printed = 0
     carry = b"\n"          # the first line of the output has a line break before it, as every other has
     end = time.monotonic() + max(seconds, 1.0)
-    timed_out = over_output = held = False
+    timed_out = over_output = held = left_running = False
     fd = proc.stdout.fileno()
     gone, settled = None, False        # when regfexport was first seen to have ended while its pipe was still open, and whether what it left was looked for
     try:
@@ -3449,7 +3492,18 @@ def regfexport_counts(path, seconds):
             keys += data.count(b"\nKey path: ") - carry.count(b"\nKey path: ")
             values += data.count(b"\nValue: ") - carry.count(b"\nValue: ")
             carry = data[-12:]
-        code = proc.wait()
+        # The output has ended: regfexport has ended or is about to. One that closed its output and went on running is given PIPE_GRACE seconds (never
+        # past the clock) and then ended, so that the wait has a bound.
+        try:
+            code = proc.wait(timeout=max(0.0, min(PIPE_GRACE, end - time.monotonic())))
+        except subprocess.TimeoutExpired:
+            if not (timed_out or over_output):
+                left_running = True
+            kill_tree(proc)
+            try:
+                code = proc.wait(timeout=PIPE_GRACE)
+            except subprocess.TimeoutExpired:
+                code = None
     finally:
         if proc in ACTIVE:
             ACTIVE.remove(proc)
@@ -3458,7 +3512,7 @@ def regfexport_counts(path, seconds):
         except OSError:
             pass
     left_behind = process_verdict()["left_behind"] - ended_before
-    finished = not timed_out and not over_output and code == 0 and not left_behind and not held
+    finished = not timed_out and not over_output and not left_running and code == 0 and not left_behind and not held
     result = {"ran": True, "exit_code": code, "finished": finished, "keys": keys, "values": values, "output_bytes": printed,
               "limits": {"address_space_bytes": memory_applied, "output_bytes": output_ceiling},
               "counted_by": "the lines of its output that start 'Key path: ' and 'Value: ' (a value whose text holds such a line is counted too)"}
@@ -3469,8 +3523,12 @@ def regfexport_counts(path, seconds):
         elif over_output:
             result["why_not_finished"] = ("regfexport printed more than %d bytes (%d bytes were read from a hive of %d) and was stopped: its counts are partial and are not compared"
                                           % (output_ceiling, printed, hive_bytes))
+        elif left_running:
+            result["why_not_finished"] = ("regfexport closed its output and was still running %.1f s later: it was ended, and its counts are partial and are not compared" % PIPE_GRACE)
         elif timed_out:
             result["why_not_finished"] = "regfexport did not finish within the time left and was stopped: its counts are partial and are not compared"
+        elif code is None:
+            result["why_not_finished"] = "regfexport could not be ended after it was stopped: its counts are partial and are not compared"
         elif code < 0:
             result["why_not_finished"] = "regfexport was ended by signal %d (%s): its counts are partial and are not compared" % (-code, "the hive may be damaged in a way that breaks the library")
         else:

@@ -1897,6 +1897,7 @@ def main():
     errfd, errname = tempfile.mkstemp(prefix=".yara-stderr-", dir=_ensure(outdir))
     TEMPS.append(errname)
     timed_out = [False]
+    left_running = [False]    # yara closed its output and was still running PIPE_GRACE seconds later: it was ended
     never_ran = yara_seconds < 1
     ignored = 0           # lines that are neither a rule line for a path of the target nor a string line: counted, never shown
     current = None        # [rule, file, string count]
@@ -1922,6 +1923,7 @@ def main():
             kill_tree(proc)
 
         timer = threading.Timer(yara_seconds, stop)
+        yara_until = time.monotonic() + yara_seconds
         timer.start()
         # The output is read by a thread of its own and the main thread waits in short turns: a stop signal that arrives in the instant before a blocking read
         # begins is then handled within half a second, where a main thread already blocked in the read would never run its handler.
@@ -1977,8 +1979,19 @@ def main():
             if 'error' in box:
                 raise box['error']
         finally:
+            # The output has reached its end (or the reader failed): yara has ended or is about to. A program that closed its output and went on
+            # running is given PIPE_GRACE seconds (never past its own clock) and then ended: the wait is never without a bound.
+            try:
+                rc = proc.wait(timeout=max(0.0, min(PIPE_GRACE, yara_until - time.monotonic())))
+            except subprocess.TimeoutExpired:
+                if not timed_out[0]:
+                    left_running[0] = True
+                kill_tree(proc)
+                try:
+                    rc = proc.wait(timeout=PIPE_GRACE)
+                except subprocess.TimeoutExpired:
+                    rc = None
             timer.cancel()
-            rc = proc.wait()
             if proc in ACTIVE:
                 ACTIVE.remove(proc)
             values.close()
@@ -2037,11 +2050,11 @@ def main():
     # or PR_SET_CHILD_SUBREAPER refused) the file cannot be shown to be final.
     verdict = process_verdict()
     unsettled = bool(verdict["left_behind"] or verdict["unproven"])
-    complete = (not never_ran and rc == 0 and not timed_out[0] and error_page["matched"] == 0 and skipped_page["matched"] == 0 and not walk_cut
+    complete = (not never_ran and rc == 0 and not timed_out[0] and not left_running[0] and error_page["matched"] == 0 and skipped_page["matched"] == 0 and not walk_cut
                 and not stderr_unread and rules_digest is not None and not unsettled)
     if complete:
         status = "complete"
-    elif never_ran or timed_out[0] or (rc == 0 and not timed_out[0]) or rule_page["matched"] or string_page["matched"]:
+    elif never_ran or timed_out[0] or left_running[0] or (rc == 0 and not timed_out[0]) or rule_page["matched"] or string_page["matched"]:
         status = "partial"
     else:
         status = "failed"
@@ -2050,9 +2063,11 @@ def main():
         reasons.append("the tool's own clock (%d s) left yara no time to run (the probes and the walk of the target used it): nothing was scanned" % DEADLINE_SECONDS)
     if timed_out[0]:
         reasons.append("yara was stopped after %d s (its share of the tool's %d s clock, or timeout_seconds): what it printed before is listed" % (yara_seconds, DEADLINE_SECONDS))
+    if left_running[0]:
+        reasons.append("yara closed its output and was still running %.1f s later: it was ended, and what it would still have printed or written is missing" % PIPE_GRACE)
     if walk_cut:
         reasons.append("the walk of the target for files yara skips was cut by the clock: not_attempted is incomplete")
-    if rc not in (0, None) and not timed_out[0]:
+    if rc not in (0, None) and not timed_out[0] and not left_running[0]:
         reasons.append("yara exited %d" % rc)
     if error_page["matched"]:
         reasons.append("%d file(s) could not be scanned (scan_errors)" % error_page["matched"])

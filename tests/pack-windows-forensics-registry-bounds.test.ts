@@ -145,7 +145,7 @@ test("regkv reads a value list that names one big record again and again for the
     const out = body<Answer>(await tool("regkv", cwd, { hive: "work/h.dat", key: "K" }, env));
     assert.ok(Object.keys(out.values).length * 60_000 <= 4 * hiveBytes + 60_000, `${Object.keys(out.values).length} values of 60 KB from a ${hiveBytes}-byte hive`);
     assert.equal(out.status, "partial");
-    assert.ok(out.problems.some((p: Answer) => /hold more data than a \d+-byte hive can/.test(p.error)), JSON.stringify(out.problems).slice(0, 300));
+    assert.ok(out.problems.some((p: Answer) => /hold more names and data than a \d+-byte hive can/.test(p.error)), JSON.stringify(out.problems).slice(0, 300));
   });
 });
 

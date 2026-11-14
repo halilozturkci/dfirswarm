@@ -29,8 +29,8 @@
   "example": "{\"rules\": \"work/rules/webshells.yar\", \"target\": \"work/extracted\"}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 15,
-  "sha256": "f7a5ff8a5ff22bb546b03303f998d2c50ce77bc1dbf096c232ce3da16ca9bbbd",
+  "version": 16,
+  "sha256": "b89ff670027041da571c5a6d61aedeab52f426fbfe8c6dd50fc038a16678cb73",
   "requires": [
     "yara"
   ],
