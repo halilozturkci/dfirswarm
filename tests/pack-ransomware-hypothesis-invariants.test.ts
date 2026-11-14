@@ -149,7 +149,7 @@ test("I1: a bound that stops the second pass before every place before the chose
       assert.ok(a.partial_reasons.some((r: string) => /A rule explains every member, and \d+ places before its place were not tried/.test(r)), a.status_basis);
     }
     // Never another recipe said complete: a complete answer (none here) would have to carry the uncut recipe.
-    if (a.status === "complete") assert.deepEqual(await recipeOf(m), recipe);
+    if ((a.status as string) === "complete") assert.deepEqual(await recipeOf(m), recipe);
   }
 });
 

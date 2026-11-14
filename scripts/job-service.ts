@@ -48,6 +48,7 @@ import { assessJob, HEARTBEAT_LINES, HEARTBEAT_STOP, keepSample, readSamples, sa
 import type { Mount, WorkerSpec } from "./vm.ts";
 import { jobNetworkHosts } from "./net-grants.ts";
 import { argRefsWords, resolveToolArgs, type ArgRef } from "./tool-arg-refs.ts";
+import { EACH_SCRIPT, eachOf, eachPlan, eachWords, type EachSpec } from "./tool-each.ts";
 import { dumpMembers, dumpReaders, dumpsPost, membersTsv } from "./dump-members.ts";
 import { indexOutputs, objectsMatch, opMatch, rankSimilar, reuseOf, SAME_AS_SHOWN, sameAsOf, sameAsView, type Reuse, type SameAs, type Similar } from "./job-reuse.ts";
 import { declaredSecretOutput, jobSensitivity, parseSecretDeclaration, recipeSecretRefusal, sensitiveIndex, targetPaths, type SecretDeclaration, type Sensitivity } from "./output-hygiene.ts";
@@ -217,6 +218,8 @@ export type JobSpec = {
   alias?: string;
   /** tool: the arguments that were references (job:, import:, input:) and the paths the tool was given for them (scripts/tool-arg-refs.ts). */
   args_resolved?: ArgRef[];
+  /** A one-file reader given a directory: run once per file it reads there (tool-each.ts). */
+  each?: EachSpec;
   /** recipe: the one phase of the recipe to run, of those its recipe.json declares (`phases`); the recipe is told in RECIPE_PHASE. Without it the recipe runs whole. */
   phase?: string;
   experimental?: boolean;
@@ -1399,7 +1402,11 @@ export class JobService {
       if (!refs.ok) return { reason: refs.reason };
       // A declared scope is given what the arguments name: the tool could not read it otherwise.
       if (declared.kind === "declared") for (const r of refs.resolved) if (!base.inputs.some((x) => x === r.object || x.startsWith(`${r.object}/`) || x === r.from) && base.inputs.length < SCOPE_DECLARED_MAX) base.inputs.push(r.from);
-      const withRefs = { tool: String(raw.tool), args: refs.args, ...(refs.resolved.length ? { args_resolved: refs.resolved.slice(0, 32) } : {}) };
+      // A directory given to a one-file reader: the tool runs once per file it reads there, or the call is refused with what to do.
+      const man = JSON.parse(await readFile(join(this.S, "tools", String(raw.tool), "manifest.json"), "utf8"));
+      const each = eachOf(this.S, String(raw.tool), refs.args, man);
+      if (!each.ok) return { reason: each.reason };
+      const withRefs = { tool: String(raw.tool), args: refs.args, ...(refs.resolved.length ? { args_resolved: refs.resolved.slice(0, 32) } : {}), ...(each.each ? { each: each.each } : {}) };
       // The tool's manifest says this job is secret output: so it is, whatever the agent said (false included).
       if (checked.secret) return { ...base, secret_output: true, secret_output_by: "tool_manifest", ...withRefs };
       return { ...base, ...withRefs };
@@ -1735,6 +1742,14 @@ export class JobService {
       // the job's directory before it is accepted, so {OUT} names it.
       const out = this.outPath(job);
       const sub = (v: unknown): unknown => (typeof v === "string" ? v.split("{OUT}").join(out) : Array.isArray(v) ? v.map(sub) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, sub(x)])) : v);
+      const each = job.spec.each;
+      if (each) {
+        // Once per file, in order, each run with its own output directory; the worker's script prints the one answer.
+        for (const [k, file] of each.files.entries()) await writeFile(join(ctl, `args-${k + 1}.json`), JSON.stringify(sub({ ...(job.spec.args ?? {}), [each.param]: file })));
+        await writeFile(join(ctl, "each.json"), JSON.stringify(eachPlan(job.spec.tool ?? "", each, [checked.runtime, checked.entry], box, (n) => `/job/args-${n}.json`)));
+        await writeFile(join(ctl, "each.py"), EACH_SCRIPT);
+        return { lines: [...head, ...run("python3 -I /job/each.py /job/each.json")], tool_sha256: checked.sha256, needs: checked.needs };
+      }
       await writeFile(join(ctl, "args.json"), JSON.stringify(sub(job.spec.args ?? {})));
       return { lines: [...head, ...run(`${checked.runtime} ${q(checked.entry)} < /job/args.json`)], tool_sha256: checked.sha256, needs: checked.needs };
     }
@@ -3823,7 +3838,7 @@ export function describe(job: JobRecord): string {
   const cite = job.spec.seal && job.status === "ok" ? `record again citing ${job.spec.seal.ref}: it resolves to import:${job.id}/<name>` : `cite its files as job:${job.id}/<path>`;
   const sameN = job.same_as_total?.files ?? job.same_as?.length ?? 0;
   const same = sameN ? ` ${sameN} of its files are an earlier job's output byte for byte (job_status ${job.id} names ${job.same_as_total?.list ? `the first, ${job.same_as_total.list} every one` : "them"}).` : "";
-  return `Job ${job.id} (${what}) ${head}: ${files}; stdout and stderr whole in store/jobs/${job.id}/. job_status ${job.id} for the details; ${cite}.${job.generation ? ` Catalogued as ${job.generation}.` : ""}${same}${job.spec.args_resolved?.length ? ` ${argRefsWords(job.spec.args_resolved)}` : ""}${job.sensitive ? ` ${sensitiveWords(job)}` : ""}`;
+  return `Job ${job.id} (${what}) ${head}: ${files}; stdout and stderr whole in store/jobs/${job.id}/. job_status ${job.id} for the details; ${cite}.${job.generation ? ` Catalogued as ${job.generation}.` : ""}${same}${job.spec.args_resolved?.length ? ` ${argRefsWords(job.spec.args_resolved)}` : ""}${job.spec.each ? ` ${eachWords(job.spec.each)}` : ""}${job.sensitive ? ` ${sensitiveWords(job)}` : ""}`;
 }
 
 /**
