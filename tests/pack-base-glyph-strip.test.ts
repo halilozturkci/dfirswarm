@@ -511,3 +511,56 @@ for name, kw in (("base", {}), ("prog", {"progressive": True})):
     }
   });
 });
+
+// ---- the fourth verification of 1.17.4: a crop Pillow fills without a word, by paths the JPEG walk did not reach -------------------------
+
+test("a TIFF crop whose strip of JPEG data is cut short and given its end marker back, and an interlaced PNG whose last passes are missing, are damaged and partial; the whole ones are not", { skip: pillowHere(ROOT) ? false : "Pillow does not import here: the tool reads neither picture without it" }, async () => {
+  await withRun(async (run, out) => {
+    // The line in the bottom half; the top half light grey, so that the strip's cut part is where the ink is.
+    await writeFile(join(run, "work/s1/line.png"), line(TRUTH));
+    withPillow(String.raw`
+import io, struct, sys, zlib
+from PIL import Image
+d = sys.argv[1]
+bottom = Image.open(d + "/line.png").convert("L")
+w, h = bottom.width, bottom.height * 2
+im = Image.new("L", (w, h), 235); im.paste(bottom, (0, bottom.height))
+b = io.BytesIO(); im.save(b, "JPEG", quality=95); whole = b.getvalue()
+sos = whole.index(b"\xff\xda"); cut = whole[:sos + (len(whole) - sos) // 2] + b"\xff\xd9"
+def tiff(strip):
+    entries = [(256, w), (257, h), (258, 8), (259, 7), (262, 1), (273, 0), (277, 1), (278, h), (279, len(strip))]
+    start = 8 + 2 + 12 * len(entries) + 4
+    out = b"II*\x00" + struct.pack("<IH", 8, len(entries))
+    for tag, value in entries:
+        out += struct.pack("<HHII", tag, 4, 1, start if tag == 273 else value)
+    return out + b"\x00" * 4 + strip
+open(d + "/line.tif", "wb").write(tiff(whole))
+open(d + "/line cut.tif", "wb").write(tiff(cut))
+Image.open(d + "/line cut.tif").load()          # libjpeg takes the cut strip without an error: that is the case
+# Interlaced (Adam7) 8-bit grey, and the same with its zlib stream ending whole after the fifth pass: Pillow keeps the missing rows blank.
+px = im.load()
+passes = ((0, 0, 8, 8), (4, 0, 8, 8), (0, 4, 4, 8), (2, 0, 4, 4), (0, 2, 2, 4), (1, 0, 2, 2), (0, 1, 1, 2))
+data, fifth = b"", 0
+for k, (x0, y0, dx, dy) in enumerate(passes):
+    for y in range(y0, h, dy):
+        xs = range(x0, w, dx)
+        if len(xs): data += b"\x00" + bytes(px[x, y] for x in xs)
+    if k == 4: fifth = len(data)
+chunk = lambda k, b: struct.pack(">I", len(b)) + k + b + struct.pack(">I", zlib.crc32(k + b))
+for name, rows in (("interlaced", data), ("interlaced cut", data[:fifth])):
+    open(d + "/" + name + ".png", "wb").write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 0, 0, 0, 1)) + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
+Image.open(d + "/interlaced cut.png").load()     # nor does Pillow say the passes are missing
+`, [join(run, "work/s1")], run);
+    for (const [name, said] of [["line.tif", null], ["line cut.tif", /^page 1, strip 1 of JPEG data: scan 1: the coded data ends/], ["interlaced.png", null], ["interlaced cut.png", /^an interlaced PNG whose image data ends after \d+ of \d+ bytes/]] as const) {
+      const r = await call("glyph_strip", run, { image: `work/s1/${name}`, ocr: "none" }, { out });
+      if (said === null) {
+        assert.equal(r.doc.status, "complete", `${name}: ${r.doc.status_basis}`);
+        assert.equal(r.doc.not_read_or_judged.picture_damaged, 0, name);
+        continue;
+      }
+      assert.equal(r.doc.status, "partial", `${name}: ${r.doc.status_basis}`);
+      assert.equal(r.doc.not_read_or_judged.picture_damaged, 1, name);
+      assert.match(r.doc.picture_damaged, said, name);
+    }
+  });
+});

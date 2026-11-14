@@ -905,3 +905,172 @@ png(rows, d + "/nine.png")
     assert.equal(new Set([nrow.payload_file, ...(nrow.other_symbols_decoded as Doc[]).map((o) => o.payload_file)]).size, 8, "eight payloads, each in its own file");
   });
 });
+
+// ---- the fourth verification of 1.17.4: the pictures Pillow fills without a word, by paths the JPEG walk did not reach -------------------
+
+/**
+ * A TIFF of one 8-bit grey page (classic or BigTIFF), written field by field: `pieces` are its strips, or its tiles when `tiled` is
+ * given; the pieces whose indexes are in `zero` are not in the file (offset 0, byte count 0); `extra` adds tags (tag, type, values).
+ */
+const TIFF = String.raw`
+import struct
+def tiff(width, height, comp, pieces, tiled=None, rps=None, extra=(), big=False, zero=()):
+    tags = {256: (4, [width]), 257: (4, [height]), 258: (3, [8]), 259: (3, [comp]), 262: (3, [1]), 277: (3, [1])}
+    if tiled: tags[322], tags[323] = (4, [tiled[0]]), (4, [tiled[1]])
+    else: tags[278] = (4, [rps or height])
+    for tag, kind, values in extra: tags[tag] = (kind, values)
+    off_tag, cnt_tag = (324, 325) if tiled else (273, 279)
+    wide = 16 if big else 4
+    tags[cnt_tag] = (wide, [0 if i in zero else len(p) for i, p in enumerate(pieces)])
+    tags[off_tag] = (wide, [0] * len(pieces))
+    word, entry, head, start = (8, 20, 8, 16) if big else (4, 12, 2, 8)
+    size, fmt = {3: 2, 4: 4, 16: 8}, {3: "H", 4: "I", 16: "Q"}
+    at = start + head + entry * len(tags) + word
+    where = {}
+    for tag in sorted(tags):
+        kind, values = tags[tag]
+        if len(values) * size[kind] > word: where[tag] = at; at += len(values) * size[kind]
+    offsets = []
+    for i, p in enumerate(pieces):
+        offsets.append(0 if i in zero else at); at += 0 if i in zero else len(p)
+    tags[off_tag] = (wide, offsets)
+    out = (b"II+\x00" + struct.pack("<HHQ", 8, 0, start)) if big else (b"II*\x00" + struct.pack("<I", start))
+    out += struct.pack("<Q" if big else "<H", len(tags))
+    arrays = b""
+    for tag in sorted(tags):
+        kind, values = tags[tag]
+        body = struct.pack("<" + fmt[kind] * len(values), *values)
+        out += struct.pack("<HHQ" if big else "<HHI", tag, kind, len(values))
+        if tag in where: out += struct.pack("<Q" if big else "<I", where[tag]); arrays += body
+        else: out += body.ljust(word, b"\x00")
+    return out + b"\x00" * word + arrays + b"".join(p for i, p in enumerate(pieces) if i not in zero)
+def jpeg(image):
+    import io
+    b = io.BytesIO(); image.save(b, "JPEG", quality=95); return b.getvalue()
+def cut(data, keep=0.45):
+    sos = data.index(b"\xff\xda")
+    return data[:sos + int((len(data) - sos) * keep)] + b"\xff\xd9"
+`;
+
+test("a PNG past the built-in reader's bound of rows, or a frame of an animated PNG, whose zlib stream ends early is damaged and partial; the whole ones are complete", { skip: pillowHere(ROOT) ? false : "Pillow does not import here: the tool reads neither picture without it" }, async () => {
+  await withRun(async (run, out) => {
+    encode(String.raw`
+d = sys.argv[1]
+# 6000 x 6000 RGBA at 16 bits: 288,006,000 bytes of rows, past the built-in reader's 256 MiB. The symbol is at row 4000; the cut file's
+# zlib stream ends whole after row 3000, so Pillow fills the rest and says nothing.
+W = H = 6000
+rows = draw(symbol(b"fixture past the bound 0042", 3, "M", 1), 12, 0)
+white = b"\xff\xff" * 4
+def line(y):
+    if 4000 <= y < 4000 + len(rows):
+        return b"\x00" + white * 1000 + b"".join(white if v else b"\x00" * 6 + b"\xff\xff" for v in rows[y - 4000]) + white * (W - 1000 - len(rows))
+    return b"\x00" + white * W
+for name, upto in (("big", H), ("big cut", 3000)):
+    z = zlib.compressobj(6)
+    idat = b"".join(z.compress(line(y)) for y in range(upto)) + z.flush()
+    open(d + "/" + name + ".png", "wb").write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", W, H, 16, 6, 0, 0, 0)) + chunk(b"IDAT", idat) + chunk(b"IEND", b""))
+open(d + "/frame.raw", "wb").write(b"".join(draw(symbol(b"fixture second frame 0042", 2, "M", 3), 4, 4)))
+`, [join(run, "work/s1")], run);
+    withPillow(String.raw`
+import io, math, struct, sys, zlib
+from PIL import Image
+d = sys.argv[1]
+raw = open(d + "/frame.raw", "rb").read(); side = math.isqrt(len(raw))
+frames = [Image.new("L", (side, side), 255), Image.frombytes("L", (side, side), raw), Image.new("L", (side, side), 128)]
+# The first picture is the default image only, not a frame of the animation: the two after it are the fdAT frames.
+b = io.BytesIO(); frames[0].save(b, "PNG", save_all=True, append_images=frames[1:], duration=100, default_image=True); data = b.getvalue()
+open(d + "/animated.png", "wb").write(data)
+# The second frame's fdAT data ends whole after a third of its rows: Pillow keeps the frame before under the rest, and says nothing.
+out, at, seen = bytearray(data[:8]), 8, 0
+while at < len(data):
+    n = int.from_bytes(data[at:at + 4], "big"); kind = data[at + 4:at + 8]; body = data[at + 8:at + 8 + n]; at += 12 + n
+    if kind == b"fdAT":
+        seen += 1
+        if seen == 1:
+            rows = zlib.decompress(body[4:])
+            body = body[:4] + zlib.compress(rows[:len(rows) // side * (side // 3)])
+    out += struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+open(d + "/animated cut.png", "wb").write(bytes(out))
+im = Image.open(d + "/animated cut.png")
+for k in range(im.n_frames): im.seek(k); im.load()          # Pillow takes every frame without an error: that is the case
+Image.open(d + "/big cut.png").load()
+`, [join(run, "work/s1")], run);
+    const whole = await call("qr_read", run, { images: ["work/s1/big.png", "work/s1/animated.png"] }, { out, limitMs: 120_000 });
+    assert.equal(whole.doc.status, "complete", whole.stdout.slice(0, 900));
+    assert.deepEqual((whole.doc.rows as Doc[]).map((r) => [r.result, r.picture_damaged ?? null]), [["decoded", null], ["decoded", null]]);
+    for (const [name, said] of [["big cut", /a PNG whose image data ends after 144003000 of 288006000 bytes/], ["animated cut", /an animated PNG whose frame 1 after the image data \(fdAT\) ends after/]] as const) {
+      const r = await call("qr_read", run, { image: `work/s1/${name}.png` }, { out, limitMs: 120_000 });
+      assert.equal(r.doc.status, "partial", `${name}: ${r.stdout.slice(0, 900)}`);
+      const row = r.doc.rows[0] as Doc;
+      assert.equal(row.result, "not a symbol", name);
+      assert.match(row.picture_damaged, said, name);
+      assert.equal(r.doc.not_read_or_judged.pictures_damaged, 1, name);
+      assert.doesNotMatch(r.doc.status_basis, /read whole/, name);
+    }
+  });
+});
+
+test("a TIFF strip or tile of JPEG data cut short and given its end marker back, and an uncompressed strip the file does not hold, are damaged and partial; old-style JPEG is not walked", { skip: pillowHere(ROOT) ? false : "Pillow does not import here: the tool reads no TIFF without it" }, async () => {
+  await withRun(async (run, out) => {
+    // The symbol is in the bottom half: the cut part of the strip is where the symbol is.
+    encode(String.raw`
+d = sys.argv[1]
+rows = draw(symbol(b"fixture tiff bottom 0042", 2, "M", 3), 4, 4)
+w = len(rows[0])
+open(d + "/bottom.raw", "wb").write(b"\xff" * (w * len(rows)) + b"".join(rows))
+open(d + "/size", "w").write("%d %d" % (w, 2 * len(rows)))
+`, [join(run, "work/s1")], run);
+    withPillow(TIFF + String.raw`
+import sys
+from PIL import Image
+d = sys.argv[1]; w, h = map(int, open(d + "/size").read().split())
+im = Image.frombytes("L", (w, h), open(d + "/bottom.raw", "rb").read())
+whole = jpeg(im)
+for name, data in (("strip", tiff(w, h, 7, [whole])), ("strip cut", tiff(w, h, 7, [cut(whole)])),
+                   ("big", tiff(w, h, 7, [whole], big=True)), ("big cut", tiff(w, h, 7, [cut(whole)], big=True)),
+                   ("old style", tiff(w, h, 6, [whole]))):
+    open(d + "/" + name + ".tif", "wb").write(data)
+# Tiles of 64 x 64, each a JPEG of its own; the last tile (in the symbol) cut.
+tw = 64
+tiles = [jpeg(im.crop((x, y, x + tw, y + tw))) for y in range(0, h, tw) for x in range(0, w, tw)]
+open(d + "/tiles.tif", "wb").write(tiff(w, h, 7, tiles, tiled=(tw, tw)))
+open(d + "/tiles cut.tif", "wb").write(tiff(w, h, 7, tiles[:-1] + [cut(tiles[-1], 0.3)], tiled=(tw, tw)))
+# Uncompressed strips of 16 rows; one of them is not in the file (offset 0, byte count 0): Pillow reads its rows from the file's start.
+data = im.tobytes(); strips = [data[i:i + 16 * w] for i in range(0, len(data), 16 * w)]
+open(d + "/raw.tif", "wb").write(tiff(w, h, 1, strips, rps=16))
+open(d + "/raw sparse.tif", "wb").write(tiff(w, h, 1, strips, rps=16, zero={len(strips) - 3}))
+# Pillow's own writer: several strips of JPEG data with their tables in JPEGTables, two pages; the second page's strip ended early.
+im.save(d + "/pillow.tif", compression="jpeg", strip_size=4096)
+Image.new("L", (w, h), 255).save(d + "/pages.tif", compression="jpeg", save_all=True, append_images=[im])
+pages = bytearray(open(d + "/pages.tif", "rb").read())
+two = Image.open(d + "/pages.tif"); two.seek(1)
+at = two.tag_v2[273][0]; strip = bytes(pages[at:at + two.tag_v2[279][0]]); sos = strip.index(b"\xff\xda")
+pages[at + sos + (len(strip) - sos) // 3:at + sos + (len(strip) - sos) // 3 + 2] = b"\xff\xd9"
+open(d + "/pages cut.tif", "wb").write(bytes(pages))
+for name in ("strip cut", "big cut", "tiles cut", "raw sparse", "pages cut"):
+    t = Image.open(d + "/" + name + ".tif")
+    for k in range(getattr(t, "n_frames", 1)): t.seek(k); t.load()     # Pillow takes every page without an error: that is the case
+`, [join(run, "work/s1")], run);
+    const names = ["strip", "big", "tiles", "raw", "pillow", "pages"];
+    const whole = await call("qr_read", run, { images: names.map((n) => `work/s1/${n}.tif`) }, { out, limitMs: 120_000 });
+    assert.equal(whole.doc.status, "complete", whole.stdout.slice(0, 1500));
+    assert.deepEqual((whole.doc.rows as Doc[]).map((r) => [r.result, r.picture_damaged ?? null, r.jpeg_data_not_walked ?? null]), names.map(() => ["decoded", null, null]));
+    for (const [name, said] of [["strip cut", /page 1, strip 1 of JPEG data: scan 1: the coded data ends/], ["big cut", /page 1, strip 1 of JPEG data: scan 1: the coded data ends/],
+      ["tiles cut", /page 1, tile \d+ of JPEG data: scan 1: the coded data ends/], ["raw sparse", /page 1, strip \d+ of uncompressed data: its byte count is 0 and its rows need \d+/],
+      ["pages cut", /page 2, strip 1 of JPEG data: scan 1: the coded data ends/]] as const) {
+      const r = await call("qr_read", run, { image: `work/s1/${name}.tif` }, { out, limitMs: 120_000 });
+      assert.equal(r.doc.status, "partial", `${name}: ${r.stdout.slice(0, 900)}`);
+      const row = r.doc.rows[0] as Doc;
+      assert.match(row.picture_damaged, /^the tool's own walk of the TIFF's strips and tiles found it cut or corrupt/, name);
+      assert.match(row.picture_damaged, said, name);
+      assert.equal(r.doc.not_read_or_judged.pictures_damaged, 1, name);
+    }
+    const old = await call("qr_read", run, { image: "work/s1/old style.tif" }, { out });
+    if (old.doc.rows?.[0]?.result !== "not read") {
+      // libtiff reads old-style JPEG where it was built with it; the tool does not walk it, and says so.
+      assert.equal(old.doc.status, "partial", old.stdout.slice(0, 900));
+      assert.match(old.doc.rows[0].jpeg_data_not_walked, /^page 1 is coded as old-style JPEG \(TIFF compression 6\)/);
+      assert.equal(old.doc.not_read_or_judged.jpeg_data_not_walked, 1);
+    }
+  });
+});
