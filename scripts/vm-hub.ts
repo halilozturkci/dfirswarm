@@ -1282,13 +1282,18 @@ export class Hub {
    * harness trace this hub registered), its board post the harness's.
    */
   private async rereadSweeps(): Promise<void> {
-    try {
-      const SW = await import("../extensions/store-sweep.ts");
-      const r = await SW.rereadSweeps(this.cfg.sandbox);
-      if (r.records.length) this.log(`store sweeps: ${r.records.length} read again under the sweep's rules version ${r.rules}; ${r.cleared.length} hold(s) cleared, ${r.added.length} added`);
-    } catch (err) {
-      this.log(`store sweeps read again: ${(err as Error).message}`);
-    }
+    // The sweeps recorded under older rules are read again in a process of its own, in the background: a record searched
+    // again lists the store and reads its objects, which the hub's loop must not hold. What it leaves to a next pass is
+    // swept once it answers.
+    void import("../extensions/store-sweep.ts")
+      .then((SW) =>
+        SW.execRereadSweeps(this.cfg.sandbox).then(async (r) => {
+          if (!r.records.length) return;
+          this.log(`store sweeps: ${r.records.length} read again under the sweep's rules version ${r.rules}; ${r.cleared.length} hold(s) cleared, ${r.added.length} added`);
+          await SW.reconcileSweepsAtStart(this.cfg.sandbox);
+        }),
+      )
+      .catch((err) => this.log(`store sweeps read again: ${(err as Error).message}`));
     // A coverage record whose sweep a crash lost is swept now, not when the finish gate first asks (on the run s082123
     // four such sweeps ran 85 to 89 minutes after their records, during the finish, while finish status said ready).
     try {

@@ -2631,7 +2631,7 @@ const rereadInflight = new Map<string, Promise<RereadResult>>();
  * per run in this process; `changes` and `now` are the caller's (tests
  * give them).
  */
-export function rereadSweeps(sandboxRoot: string, o: { maxBytes?: number; maxMs?: number; changes?: readonly SweepRuleChange[]; now?: () => number } = {}): Promise<RereadResult> {
+export function rereadSweeps(sandboxRoot: string, o: { maxBytes?: number; maxMs?: number; changes?: readonly SweepRuleChange[]; now?: () => number; announce?: boolean } = {}): Promise<RereadResult> {
   const S = resolve(sandboxRoot);
   const running = rereadInflight.get(S);
   if (running) return running;
@@ -2640,7 +2640,7 @@ export function rereadSweeps(sandboxRoot: string, o: { maxBytes?: number; maxMs?
   return p;
 }
 
-async function rereadPass(S: string, o: { maxBytes?: number; maxMs?: number; changes?: readonly SweepRuleChange[]; now?: () => number }): Promise<RereadResult> {
+async function rereadPass(S: string, o: { maxBytes?: number; maxMs?: number; changes?: readonly SweepRuleChange[]; now?: () => number; announce?: boolean }): Promise<RereadResult> {
   const changes = o.changes ?? SWEEP_RULE_CHANGES;
   const current = changes.at(-1)?.version ?? 0;
   const now = o.now ?? Date.now;
@@ -2700,6 +2700,20 @@ async function rereadPass(S: string, o: { maxBytes?: number; maxMs?: number; cha
     named: [count(m.line.named_hits), rec.named_hits.length],
     echoes: [count(m.line.echoes), rec.echoes?.length ?? 0],
   }));
+  if (o.announce !== false) await announceReread(S, result, changes);
+  return result;
+}
+
+/**
+ * A pass that wrote lines, said: the trace's line (`sweep_reread`) and the
+ * board's one post. Said by the process whose identity the trace carries
+ * (the hub), which is why a pass run in a child of its own answers with the
+ * result and leaves this to the hub (execRereadSweeps).
+ */
+export async function announceReread(S: string, result: RereadResult, changes: readonly SweepRuleChange[] = SWEEP_RULE_CHANGES): Promise<void> {
+  if (!result.records.length) return;
+  const P = await import("./protocol.ts");
+  const current = result.rules;
   await P.traceHarnessLine(S, {
     tool: "sweep_reread",
     args: { rules: current, reason: "rules changed" },
@@ -2714,7 +2728,47 @@ async function rereadPass(S: string, o: { maxBytes?: number; maxMs?: number; cha
     },
   });
   await P.systemPost(S, { tag: "result", key: `sweep-reread:${current}:${result.records[0]!.line}`, body: rereadPostWords(result, changes) }).catch(() => undefined);
+}
+
+/**
+ * rereadSweeps run off this process's loop: a child process
+ * (scripts/sweep-reread.ts) that reads the ledger and the sweeps, sorts or
+ * searches each record again and writes the lines under the sweeps' lock on
+ * disk, and answers with the pass, which this process then says (the
+ * trace's line and the board's post, announceReread). The hub runs it when
+ * it starts, in the background: a record searched again lists the store and
+ * reads its objects, which a hub's loop must not hold. With
+ * SWARM_SWEEP_INPROCESS=1 the pass runs here.
+ */
+export async function execRereadSweeps(sandboxRoot: string): Promise<RereadResult> {
+  if (process.env.SWARM_SWEEP_INPROCESS === "1") return rereadSweeps(sandboxRoot);
+  const result = await execRereadChild(sandboxRoot);
+  await announceReread(sandboxRoot, result);
   return result;
+}
+
+function execRereadChild(sandboxRoot: string): Promise<RereadResult> {
+  const request = JSON.stringify({ sandbox: resolve(sandboxRoot) });
+  return new Promise((done, fail) => {
+    const child = spawn(process.execPath, ["--experimental-strip-types", "--no-warnings", fileURLToPath(new URL("../scripts/sweep-reread.ts", import.meta.url))], { stdio: ["pipe", "pipe", "pipe"], env: process.env });
+    const out: Buffer[] = [];
+    let err = "";
+    child.stdout.on("data", (c: Buffer) => out.push(c));
+    child.stderr.on("data", (c: Buffer) => {
+      if (err.length < 4096) err += c.toString("utf8");
+    });
+    child.on("error", fail);
+    child.on("close", (code, signal) => {
+      if (code !== 0) return fail(new Error(`the sweeps' re-read ended ${signal ? `on ${signal}` : `with status ${code}`}${err.trim() ? `: ${err.trim().slice(0, 1000)}` : ""}`));
+      try {
+        done(JSON.parse(Buffer.concat(out).toString("utf8")) as RereadResult);
+      } catch (e) {
+        fail(e as Error);
+      }
+    });
+    child.stdin.on("error", () => undefined);
+    child.stdin.end(request);
+  });
 }
 
 /** A pass of rereadSweeps, as its board post says it: what changed in the rules, how many records were read again and how, what moved, and which holds changed. */
