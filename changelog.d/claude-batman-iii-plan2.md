@@ -208,3 +208,53 @@ and values are held to a memory budget (`HIVE BOUNDS`); `chromium_logins` stops 
 each media tool and the recipe derive their status from one list of what they did not read or judge. ransomware-response
 1.14.4 to 1.14.6: `stream_kpa_check` answers the footer hypothesis complete only when every earlier place is settled, and holds
 it to one 512 MiB memory budget (`stream_kpa_check/6`).
+
+### Changed: a directory given to a tool that reads one file runs it once for each file it reads there
+
+A one-file parameter (`path`, `hive`, `image`, `source`, `file`, `db`, `database`, `capture`, `archive`, `dump`, `evidence`) whose
+description does not take a directory, given a directory of the run, runs the tool once for each regular file there its manifest's `use`
+takes (at most 64, in name order, each in `each/<n>/`, under the job's clock). The job's answer lists every run with its exit and
+status and is complete only when every file was run and every run was complete; a directory with none of those files, more than 64, or
+more entries than can be listed is refused before the job runs, with what to do.
+
+### Added: a tool's manifest says what it is not for
+
+`not_for: [{what, use}]`, at most four lines, each naming another tool; the description a seat sees ends with them, and a test holds
+every pack's lines to a tool that exists. Lines are on the tools seats confused with a sibling in eight packs.
+
+### Added: hand cards for the notes of every pack
+
+A `card:` line, the rules a call to the note's tools goes wrong without and what it does not show, on the notes whose tool call shows
+them or whose hand-off carries them: cloud, linux, memory, mobile, network, triage, macOS, virtualization, ransomware, base and windows
+(the notes that name no tool, or whose tools are named by more than three notes, have none).
+
+### Changed: the hub reads the store sweeps again under new rules in a process of its own
+
+At its start the hub no longer searches the store in its own loop for records swept under older rules: a child process
+(`scripts/sweep-reread.ts`) writes the lines under the sweeps' lock and the hub says the pass.
+
+### Fixed: shared blocks judge on the tool's clock and read every registry value type from one table
+
+`BOUNDARY` (windows, macOS, virtualization): ordering and filtering strings is judged under the tool's clock and budgets, what is left is
+counted and the answer is partial; the macOS `GUARD` block does the same. `HIVE BOUNDS`: a held key costs its name's real size,
+every value type is read from one table (a value that does not decode exactly is given as its bytes with a problem line, a value past
+its data cell, a free cell or a FILETIME past year 9999 is not given as decoded). `NAMES` (ransomware): a directory is listed and its
+names judged on the clock, holding at most 2^18 entries. A program that closes its output and keeps running no longer holds a tool past
+its clock in nine readers of a pipe (network, base); the encrypted-containers walk reads the clock among the entries it does not read.
+
+### Fixed: computer-forensics-base reads a picture only as Pillow provably reads it
+
+`qr_read` and `glyph_strip` hand a picture to Pillow, which fills a cut or damaged picture and only warns. A PNG's image data is measured,
+a JPEG's coded data and a TIFF's strips are walked, and a TIFF page passes only in shapes the tool can state (one plane, unsigned samples of
+1, 2, 4 or 8 bits in the photometric interpretation's count, uncompressed, JPEG, LZW, PackBits or Deflate with the compressed stream
+verified, a palette's full ColorMap); every other page is counted as not walked and the answer is partial. The decoding child's standard
+error is read, and the size is sent after load. Damage that leaves a compressed stream valid, and the zeroed tail of a WebP, a BMP or an
+uncompressed TIFF, are known limits the manifests name.
+
+### Fixed: pack tools after the last rounds of independent verification
+
+windows-forensics 1.8.5 to 1.8.9, ransomware-response 1.14.7 to 1.14.9 (`ransomware_scope_report` writes its pages on the clock and reads a
+timeline entry's host; a census that could not be read is not counted as one), encrypted-containers 1.14.15 to 1.14.17
+(`recovery_key_scan` names the first 2,000 entries it did not reach and counts the rest), computer-forensics-base 1.17.4 to 1.17.17,
+network-forensics 1.14.16 (`pcap_extract`, `conn_series`, `quic_inspect`, `tls_decrypt` and the capture recipe end a program that
+closed its output).
