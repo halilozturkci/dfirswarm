@@ -193,3 +193,18 @@ and filters memory over regions. windows-forensics 1.8.1: `thumbcache_read` read
 `regkv/5`; cards on 27 notes. ransomware-response 1.14.1: `stream_kpa_check` tries the trailer hypothesis on every other member
 within its bounds; `cipher_state_scan` finds a key schedule that begins or ends in zero bytes; `encrypted_survey` measures a
 tail instead of printing it.
+
+### Fixed: shared blocks bound a running program's output and stop a stalled SQLite statement
+
+Every tool that runs a program reads its output through one block (`PROCESS`): at most 64 MiB of standard output and 8 MiB of
+standard error, kept as its head and its last MiB; a cut output makes the answer partial. Every tool that queries SQLite carries
+one watch (`SQLITE WATCH`) that interrupts a statement still running in SQLite past the tool's clock or at a stop signal.
+
+### Fixed: pack tools after later rounds of independent verification
+
+memory-forensics 1.16.3 to 1.16.7: `minidump_map` places every stream through one rule, judges the rows before a page's offset,
+and reads every module name before it pages. windows-forensics 1.8.4: a hive is opened through a checked open, and its subkeys
+and values are held to a memory budget (`HIVE BOUNDS`); `chromium_logins` stops a stalled query. computer-forensics-base 1.17.3:
+each media tool and the recipe derive their status from one list of what they did not read or judge. ransomware-response
+1.14.4 to 1.14.6: `stream_kpa_check` answers the footer hypothesis complete only when every earlier place is settled, and holds
+it to one 512 MiB memory budget (`stream_kpa_check/6`).
