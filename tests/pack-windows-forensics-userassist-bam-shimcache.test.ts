@@ -561,7 +561,7 @@ test("the tool is registered: manifest names, input magic and the secret_output 
   const manifest = JSON.parse(await readFile(join(WIN, TOOL, "manifest.json"), "utf8"));
   assert.deepEqual(manifest.use.names, ["NTUSER.DAT", "SYSTEM"]);
   assert.deepEqual(manifest.secret_output, { when_args: ["write_values"] });
-  assert.equal(manifest.version, 6);
+  assert.equal(manifest.version, 7);
   assert.deepEqual(manifest.requires, [], "no second reader is started, so nothing is required");
   assert.ok(manifest.timeout_seconds > 84);
   assert.match(manifest.description, /cross_check|second reader/);

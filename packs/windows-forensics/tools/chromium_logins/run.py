@@ -176,9 +176,11 @@ import datetime
 import json
 import math
 import os
+import select
 import sqlite3
 import struct
 import sys
+import threading
 import urllib.parse
 from pathlib import Path
 
@@ -836,21 +838,23 @@ def decrypt_dpapi_blob(blob, masterkey, entropy=None):
     """The clear text of a blob when `masterkey` (the 64 bytes decrypt_masterkey gives) opens it AND its signature verifies; None otherwise.
     The session key is HMAC-SHA512 over the blob's salt (and the caller's entropy) keyed by the SHA-1 of the master key; its first 32 bytes are
     the AES-256 key, the IV is zero and the padding PKCS#7. The signature is the HMAC over the blob's own bytes from its master key version to
-    its cipher text, in either of the two forms Windows has written. blob_supported(blob) must have said None."""
+    its cipher text, in either of the two forms Windows has written. blob_supported(blob) must have said None. The signature covers no clear
+    text, so it is checked first: a wrong key costs an HMAC, not an AES pass over the cipher text (a GUID that more than one key carries is
+    tried with each)."""
     key_hash = hashlib.sha1(masterkey).digest()
     extra = entropy or b""
+    newer = hmac.new(key_hash, blob["hmac_key"] + extra + blob["to_sign"], hashlib.sha512).digest()
+    padded = key_hash + b"\x00" * (128 - len(key_hash))
+    inner = hashlib.sha512(bytes(b ^ 0x36 for b in padded) + blob["hmac_key"]).digest()
+    older = hashlib.sha512(bytes(b ^ 0x5C for b in padded) + inner + extra + blob["to_sign"]).digest()
+    if not (hmac.compare_digest(newer, blob["signature"]) or hmac.compare_digest(older, blob["signature"])):
+        return None
     session = hmac.new(key_hash, blob["salt"] + extra, hashlib.sha512).digest()
     clear = aes_cbc_decrypt(session[:32], bytes(16), blob["cipher_text"])
     pad = clear[-1]
     if not 1 <= pad <= 16 or clear[-pad:] != bytes([pad]) * pad:
         return None
-    newer = hmac.new(key_hash, blob["hmac_key"] + extra + blob["to_sign"], hashlib.sha512).digest()
-    padded = key_hash + b"\x00" * (128 - len(key_hash))
-    inner = hashlib.sha512(bytes(b ^ 0x36 for b in padded) + blob["hmac_key"]).digest()
-    older = hashlib.sha512(bytes(b ^ 0x5C for b in padded) + inner + extra + blob["to_sign"]).digest()
-    if hmac.compare_digest(newer, blob["signature"]) or hmac.compare_digest(older, blob["signature"]):
-        return clear[:-pad]
-    return None
+    return clear[:-pad]
 
 
 def chromium_scheme(value):
@@ -1171,11 +1175,34 @@ def user_secret(args):
     return ("the SHA-1 of the password" if kind == "sha1" else "the NT hash of the password"), {kind: value}
 
 
+def add_key(keys, guid, key):
+    """keys is {guid: [64-byte key, ...]}. Two master key files can carry one GUID (a copy of a file, a restored backup, a file made so), each
+    with a key of its own: every distinct key of a GUID is kept, in the order it was found, and a blob of that GUID is tried with each."""
+    have = keys.setdefault((guid or "").lower(), [])
+    if key not in have:
+        have.append(key)
+
+
+def open_blob(blob, keys, entropy=None, time_is_up=lambda: False):
+    """(clear text, keys tried, stopped by the clock) of a DPAPI blob, tried with each verified key of the GUID it names (`keys` as add_key
+    makes it). The clear text is None unless a key's signature verified."""
+    tried = 0
+    for key in keys.get(blob["masterkey_guid"], ()):
+        if tried and time_is_up():
+            return None, tried, True
+        tried += 1
+        clear = decrypt_dpapi_blob(blob, key, entropy)
+        if clear is not None:
+            return clear, tried, False
+    return None, tried, False
+
+
 def open_masterkeys(files, sid, secret, time_is_up):
-    """Try every master key file with every pre-key the secret gives. Returns (one report per file, {guid: 64-byte key} of the ones whose HMAC
-    verified). A report holds what the file's header says and the outcome, never a byte of a key."""
+    """Try every master key file with every pre-key the secret gives. Returns (one report per file, {guid: [64-byte key, ...]} of the ones whose
+    HMAC verified (add_key), [(report, key)] for each file that verified). A report holds what the file's header says and the outcome, never a
+    byte of a key; a verified file whose GUID another verified file carries too says so in same_guid_as (the other files)."""
     prekeys = dpapi_prekeys(sid, **secret)
-    reports, keys = [], {}
+    reports, keys, opened = [], {}, []
     for path in files:
         report = {"file": path, "attempted": False, "verified": False}
         reports.append(report)
@@ -1217,13 +1244,20 @@ def open_masterkeys(files, sid, secret, time_is_up):
             key = decrypt_masterkey(mk, prekey)
             if key is not None:
                 report["verified"], report["verified_with"] = True, how
-                keys[(guid or "").lower()] = key
+                add_key(keys, guid, key)
+                opened.append((report, key))
                 break
-    return reports, keys
+    for report, _key in opened:
+        others = [r["file"] for r, _k in opened if r is not report and r["guid"] is not None and (r["guid"] or "").lower() == (report["guid"] or "").lower()
+                  and os.path.normpath(r["file"]) != os.path.normpath(report["file"])]
+        if others:
+            report["same_guid_as"] = others[:8]
+    return reports, keys, opened
 
 
 def read_keys_file(path):
-    """{guid: 64-byte key} from the sealed keys file an earlier dpapi_masterkey call wrote (JSON Lines; the rows of kind 'masterkey')."""
+    """{guid: [64-byte key, ...]} (add_key) from the sealed keys file an earlier dpapi_masterkey call wrote (JSON Lines; the rows of kind
+    'masterkey')."""
     keys = {}
     for line in read_regular(path, "keys_file", KEYS_FILE_MAX).splitlines():
         try:
@@ -1231,7 +1265,7 @@ def read_keys_file(path):
             if isinstance(row, dict) and row.get("kind") == "masterkey":
                 key = bytes.fromhex(row["key_hex"])
                 if len(key) == 64 and isinstance(row.get("guid"), str):
-                    keys[row["guid"].lower()] = key
+                    add_key(keys, row["guid"], key)
         except (ValueError, KeyError, TypeError):
             continue
     if not keys:
@@ -1240,7 +1274,7 @@ def read_keys_file(path):
 # END CREDENTIAL IO
 
 
-PARSER = "chromium_logins/4"
+PARSER = "chromium_logins/5"
 DEADLINE_SECONDS = 45             # the manifest allows 60: the reads stop here, so that the page is placed and the answer printed before the harness ends the tool
 VALUES_NAME = "chromium_logins-values.jsonl"
 DEFAULT_LIMIT = 100
@@ -1366,6 +1400,83 @@ def sidecars(path):
     return looked, found
 
 
+class SqliteWatch:
+    """Ends a statement SQLite is running in C at the clock and at a stop signal. A step of SQLite runs with the interpreter's lock released:
+    the progress handler is called only between the steps of SQLite's own program, and a Python signal handler runs only when this thread
+    is back in Python, so one step that walks a damaged b-tree in C (a page reached from many parents) neither stops at the clock nor
+    answers a stop. This thread waits on the deadline and on the signal wake-up pipe (the C-level handler writes to it whatever the main
+    thread is doing) and calls conn.interrupt(), which SQLite honours inside such a walk; the step then returns, and the shared STOP
+    block's handler, already due, answers the stop. After the deadline it interrupts again every quarter second, so a statement begun
+    later is ended too. It holds the stop signals in its own thread, so that they reach the main thread's mask and handlers."""
+
+    TICK = 0.25
+
+    def __init__(self):
+        self._conn = None
+        self._lock = threading.Lock()
+        self._done = threading.Event()
+        self.interrupted_by = None                 # "clock" or "stop": the first reason this thread interrupted a statement
+        self._read, self._write = os.pipe()
+        os.set_blocking(self._read, False)
+        os.set_blocking(self._write, False)
+        self._before = signal.set_wakeup_fd(self._write, warn_on_full_buffer=False)
+        self._thread = threading.Thread(target=self._watch, name="sqlite-watch", daemon=True)
+        self._thread.start()
+
+    def watch(self, conn):
+        with self._lock:
+            self._conn = conn
+
+    def _interrupt(self, why):
+        with self._lock:
+            if self._conn is None:
+                return
+            try:
+                self._conn.interrupt()
+            except Exception:  # noqa: BLE001 - a closed connection has nothing to end
+                return
+            if self.interrupted_by is None:
+                self.interrupted_by = why
+
+    def _watch(self):
+        try:
+            signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+        except (AttributeError, ValueError, OSError):
+            pass
+        while not self._done.is_set():
+            deadline = STOP["deadline"]
+            left = self.TICK if deadline is None else deadline - time.monotonic()
+            if left <= 0:
+                self._interrupt("clock")
+            try:
+                ready = select.select([self._read], [], [], min(max(left, 0.0), self.TICK) or self.TICK)[0]
+            except (OSError, ValueError):
+                ready = []
+            if ready:
+                try:
+                    woke = os.read(self._read, 256)
+                except OSError:
+                    woke = b""
+                if woke:
+                    self._interrupt("stop")
+
+    def close(self):
+        """Ends the thread and gives the wake-up pipe back, before the answer is printed."""
+        with self._lock:
+            self._conn = None
+        self._done.set()
+        self._thread.join(timeout=2)
+        try:
+            signal.set_wakeup_fd(self._before)
+        except (ValueError, OSError):
+            pass
+        for fd in (self._read, self._write):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
 ROWID_NAMES = ("rowid", "_rowid_", "oid")    # SQLite's three names for a table's row id; a column of the table with one of them hides that one
 
 
@@ -1447,14 +1558,19 @@ def profile_key_from(args, local_state, masterkeys, report):
     if why:
         report.update(obtained=False, why_not=why)
         return None
-    key = masterkeys.get(blob["masterkey_guid"])
-    if key is None:
+    available = len(masterkeys.get(blob["masterkey_guid"], ()))
+    if not available:
         report.update(obtained=False, why_not="the profile key is under master key %s, and no verified key of that GUID is at hand (masterkeys says what was tried): "
                                               "name that file under masterkey with the user's password or hash, or give the profile key as key_file" % blob["masterkey_guid"])
         return None
-    clear = decrypt_dpapi_blob(blob, key)
+    clear, tried, late = open_blob(blob, masterkeys, None, out_of_time)
+    if late:
+        report.update(obtained=False, why_not="the tool's own clock ran out after %d of the %d verified master keys of the blob's GUID were tried, and none opened it"
+                                              % (tried, available))
+        return None
     if clear is None:
-        report.update(obtained=False, why_not="the DPAPI blob's signature did not verify under the master key of its GUID")
+        report.update(obtained=False, why_not="the DPAPI blob's signature did not verify under %s" % (
+            "the master key of its GUID" if available == 1 else "any of the %d verified master keys of its GUID" % available))
         return None
     if len(clear) != 32:
         report.update(obtained=False, why_not="the DPAPI blob opened to %d bytes, not the 32 of a profile key" % len(clear))
@@ -1533,13 +1649,14 @@ def main():
             sid, sid_from = sid_of(args, files)
             secret_kind, secret = user_secret(args)
             PROGRESS["stage"] = "while the master keys were tried"
-            masterkey_reports, masterkeys = open_masterkeys(files, sid, secret, out_of_time)
+            masterkey_reports, masterkeys, _opened = open_masterkeys(files, sid, secret, out_of_time)
         elif any(args.get(k) not in (None, False) for k in ("password_file", "hash_file", "empty_password", "sid")):
             raise Refused("a password, a hash or a SID was given without masterkey: name the user's master key file (AppData/Roaming/Microsoft/Protect/<SID>/<GUID>) "
                           "or the Protect/<SID> directory")
         if args.get("masterkey_keys_file") is not None:
-            for guid, key in read_keys_file(args["masterkey_keys_file"]).items():
-                masterkeys.setdefault(guid, key)
+            for guid, more in read_keys_file(args["masterkey_keys_file"]).items():
+                for key in more:
+                    add_key(masterkeys, guid, key)
         PROGRESS["stage"] = "while the profile key was opened"
         profile_key = profile_key_from(args, local_state, masterkeys, key_report)
     except Refused as exc:
@@ -1564,6 +1681,8 @@ def main():
         conn = sqlite3.connect("file:%s?mode=ro&immutable=1" % urllib.parse.quote(os.path.abspath(path)), uri=True)
     except sqlite3.Error as exc:
         fail("login_data could not be opened as an SQLite database (%s)" % type(exc).__name__, self_test={"passed": True, "checks": len(test["checks"])})
+    watch = SqliteWatch()             # the clock and a stop end a statement that runs in C (the class says why the progress handler is not enough)
+    watch.watch(conn)
     try:
         conn.text_factory = lambda b: b.decode("utf-8", "replace")
         try:
@@ -1579,7 +1698,7 @@ def main():
                 return sqlite3.SQLITE_OK                                   # (SQLite's names are not case-sensitive: 'Logins' is the logins table)
             if action == sqlite3.SQLITE_PRAGMA and arg1 in ("table_info", "table_xinfo") and arg2 == "logins":
                 return sqlite3.SQLITE_OK
-            if action == sqlite3.SQLITE_FUNCTION and arg2 in ("count", "typeof", "length"):
+            if action == sqlite3.SQLITE_FUNCTION and arg2 in ("typeof", "length"):
                 return sqlite3.SQLITE_OK
             return sqlite3.SQLITE_DENY
         conn.set_authorizer(authorizer)
@@ -1617,11 +1736,17 @@ def main():
                     read_error = ("the logins table is a WITHOUT ROWID table: it has no row id to read its rows in order by, and none was read "
                                   "(not a layout Chromium writes)")
         except sqlite3.Error as exc:
-            read_error = "the schema could not be read (%s)" % type(exc).__name__
+            if out_of_time():
+                read_error = ("the schema could not be read: the tool's own clock (%d s) ran out while SQLite read it, and no row was read (a schema that "
+                              "takes this long to read is damaged, or was made so)" % DEADLINE_SECONDS)
+            else:
+                read_error = "the schema could not be read (%s)" % type(exc).__name__
         if read_error is None:
             try:
-                declared = conn.execute("SELECT count(*) FROM logins").fetchone()[0]
+                # The rows are counted as they are read: there is no separate count(*), whose one step walks the whole b-tree in C, so a damaged
+                # one (a page reached from many parents) holds it there. rows_in_table is the count of a read that reached the table's end.
                 records = login_records(conn, columns, rowid_name)
+                last_rowid = None
                 while True:
                     if out_of_time():
                         stopped = "the tool's own clock (%d s) ran out after %d row(s)" % (DEADLINE_SECONDS, counts["rows"])
@@ -1631,7 +1756,16 @@ def main():
                         break
                     field, over = next(records, (None, None))
                     if field is None:
+                        declared = counts["rows"]
                         break
+                    if last_rowid is not None and not (isinstance(field["rowid"], int) and field["rowid"] > last_rowid):
+                        # SQLite reads a rowid table in the order of its row ids: one that is not above the one before is a damaged b-tree (a page
+                        # reached twice gives its rows again), and reading on would give the same rows again, as many times as the damage allows.
+                        read_error = ("the logins table gave a row id that is not above the one before it, after row %d: SQLite reads the table in "
+                                      "the order of its row ids, so its b-tree is damaged (a page reached twice gives its rows again), and the read "
+                                      "stopped there, with no row given twice" % counts["rows"])
+                        break
+                    last_rowid = field["rowid"]
                     counts["rows"] += 1
                     PROGRESS["rows"] = counts["rows"]
                     stored = field.get("password_value")
@@ -1695,15 +1829,16 @@ def main():
                             try:
                                 blob = parse_dpapi_blob(stored)
                                 reason = blob_supported(blob)
-                                key = masterkeys.get(blob["masterkey_guid"])
                                 if reason:
                                     why = reason
-                                elif key is None:
+                                elif not masterkeys.get(blob["masterkey_guid"]):
                                     why = "a DPAPI blob under master key %s, and no verified key of that GUID is at hand" % blob["masterkey_guid"]
                                 else:
-                                    clear = decrypt_dpapi_blob(blob, key)
-                                    if clear is None:
-                                        why = "the DPAPI blob's signature did not verify under the master key of its GUID"
+                                    clear, _tried, late = open_blob(blob, masterkeys, None, out_of_time)
+                                    if late:
+                                        why = "the DPAPI blob was not tried with every verified key of its GUID: the tool's own clock ran out"
+                                    elif clear is None:
+                                        why = "the DPAPI blob's signature did not verify under the verified master key(s) of its GUID"
                             except Malformed:
                                 why = "the stored value begins like a DPAPI blob and is malformed"
                         elif scheme == "v20":
@@ -1742,6 +1877,7 @@ def main():
                 elif stopped is None:
                     read_error = "the logins table could not be read past row %d (%s)" % (counts["rows"], type(exc).__name__)
     finally:
+        watch.close()
         try:
             conn.close()
         except sqlite3.Error:
@@ -1754,8 +1890,6 @@ def main():
         reasons.append(read_error)
     if stopped:
         reasons.append(stopped + ": the rows after it were not read")
-    if declared is not None and not stopped and not read_error and declared != counts["rows"]:
-        reasons.append("the table counts %d row(s) and %d were read" % (declared, counts["rows"]))
     if counts["cells_over_limit"]:
         reasons.append("%d cell(s) in %d row(s) are over the %d bytes this reader takes of one cell and were read as their type and length only (rows[].cells_not_read); "
                        "every other cell and row was read" % (counts["cells_over_limit"], counts["rows_with_cell_over_limit"], CELL_MAX))

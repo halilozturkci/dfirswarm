@@ -529,16 +529,27 @@ install_signal_handlers(lambda signum: interrupted_answer(signum))
 # A hive of N bytes holds at most N // 76 key cells (an nk cell is at least 76 bytes) and N // 20 value cells (a vk cell is at least 20), however
 # many elements an index claims: regipy follows a subkey index (ri) element by element, so one list repeated by an index is read as many times as
 # it is repeated (a 61 KB hive listed a million keys and took 1.2 GB). Every list of subkeys and values is read through these bounds, and what is
-# past one is said, never followed.
+# past one is said, never followed. The bounds are also of memory: a list keeps only the distinct keys it names, a value's data is read up to
+# VALUE_DATA_BYTES, and a key's values are handed out one at a time, at most LIST_DATA_BYTES of data of them. A hive is opened through open_hive,
+# which checks the base block and the root cell before regipy reads the file.
 import binascii
 import itertools
 import logging
+import re
 import struct
 import time
 import warnings
 
 KEY_CELL_BYTES = 76
 VALUE_CELL_BYTES = 20
+REPEAT_RUN = 4096                         # elements in a row naming keys a list already named: the list repeats, and is read no further
+HELD_KEY_BYTES = 1400                     # what one of regipy's key records holds in memory, with its identity kept, about
+HELD_KEYS_BYTES = 256 << 20               # the memory the distinct keys of one list may hold
+VALUE_DATA_BYTES = 16 << 20               # the data of one value read at most: a value that declares more is said with its length, its data not read
+LIST_DATA_BYTES = 64 << 20                # the data of one key's values handed out at most (a caller may hold them all)
+LATE_ELEMENTS = 16384                     # the elements read of a subkey list begun after the deadline
+LATE_VALUES = 4096                        # the values read of a value list begun after the deadline
+ROOT_SCAN_BYTES = 0x10000                 # how far into the first bin regipy may look for its root key (it reads 4 bytes at a time, with no clock)
 # regipy decodes a name the hive stores one byte a character (Windows stores a name so whenever every character of it is below U+0100: "M\u00fcller",
 # "Caf\u00e9") as ASCII, with errors replaced, and a broken UTF-16 name the same way: each character it could not decode is U+FFFD, and the name it
 # gives is not the hive's. Such a name is counted here and said, so an answer that shows one is not complete.
@@ -631,6 +642,54 @@ def multi_strings(data):
     return strings, (len(tail) if tail.strip(b"\x00") else 0), False
 
 
+class HiveRefused(Exception):
+    """A hive that open_hive does not hand to regipy; the text says what was found."""
+
+
+def open_hive(path):
+    """regipy's RegistryHive(path), called only when the file is what regipy's open assumes. RegistryHive takes for the root key the first
+    allocated cell of the first bin, reading the bin 4 bytes at a time with no clock: a free cell (a size of zero or more) does not move it on,
+    so a hive whose first bin is free space was read word by word to the end of the file (a 40 MB hive: 57.6 s; 150 MB ran past every tool's
+    limit). The file is checked first, without regipy: the base block's signature, the root cell offset it names inside the hive bins it
+    declares and inside the file, the first bin's signature and size, the root cell allocated (a negative size), big enough for a key and an
+    "nk", and the first allocated cell of the first bin (what regipy takes) that same cell, at most ROOT_SCAN_BYTES in. A hive that fails one
+    of these raises HiveRefused with what was found, and regipy does not read it. A stand-in library (one without the regf layout) is called
+    as it is."""
+    import regipy.registry as reg
+    if not all(hasattr(reg, name) for name in ("HBin", "REGF_HEADER", "CM_KEY_NODE")):
+        return reg.RegistryHive(path)
+    size = os.path.getsize(path)
+    with open(path, "rb") as fh:
+        base = fh.read(HBIN_START + 0x20)
+        if len(base) < HBIN_START + 0x20 or base[:4] != b"regf":
+            raise HiveRefused("the file is not a registry hive: it does not start with a regf base block and a first hive bin (%d bytes)" % size)
+        root, bins = struct.unpack_from("<II", base, 0x24)
+        if base[HBIN_START:HBIN_START + 4] != b"hbin":
+            raise HiveRefused("the hive has no hive bin at offset 4096 (the bytes there are not \"hbin\"): regipy would look for the root key in them")
+        first = struct.unpack_from("<I", base, HBIN_START + 8)[0]
+        if first < 0x1000 or first % 0x1000:
+            raise HiveRefused("the first hive bin declares a size of %d bytes, which is not a positive multiple of 4096: the bins are not read" % first)
+        if bins % 0x1000 or root < 0x20 or root % 8 or root + 4 + 0x4C > bins or HBIN_START + root + 4 + 0x4C > size:
+            raise HiveRefused("the base block names the root key's cell at offset %d of hive bins it declares as %d bytes, in a file of %d bytes: "
+                              "that is not a cell inside the bins" % (root, bins, size))
+        fh.seek(HBIN_START + root)
+        cell = fh.read(6)
+        cell_size = struct.unpack_from("<i", cell)[0]
+        if cell_size >= 0:
+            raise HiveRefused("the root key's cell (offset %d) is free (its size, %d, is not negative): the hive's root is not there" % (root, cell_size))
+        if -cell_size < 4 + 0x4C or cell[4:6] != b"nk":
+            raise HiveRefused("the root key's cell (offset %d) is not a key: %d bytes, signature %r" % (root, -cell_size, bytes(cell[4:6])))
+        # The first word with its sign bit set, from the first cell of the first bin on: the cell regipy takes for the root.
+        fh.seek(HBIN_START + 0x20)
+        words = fh.read(min(root - 0x20, ROOT_SCAN_BYTES) + 4)
+        hit = re.search(b"[\x80-\xff]", words[3::4])
+        if hit is None or 0x20 + 4 * hit.start() != root:
+            raise HiveRefused("regipy takes for the root key the first allocated cell of the first bin, %s, and the base block names the cell at offset "
+                              "%d: the root regipy would read is not the hive's" % (
+                                  "at offset %d" % (0x20 + 4 * hit.start()) if hit is not None else "which is more than %d bytes in" % ROOT_SCAN_BYTES, root))
+    return reg.RegistryHive(path)
+
+
 class HiveBounds:
     def __init__(self, hive_path, size=None):
         self.inline_values_bounded = bound_value_reads()
@@ -642,36 +701,64 @@ class HiveBounds:
         self.data_read = 0                      # bytes of value data read over the whole walk
         self.repeats = 0                        # elements that named a key already named in the same list
         self.not_read = 0                       # values a key lists that this block did not read (refused, or past a bound or the clock)
-        self._skipped = 0                       # values of the key being read that regipy itself leaves out
         self.deadline = None                    # a monotonic time the caller sets for its walk; else the tool's own deadline is read
 
     def subkeys(self, node, where, problems):
-        """The distinct subkeys of `node`, at most the keys the hive can still hold; what is past that, or repeated, is a problem line."""
+        """The distinct subkeys of `node`, at most the keys the hive can still hold; what is past that, or repeated, is a problem line. A key is
+        kept the first time the list names it, and only then: an index that names one list again and again (65,535 lists of 65,535 elements)
+        costs the elements read, not a record kept for each (one of regipy's key records is about 1.2 KB, and such a list held them all past
+        2 GB). The list is read no further after REPEAT_RUN elements in a row that name keys it already named, after the distinct keys reach
+        HELD_KEYS_BYTES of memory, at the deadline, and, for a list begun after the deadline (a tool that finishes what it needs), after
+        LATE_ELEMENTS elements; each such stop is a problem line."""
         room = max(self.key_cells - self.keys_read, 0)
-        raw, in_time = [], not self.past_deadline()          # a list begun past the deadline (a tool that finishes what it needs) is read whole
-        for sub in itertools.islice(node.iter_subkeys() or [], room + 1):
-            raw.append(sub)
-            if in_time and len(raw) % 256 == 0 and len(raw) <= room and self.past_deadline():
-                # The library reads a key record for every element: an index that repeats lists in a large hive is a million of them.
-                problems.append({"where": where, "what": "subkeys",
-                                 "error": "the time limit was reached after %d elements of its subkey list: the elements past that are not read" % len(raw)})
-                break
-        if len(raw) > room:
-            raw = raw[:room]
-            problems.append({"where": where, "what": "subkeys",
-                             "error": "its subkey list yields more keys than a %d-byte hive can hold (%d keys at most, %d already read in this walk): "
-                                      "an index that repeats a list; the elements past that are not read" % (self.hive_bytes, self.key_cells, self.keys_read)})
-        self.keys_read += len(raw)
-        seen, distinct, repeated = set(), [], 0
-        for sub in raw:
-            header = getattr(sub, "header", None)
-            identity = (str(getattr(sub, "name", "")).lower(), getattr(header, "last_modified", None),
-                        getattr(header, "subkeys_list_offset", None), getattr(header, "values_list_offset", None))
-            if identity in seen:
-                repeated += 1
-                continue
-            seen.add(identity)
-            distinct.append(sub)
+        late = self.past_deadline()
+        most_held = max(HELD_KEYS_BYTES // HELD_KEY_BYTES, 1)
+        seen, distinct = set(), []
+        read = repeated = run = 0
+        source = node.iter_subkeys() or iter(())
+        try:
+            for sub in source:
+                if read >= room:
+                    problems.append({"where": where, "what": "subkeys",
+                                     "error": "its subkey list yields more keys than a %d-byte hive can hold (%d keys at most, %d already read in this walk): "
+                                              "an index that repeats a list; the elements past that are not read" % (self.hive_bytes, self.key_cells, self.keys_read)})
+                    break
+                if late and read >= LATE_ELEMENTS:
+                    problems.append({"where": where, "what": "subkeys",
+                                     "error": "its subkey list was begun after the time limit and %d of its elements were read: the elements past that are not read" % read})
+                    break
+                header = getattr(sub, "header", None)
+                identity = (str(getattr(sub, "name", "")).lower(), getattr(header, "last_modified", None),
+                            getattr(header, "subkeys_list_offset", None), getattr(header, "values_list_offset", None))
+                if identity in seen:
+                    read += 1
+                    repeated += 1
+                    run += 1
+                    if run >= REPEAT_RUN:
+                        problems.append({"where": where, "what": "subkeys",
+                                         "error": "its subkey list named keys it had already named %d times in a row, after %d elements: an index that repeats "
+                                                  "a list; the elements past that are not read" % (run, read)})
+                        break
+                else:
+                    if len(distinct) >= most_held:
+                        problems.append({"where": where, "what": "subkeys",
+                                         "error": "its subkey list names more than %d distinct keys, the most this tool holds for one list (%d MiB of memory): "
+                                                  "the elements past that are not read" % (most_held, HELD_KEYS_BYTES >> 20)})
+                        break
+                    read += 1
+                    run = 0
+                    seen.add(identity)
+                    distinct.append(sub)
+                if not late and read % 256 == 0 and self.past_deadline():
+                    # The library reads a key record for every element: an index that repeats lists in a large hive is a million of them.
+                    problems.append({"where": where, "what": "subkeys",
+                                     "error": "the time limit was reached after %d elements of its subkey list: the elements past that are not read" % read})
+                    break
+        finally:
+            close = getattr(source, "close", None)
+            if callable(close):
+                close()
+        self.keys_read += read
         if repeated:
             self.repeats += repeated
             problems.append({"where": where, "what": "subkeys",
@@ -685,8 +772,8 @@ class HiveBounds:
         """The key at `path` below `root` (parts split at backslashes, matched without regard to case), each subkey list on the way read through
         subkeys(); None when a part is not there. regipy's get_key reads the elements of each list on the way until one has the name, and an
         index that names one list again and again is read as many times as it says (65,535 lists of 65,535 keys), past any clock of the tool.
-        Each list is read to what the hive can hold; a lookup is not counted against the walk's own count of keys read (a tool looks a few
-        paths up, and may look one list up again for each)."""
+        Each list is read to what the hive can hold (and, after the deadline, to LATE_ELEMENTS); a lookup is not counted against the walk's own
+        count of keys read (a tool looks a few paths up, and may look one list up again for each)."""
         parts = [p for p in str(path).replace("/", "\\").split("\\") if p]
         node = root
         for i, part in enumerate(parts):
@@ -720,32 +807,41 @@ class HiveBounds:
         return deadline is not None and time.monotonic() > deadline
 
     def values(self, node, where, problems, **kwargs):
-        """At most the values the hive can hold, as a list, and at most the data it can hold over the whole walk (a value list that names one big
-        record again and again reads that record every time); a key that lists more is a problem line. The deadline is read before every value
-        of a list begun before it: a key whose values are not all read in time is a problem line. With the real library the values are read here (read_values), every big
-        data value checked before its data is put together; with a stand-in that has no stream, through its iter_values."""
+        """The values of `node`, handed out one at a time: at most the values the hive can hold, at most the data it can hold over the whole walk
+        (a value list that names one big record again and again reads that record every time), at most LIST_DATA_BYTES of data for the key (a
+        caller may keep every value of it), and, for a list begun after the deadline, at most LATE_VALUES; a key that lists more is a problem
+        line. The deadline is read before every value of a list begun before it: a key whose values are not all read in time is a problem line.
+        With the real library the values are read here (read_values), every value's size checked before its data is read; with a stand-in that
+        has no stream, through its iter_values. What the list declares and was not handed out, other than what regipy itself leaves out, is
+        counted in not_read when the list ends (or the caller stops reading it)."""
         declared = getattr(node, "values_count", None)
         declared = declared if isinstance(declared, int) and not isinstance(declared, bool) else None
         reg = _library_for(node)
         own = reg is not None
-        self._skipped = 0
-        source = self.read_values(node, reg, where, problems, **kwargs) if own else iter(node.iter_values(**kwargs) or ())
-        raw, cut = [], False
-        in_time = not self.past_deadline()                   # a list begun past the deadline (a tool that finishes what it needs) is read whole
+        tally = {"skipped": 0, "data": 0}       # values regipy itself leaves out; data of this key handed out
+        source = self.read_values(node, reg, where, problems, tally, **kwargs) if own else iter(node.iter_values(**kwargs) or ())
+        given, lost, cut = 0, 0, False
+        late = self.past_deadline()
         try:
             while True:
-                if in_time and self.past_deadline():
-                    if declared is None or len(raw) + self._skipped < declared:
+                if not late and self.past_deadline():
+                    if declared is None or given + tally["skipped"] < declared:
                         problems.append({"where": where, "what": "values",
                                          "error": "the time limit was reached after %d of the %s value(s) its list holds: the values past that are not read"
-                                                  % (len(raw), declared if declared is not None else "unknown number of")})
+                                                  % (given, declared if declared is not None else "unknown number of")})
+                        cut = True
+                    break
+                if late and given >= LATE_VALUES:
+                    if declared is None or given + tally["skipped"] < declared:
+                        problems.append({"where": where, "what": "values",
+                                         "error": "its value list was begun after the time limit and %d of its values were read: the values past that are not read" % given})
                         cut = True
                     break
                 try:
                     v = next(source)
                 except StopIteration:
                     break
-                if len(raw) >= self.value_cells:
+                if given >= self.value_cells:
                     problems.append({"where": where, "what": "values",
                                      "error": "its value list yields more values than a %d-byte hive can hold (%d at most): the elements past that are not read"
                                               % (self.hive_bytes, self.value_cells)})
@@ -753,35 +849,45 @@ class HiveBounds:
                     break
                 if not own:
                     data = getattr(v, "value", None)
-                    self.data_read += len(data) if isinstance(data, (bytes, bytearray, str)) else sum(len(x) for x in data if isinstance(x, (str, bytes))) if isinstance(data, list) else 0
+                    cost = len(data) if isinstance(data, (bytes, bytearray, str)) else sum(len(x) for x in data if isinstance(x, (str, bytes))) if isinstance(data, list) else 0
+                    self.data_read += cost
+                    tally["data"] += cost
                     if self.data_read > 4 * self.hive_bytes:
                         problems.append({"where": where, "what": "values",
                                          "error": "the values read in this walk hold more data than a %d-byte hive can: records that a value list names again and again; "
                                                   "the values past that are not read" % self.hive_bytes})
                         cut = True
                         break
-                raw.append(v)
+                    if tally["data"] > LIST_DATA_BYTES:
+                        problems.append({"where": where, "what": "values",
+                                         "error": "the values of this key hold more than %d MiB of data, the most this tool holds for one key: the values past "
+                                                  "that are not read" % (LIST_DATA_BYTES >> 20)})
+                        cut = True
+                        break
+                given += 1
+                if LOST_CHARACTER in str(getattr(v, "name", "") or ""):
+                    lost += 1
+                yield v
         finally:
             close = getattr(source, "close", None)
             if callable(close):
                 close()
-        if declared is not None and (own or cut):
-            # What the list holds and is not in `raw`: regipy's own skips (a type it leaves out, the rest of a list after a record it cannot
-            # parse) are the library's; every other one this block refused or did not reach.
-            self.not_read += max(declared - len(raw) - self._skipped, 0)
-        lost = _lost_names(raw)
-        if lost:
-            problems.append(_lost_names_problem(where, "values", lost))
-        return raw
+            if declared is not None and (own or cut):
+                # What the list holds and was not handed out: regipy's own skips (a type it leaves out, the rest of a list after a record it
+                # cannot parse) are the library's; every other one this block refused or did not reach.
+                self.not_read += max(declared - given - tally["skipped"], 0)
+            if lost:
+                problems.append(_lost_names_problem(where, "values", lost))
 
-    def read_values(self, node, reg, where, problems, as_json=False, max_len=None, trim_values=True):
+    def read_values(self, node, reg, where, problems, tally, as_json=False, max_len=None, trim_values=True):
         """regipy 6.3's NKRecord.iter_values, read from the library's copy of the hive with the same records, names, types and decoding, except
         where its own reading costs without bound: a big data value (a "db" record and its list of segments) is checked before its data is put
         together, and refused when it declares more data than the file holds past its base block, when its list holds fewer segments than its
         size needs, runs past the file or names a segment twice, or when a segment lies outside the file (regipy put together whatever the list
         named: one 16 KB segment named 160 times was a 2.5 MiB value, and a 548 KB hive declared a value of 2 GiB); every value's data is counted
-        against the walk's data budget before it is read; REG_MULTI_SZ is split by multi_strings. A refused value is a problem line and is not in
-        the list."""
+        against the walk's data budget and the key's (`tally`, which also counts the values regipy itself leaves out) before it is read, and a
+        value that declares more than VALUE_DATA_BYTES is said with its length and not read (a value list naming one 250 MB string four times
+        held a gigabyte of text at once); REG_MULTI_SZ is split by multi_strings. A refused value is a problem line and is not in the list."""
         count = node.values_count
         if not count:
             return
@@ -804,7 +910,7 @@ class HiveBounds:
                 except (reg.ConstError, reg.StreamError):
                     # regipy ends the list without an error at a value record it cannot parse; so does this
                     library_log.error("Could not parse VK at %d, registry hive is probably corrupted." % vk_at)
-                    self._skipped += count - i
+                    tally["skipped"] += count - i
                     return
                 finally:
                     stream.seek(here)
@@ -813,7 +919,7 @@ class HiveBounds:
                 if kind > 0xFFFF0000:
                     data_type = reg.VALUE_TYPE_ENUM.parse(reg.Int32ul.build(kind & 0xFFFF))
                 elif kind == 0x200000:
-                    self._skipped += 1           # regipy skips this type without a word
+                    tally["skipped"] += 1        # regipy skips this type without a word
                     continue
                 else:
                     data_type = str(vk.data_type)
@@ -840,12 +946,23 @@ class HiveBounds:
                         cost = size
                     else:
                         cost = max(min(size, end - start), 0) if start < end else 0
+                    if cost > VALUE_DATA_BYTES:
+                        problems.append({"where": where, "what": "values",
+                                         "error": "%s is not read: it declares %d bytes of data, more than the %d MiB this tool reads of one value; its length "
+                                                  "is all that is read" % (where_value, size, VALUE_DATA_BYTES >> 20)})
+                        continue
+                    if tally["data"] + cost > LIST_DATA_BYTES:
+                        problems.append({"where": where, "what": "values",
+                                         "error": "the values of this key hold more than %d MiB of data, the most this tool holds for one key: the values past "
+                                                  "that are not read" % (LIST_DATA_BYTES >> 20)})
+                        return
                     if self.data_read + cost > 4 * self.hive_bytes:
                         problems.append({"where": where, "what": "values",
                                          "error": "the values read in this walk hold more data than a %d-byte hive can: records that a value list names again "
                                                   "and again; the values past that are not read" % self.hive_bytes})
                         return
                     self.data_read += cost
+                    tally["data"] += cost
                     data = b"".join(bytes(buf[s:s + n]) for s, n in segments) if big else bytes(buf[start:start + size]) if start < end else b""
                 if data_type in ("REG_SZ", "REG_EXPAND", "REG_EXPAND_SZ"):
                     value = reg.try_decode_binary(data, as_json=as_json, trim_values=trim_values)
@@ -2741,7 +2858,7 @@ class Reader:
 
     def __init__(self, path, problems):
         self.path, self.problems = path, problems
-        self.h = RegistryHive(path)
+        self.h = open_hive(path)
         self.bounds = HiveBounds(path)
         self.listed = {}
 
@@ -2772,7 +2889,9 @@ class Reader:
     def info(self):
         return hive_state(self.h, self.path)
 GROUPS = ("Plain", "Boot", "Logon", "Maintenance")
-MAX_XML_BYTES = 8 << 20
+MAX_XML_BYTES = 1 << 20                  # a task file is a few KB; the parser holds about a hundred times what it reads (8 MiB of elements took 802 MB)
+MAX_ITEMS = 100000                      # the tasks this tool holds at once (each item a dict of its fields and events); past it, tasks are counted
+MAX_EVENTS_HELD = 400000                # the events held over every task; past it, events are counted, not listed
 MAX_ACTIONS = 50
 MAX_EVENTS_PER_TASK = 200
 EVENTS = {"security": (4698, 4699, 4700, 4701, 4702), "microsoft-windows-taskscheduler/operational": (106, 140, 141, 200, 201)}
@@ -3061,7 +3180,8 @@ def main():
     problem_page = SealedPage("persistence_normalise-problems", [paths["software"], paths["system"], paths["ntuser"], paths["tasks_dir"], paths["evtx_results"]], INLINE_PROBLEMS)
     n = {"unsupported": 0, "filtered_out": 0, "blind": 0, "failed": 0, "refused": 0, "not_read_for_time": 0, "events_not_listed": 0, "evtx_bad_lines": 0, "evtx_rows": 0,
          "evtx_ignored": 0, "skipped_special": 0, "skipped_links": 0, "actions_cut": 0, "bad_number": 0, "unsupported_values": 0, "unsupported_autorun": 0, "keys_unstarted": 0,
-         "not_written_for_time": 0, "unordered_lists": 0, "unordered_items": 0, "evtx_long_lines": 0}
+         "not_written_for_time": 0, "unordered_lists": 0, "unordered_items": 0, "evtx_long_lines": 0, "items_not_held": 0, "events_not_held": 0, "events_held": 0,
+         "repeated_names": 0}
     obs = collections.Counter()
     by_registration = collections.Counter()
     stopped = [None]
@@ -3079,6 +3199,23 @@ def main():
     def note(label, exc):
         n["failed"] += 1
         problem_page.add("%s: %s: %s" % (label, type(exc).__name__, exc))
+
+    def first_values(listed, where):
+        """{lower-case name: the first value of that name} and the later values of a name already met. Windows matches a value name without
+        regard to case and reads the first; a dictionary of every value kept the last one (a second "imagepath" after "ImagePath" replaced it)
+        and the answer said complete. A later value is said in a problem line, and the caller keeps it where it can."""
+        first, later = {}, []
+        for v in listed:
+            name = str(getattr(v, "name", "")).lower()
+            if name in first:
+                later.append(v)
+            else:
+                first[name] = v
+        if later:
+            n["repeated_names"] += len(later)
+            problem_page.add("%s: %d of its values have a name that an earlier value of the key has (names are matched without regard to case): the first of a "
+                             "name is read, as Windows reads it, and a later one is kept as the field's _value where the item has one free" % (where, len(later)))
+        return first, later
 
     def time_is_up(label):
         if stopped[0] is None and out_of_time():
@@ -3098,9 +3235,14 @@ def main():
         return print_order(values, kind, text)
 
     def item_for(path):
+        """The item of a task path, made when it is first met; None past MAX_ITEMS (an evtx result file of four million task names was held whole,
+        and the run was killed for its memory): such a task is counted (items_not_held), and the answer is partial."""
         key = path.lower()
         it = items.get(key)
         if it is None:
+            if len(items) >= MAX_ITEMS:
+                n["items_not_held"] += 1
+                return None
             it = items[key] = {"path": path, "xml": "not_provided" if not paths["tasks_dir"] else "absent", "taskcache": "not_provided" if not paths["software"] else "absent",
                                "tree": "not_provided" if not paths["software"] else "absent", "tree_sd": None, "tasks_key": "not_provided" if not paths["software"] else "absent", "events": []}
         return it
@@ -3140,6 +3282,8 @@ def main():
                         continue
                     task_path = rel + "\\" + entry.name
                     it = item_for(task_path)
+                    if it is None:
+                        continue
                     it["xml"] = "present"
                     it["xml_file"] = task_path.lstrip("\\")
                     try:
@@ -3190,11 +3334,12 @@ def main():
                 name = str(getattr(s_, "name", ""))
                 where = csn + "\\Services\\" + name
                 try:
-                    vals = {str(v.name).lower(): v for v in rd.values(s_, where)}
+                    vals, again = first_values(rd.values(s_, where), where)
                     row = {"mechanism": "service", "path": csn + "\\" + name, "service_name": name, "control_set": csn, "current_control_set": is_current, "key": T("key", where), "hive": "system"}
                     obs_ = []
                     texts = [("path", name)]
                     unsupported = []
+                    repeated = []                     # a later value of a name the key already holds (said in a problem line too)
 
                     def put(field, v, what):
                         if isinstance(v.value, str):
@@ -3210,6 +3355,12 @@ def main():
                         v = vals.get(key)
                         if v is not None:
                             put(field, v, what)
+                        for later in again:
+                            if str(getattr(later, "name", "")).lower() == key and field + "_value" not in row:
+                                shown, vtype, _ = other_value(later, what, "text")
+                                row[field + "_value"], row[field + "_value_type"] = shown, vtype
+                                repeated.append(own("%s is given again by a later value of the same name: the first is %s, the later one %s_value" % (what, field, field)))
+                                texts.append(("text", shown))
                     for field, key, labels in (("start", "start", START_LABELS), ("type", "type", TYPE_LABELS)):
                         v = vals.get(key)
                         if v is None:
@@ -3238,8 +3389,8 @@ def main():
                             unsupported.append(sentence)
                     if vals.get("imagepath") is None and not servicedll_seen:
                         obs_.append("no_imagepath_and_no_servicedll_value")
-                    if unsupported:
-                        row["unsupported_fields"] = unsupported
+                    if unsupported or repeated:
+                        row["unsupported_fields"] = unsupported + repeated
                         n["unsupported_values"] += len(unsupported)
                     row["observations"] = obs_
                     for c in obs_:
@@ -3344,10 +3495,10 @@ def main():
                         n["not_read_for_time"] += len(subs) - idx
                         break
                     path = rel + "\\" + str(sub.name)
-                    vals = {str(v.name).lower(): v for v in values(sub, "TaskCache\\Tree" + path)}
+                    vals, _ = first_values(values(sub, "TaskCache\\Tree" + path), "TaskCache\\Tree" + path)
                     ident = vals.get("id")
-                    if ident is not None:
-                        it = item_for(path)
+                    it = item_for(path) if ident is not None else None
+                    if it is not None:
                         it["tree"] = "present"
                         it["tree_sd"] = "present" if "sd" in vals else "absent"
                         gid = str(ident.value).strip() if isinstance(ident.value, str) else None
@@ -3371,11 +3522,13 @@ def main():
                     break
                 gid = str(sub.name)
                 path = guid_path.get(gid.lower())
-                vals = {str(v.name).lower(): v for v in values(sub, "TaskCache\\Tasks\\" + gid)}
+                vals, _ = first_values(values(sub, "TaskCache\\Tasks\\" + gid), "TaskCache\\Tasks\\" + gid)
                 if path is None:
                     uri = vals.get("path")
                     path = (str(uri.value) if uri is not None and isinstance(uri.value, str) and uri.value else "\\" + gid)
                 it = item_for(path)
+                if it is None:
+                    continue
                 pv = vals.get("path")
                 if pv is not None and not isinstance(pv.value, str):
                     shown, vtype, sentence = other_value(pv, "the Path value", "text")
@@ -3451,7 +3604,7 @@ def main():
                     continue
                 try:
                     row = json.loads(line)
-                except ValueError:
+                except (ValueError, RecursionError):              # RecursionError: a line nested deeper than the parser goes
                     n["evtx_bad_lines"] += 1
                     continue
                 rows = row.get("events") if isinstance(row, dict) and isinstance(row.get("events"), list) else [row]
@@ -3477,10 +3630,16 @@ def main():
                     it = items.get(name.lower())
                     if it is None:
                         it = item_for(name)
+                        if it is None:
+                            continue
                         it["evidence_only"] = True
                     if len(it["events"]) >= MAX_EVENTS_PER_TASK:
                         n["events_not_listed"] += 1
                         continue
+                    if n["events_held"] >= MAX_EVENTS_HELD:
+                        n["events_not_held"] += 1
+                        continue
+                    n["events_held"] += 1
                     when = r.get("record_time_utc") or r.get("timestamp")
                     rid = r.get("record_id")
                     it["events"].append({"event_id": str(eid), "channel": str(r.get("channel")), "time_utc": when if isinstance(when, str) else None,
@@ -3615,6 +3774,11 @@ def main():
         reasons.append("%d line(s) of the evtx result file could not be read" % n["evtx_bad_lines"])
     if n["events_not_listed"]:
         reasons.append("%d event(s) past the %d listed for a task are counted, not listed (events_not_listed)" % (n["events_not_listed"], MAX_EVENTS_PER_TASK))
+    if n["items_not_held"]:
+        reasons.append("%d task(s) were met after the %d this tool holds at once: they are counted, not listed or cross-checked, and their events are not read"
+                       % (n["items_not_held"], MAX_ITEMS))
+    if n["events_not_held"]:
+        reasons.append("%d event(s) were met after the %d this tool holds over all tasks: they are counted, not listed" % (n["events_not_held"], MAX_EVENTS_HELD))
     if stopped[0]:
         reasons.append("%s (at least %d entr(ies) were not read; %d key(s) or director(ies) were not started and what they hold is not counted; every source after this point was not started "
                        "and is not counted)" % (stopped[0], n["not_read_for_time"], n["keys_unstarted"]))

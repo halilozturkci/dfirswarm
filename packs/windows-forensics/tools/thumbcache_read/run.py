@@ -544,6 +544,7 @@ DEFAULT_OUTPUT_BYTES = 1 << 30    # the images written in one call
 MAX_OUTPUT_BYTES = 8 << 30
 MAX_FILES = 200                   # cache files read from one directory
 MAX_PROBLEMS = 50
+CUT_EXAMPLES = 3                  # entries a file ends inside, named by offset in its status_basis; the rest are counted (entries_truncated)
 IDENTIFIER_SHOWN = 128
 BLOCK = 1 << 20
 PROGRESS = {"files": 0, "entries": 0, "written": 0}
@@ -877,6 +878,9 @@ def read_cache(path, rows, budget, extract, include_free, directory, shown_dir, 
         # inside the one before, ran into the clock): the stack's top is the last entry whose slack is being read, the heap's top the nearest
         # declared end. An entry whose end the read has passed is dropped from either when it comes to the top; pos only grows.
         slacks = []                                            # (offset of the entry, its declared end), in the order the entries were read
+        # The entries the file ends inside are counted and the first few named, in one reason: one reason per entry made the status_basis grow
+        # with the file (a file of 2,000,000 such entries gave hundreds of megabytes of it).
+        cut_examples, cut_count = [], 0
         slack_ends = []                                        # the declared ends of the same entries, a heap
         while pos < end:
             while slacks and slacks[-1][1] <= pos:
@@ -965,7 +969,9 @@ def read_cache(path, rows, budget, extract, include_free, directory, shown_dir, 
             if cut:
                 row["truncated"] = True
                 row["data_bytes_present"] = present
-                reasons.append("the file ends inside the entry at offset %d (%d of its %d bytes are there)" % (pos, size - pos, entry_size))
+                cut_count += 1
+                if len(cut_examples) < CUT_EXAMPLES:
+                    cut_examples.append("at offset %d (%d of its %d bytes are there)" % (pos, size - pos, entry_size))
                 said["entries_truncated"] = said.get("entries_truncated", 0) + 1
             if data_size:
                 said["entries_with_image"] += 1
@@ -1023,6 +1029,9 @@ def read_cache(path, rows, budget, extract, include_free, directory, shown_dir, 
                 heapq.heappush(slack_ends, pos + entry_size)
             pos += inside
         said["bytes_not_in_an_entry"] = gaps
+        if cut_examples:
+            reasons.insert(0, "the file ends inside %d entr(ies) (rows[].truncated; entries_truncated counts them): %s%s" % (
+                cut_count, "; ".join(cut_examples), "" if cut_count <= len(cut_examples) else "; and %d more" % (cut_count - len(cut_examples))))
         skipped_by_header = said.get("entries_before_first_entry_offset", 0)
         if skipped_by_header:
             problem("the header's first entry offset (%d) lies past %d entr(ies) that begin before it: a reader that starts at that offset skips them; they were "
@@ -1053,6 +1062,41 @@ def read_cache(path, rows, budget, extract, include_free, directory, shown_dir, 
                                      % swallowed))
     finally:
         os.close(fd)
+
+
+def cache_files_under(top, skipped):
+    """(the cache files under a directory, why the walk stopped or None), in the order os.walk gives with every list sorted: a directory's
+    files, then each of its subdirectories in name order. The walk keeps its own stack: os.walk recursed in Python 3.11 and earlier, so a tree
+    deeper than the interpreter's recursion limit ended the whole answer. A link to a directory is not entered (a link to a file is listed,
+    and refused when it is read). A directory that cannot be listed goes to `skipped` with the reason."""
+    found, stack = [], [top]
+    while stack:
+        if out_of_time():
+            return found, "the tool's own clock (%d s) ran out while the directory was walked" % DEADLINE_SECONDS
+        here = stack.pop()
+        try:
+            with os.scandir(here) as listing:
+                entries = list(listing)
+        except OSError as exc:
+            skipped.append({"file": getattr(exc, "filename", None) or here, "why": "the directory could not be listed: %s" % (exc.strerror or type(exc).__name__)})
+            continue
+        dirs, names = [], []
+        for entry in entries:
+            try:
+                is_dir = entry.is_dir()
+            except OSError:
+                is_dir = False
+            if not is_dir:
+                names.append(entry.name)
+                continue
+            try:
+                if not entry.is_symlink():
+                    dirs.append(entry.name)
+            except OSError:
+                pass
+        found.extend(os.path.join(here, name) for name in sorted(names) if CACHE_NAME.search(name))
+        stack.extend(os.path.join(here, name) for name in sorted(dirs, reverse=True))
+    return found, None
 
 
 def whole(value, name, default, low, high):
@@ -1097,16 +1141,7 @@ def main():
     if os.path.islink(path):
         fail("the path is a symbolic link: it is not followed (name what it resolves to)", path=path)
     if os.path.isdir(path):
-        def unreadable(exc):
-            skipped.append({"file": getattr(exc, "filename", None) or path, "why": "the directory could not be listed: %s" % exc.strerror})
-        for root, dirs, names in os.walk(path, onerror=unreadable):
-            if out_of_time():
-                walk_stopped = "the tool's own clock (%d s) ran out while the directory was walked" % DEADLINE_SECONDS
-                break
-            dirs.sort()
-            for name in sorted(names):
-                if CACHE_NAME.search(name):
-                    targets.append(os.path.join(root, name))
+        targets, walk_stopped = cache_files_under(path, skipped)
         if not targets and not skipped and not walk_stopped:
             fail("no thumbcache_*.db or iconcache_*.db file under that directory", path=path)
         if len(targets) > MAX_FILES:

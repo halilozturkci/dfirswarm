@@ -216,7 +216,7 @@ test("a file that ends inside an entry gives a truncated row, writes the whole i
     assert.ok(readFileSync(join(cwd, rows[0].written)).equals(A));
     assert.deepEqual([rows[1].truncated, rows[1].data_bytes_present, rows[1].written, rows[1].sha256], [true, 100, undefined, null]);
     assert.match(rows[1].not_written, /the file ends inside the image \(100 of 922 bytes\): a cut image is not written/);
-    assert.match(out.files[0].status_basis, /the file ends inside the entry at offset \d+ \(\d+ of its \d+ bytes are there\)/);
+    assert.match(out.files[0].status_basis, /the file ends inside \d+ entr\(ies\) \(rows\[\]\.truncated; entries_truncated counts them\): at offset \d+ \(\d+ of its \d+ bytes are there\)/);
     assert.match(out.files[0].status_basis, /ends before the offset its header gives for its first free byte/);
     // Cut inside an entry's header: a row that says so, and no field of the entry is believed.
     const short = await read(cwd, { path: put(cwd, "work/short/thumbcache_32.db", whole.subarray(0, 24 + 30)) });

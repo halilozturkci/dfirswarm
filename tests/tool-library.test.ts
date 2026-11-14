@@ -1288,13 +1288,13 @@ test("shellbags decodes the shell items regipy hands over as hex, with the GUID 
     mru: "03000000010000000200000000000000ffffffff",
   });
   assert.equal(out.code, 0, out.stderr);
-  const got = JSON.parse(out.stdout) as { items: Array<{ type: string; guid?: string; name: string }>; order: number[]; not_hex: null };
+  const got = JSON.parse(out.stdout) as { items: Array<{ type: string; guid?: string; name: string }>; order: Record<string, number>; not_hex: null };
   assert.equal(got.items[0].type, "root folder");
   assert.equal(got.items[0].guid, "{20D04FE0-3AEA-1069-A2D8-08002B30309D}", "My Computer");
   assert.equal(got.items[1].guid, "{679F85CB-0220-4080-B29B-5540CC05AAB6}", "Quick access");
   assert.equal(got.items[2].type, "volume");
   assert.equal(got.items[2].name, "Z:\\");
-  assert.deepEqual(got.order, [3, 1, 2, 0]);
+  assert.deepEqual(got.order, { "3": 0, "1": 1, "2": 2, "0": 3 }, "each slot's position in MRUListEx, most recent first");
   assert.equal(got.not_hex, null);
 });
 

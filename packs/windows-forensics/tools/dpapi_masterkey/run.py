@@ -559,21 +559,23 @@ def decrypt_dpapi_blob(blob, masterkey, entropy=None):
     """The clear text of a blob when `masterkey` (the 64 bytes decrypt_masterkey gives) opens it AND its signature verifies; None otherwise.
     The session key is HMAC-SHA512 over the blob's salt (and the caller's entropy) keyed by the SHA-1 of the master key; its first 32 bytes are
     the AES-256 key, the IV is zero and the padding PKCS#7. The signature is the HMAC over the blob's own bytes from its master key version to
-    its cipher text, in either of the two forms Windows has written. blob_supported(blob) must have said None."""
+    its cipher text, in either of the two forms Windows has written. blob_supported(blob) must have said None. The signature covers no clear
+    text, so it is checked first: a wrong key costs an HMAC, not an AES pass over the cipher text (a GUID that more than one key carries is
+    tried with each)."""
     key_hash = hashlib.sha1(masterkey).digest()
     extra = entropy or b""
+    newer = hmac.new(key_hash, blob["hmac_key"] + extra + blob["to_sign"], hashlib.sha512).digest()
+    padded = key_hash + b"\x00" * (128 - len(key_hash))
+    inner = hashlib.sha512(bytes(b ^ 0x36 for b in padded) + blob["hmac_key"]).digest()
+    older = hashlib.sha512(bytes(b ^ 0x5C for b in padded) + inner + extra + blob["to_sign"]).digest()
+    if not (hmac.compare_digest(newer, blob["signature"]) or hmac.compare_digest(older, blob["signature"])):
+        return None
     session = hmac.new(key_hash, blob["salt"] + extra, hashlib.sha512).digest()
     clear = aes_cbc_decrypt(session[:32], bytes(16), blob["cipher_text"])
     pad = clear[-1]
     if not 1 <= pad <= 16 or clear[-pad:] != bytes([pad]) * pad:
         return None
-    newer = hmac.new(key_hash, blob["hmac_key"] + extra + blob["to_sign"], hashlib.sha512).digest()
-    padded = key_hash + b"\x00" * (128 - len(key_hash))
-    inner = hashlib.sha512(bytes(b ^ 0x36 for b in padded) + blob["hmac_key"]).digest()
-    older = hashlib.sha512(bytes(b ^ 0x5C for b in padded) + inner + extra + blob["to_sign"]).digest()
-    if hmac.compare_digest(newer, blob["signature"]) or hmac.compare_digest(older, blob["signature"]):
-        return clear[:-pad]
-    return None
+    return clear[:-pad]
 
 
 def chromium_scheme(value):
@@ -894,11 +896,34 @@ def user_secret(args):
     return ("the SHA-1 of the password" if kind == "sha1" else "the NT hash of the password"), {kind: value}
 
 
+def add_key(keys, guid, key):
+    """keys is {guid: [64-byte key, ...]}. Two master key files can carry one GUID (a copy of a file, a restored backup, a file made so), each
+    with a key of its own: every distinct key of a GUID is kept, in the order it was found, and a blob of that GUID is tried with each."""
+    have = keys.setdefault((guid or "").lower(), [])
+    if key not in have:
+        have.append(key)
+
+
+def open_blob(blob, keys, entropy=None, time_is_up=lambda: False):
+    """(clear text, keys tried, stopped by the clock) of a DPAPI blob, tried with each verified key of the GUID it names (`keys` as add_key
+    makes it). The clear text is None unless a key's signature verified."""
+    tried = 0
+    for key in keys.get(blob["masterkey_guid"], ()):
+        if tried and time_is_up():
+            return None, tried, True
+        tried += 1
+        clear = decrypt_dpapi_blob(blob, key, entropy)
+        if clear is not None:
+            return clear, tried, False
+    return None, tried, False
+
+
 def open_masterkeys(files, sid, secret, time_is_up):
-    """Try every master key file with every pre-key the secret gives. Returns (one report per file, {guid: 64-byte key} of the ones whose HMAC
-    verified). A report holds what the file's header says and the outcome, never a byte of a key."""
+    """Try every master key file with every pre-key the secret gives. Returns (one report per file, {guid: [64-byte key, ...]} of the ones whose
+    HMAC verified (add_key), [(report, key)] for each file that verified). A report holds what the file's header says and the outcome, never a
+    byte of a key; a verified file whose GUID another verified file carries too says so in same_guid_as (the other files)."""
     prekeys = dpapi_prekeys(sid, **secret)
-    reports, keys = [], {}
+    reports, keys, opened = [], {}, []
     for path in files:
         report = {"file": path, "attempted": False, "verified": False}
         reports.append(report)
@@ -940,13 +965,20 @@ def open_masterkeys(files, sid, secret, time_is_up):
             key = decrypt_masterkey(mk, prekey)
             if key is not None:
                 report["verified"], report["verified_with"] = True, how
-                keys[(guid or "").lower()] = key
+                add_key(keys, guid, key)
+                opened.append((report, key))
                 break
-    return reports, keys
+    for report, _key in opened:
+        others = [r["file"] for r, _k in opened if r is not report and r["guid"] is not None and (r["guid"] or "").lower() == (report["guid"] or "").lower()
+                  and os.path.normpath(r["file"]) != os.path.normpath(report["file"])]
+        if others:
+            report["same_guid_as"] = others[:8]
+    return reports, keys, opened
 
 
 def read_keys_file(path):
-    """{guid: 64-byte key} from the sealed keys file an earlier dpapi_masterkey call wrote (JSON Lines; the rows of kind 'masterkey')."""
+    """{guid: [64-byte key, ...]} (add_key) from the sealed keys file an earlier dpapi_masterkey call wrote (JSON Lines; the rows of kind
+    'masterkey')."""
     keys = {}
     for line in read_regular(path, "keys_file", KEYS_FILE_MAX).splitlines():
         try:
@@ -954,7 +986,7 @@ def read_keys_file(path):
             if isinstance(row, dict) and row.get("kind") == "masterkey":
                 key = bytes.fromhex(row["key_hex"])
                 if len(key) == 64 and isinstance(row.get("guid"), str):
-                    keys[row["guid"].lower()] = key
+                    add_key(keys, row["guid"], key)
         except (ValueError, KeyError, TypeError):
             continue
     if not keys:
@@ -963,7 +995,7 @@ def read_keys_file(path):
 # END CREDENTIAL IO
 
 
-PARSER = "dpapi_masterkey/2"
+PARSER = "dpapi_masterkey/3"
 DEADLINE_SECONDS = 45             # the manifest allows 60: the derivations stop here, so that the answer is printed before the harness ends the tool
 KEYS_NAME = "dpapi_masterkey-keys.jsonl"
 PLAIN_NAME = "dpapi_masterkey-plaintext.jsonl"
@@ -1104,12 +1136,20 @@ def main():
         earlier_keys = read_keys_file(args["keys_file"]) if args.get("keys_file") is not None else {}
         if args.get("masterkey") is not None:
             PROGRESS["stage"] = "while the master keys were tried"
-            reports, keys = open_masterkeys(files, sid, secret, out_of_time)
-            by_guid = {(r.get("guid") or "").lower(): r for r in reports if r.get("verified")}
-            for guid, key in keys.items():
-                keys_out.add({"kind": "masterkey", "guid": guid, "sid": sid, "file": by_guid[guid]["file"], "verified_with": by_guid[guid]["verified_with"], "key_hex": key.hex()})
-        for guid, key in earlier_keys.items():
-            keys.setdefault(guid, key)
+            reports, keys, opened = open_masterkeys(files, sid, secret, out_of_time)
+            # One line per verified master key FILE: two files that carry one GUID give a line each, with the key each holds (the same file
+            # named twice gives one).
+            written_files = set()
+            for report, key in opened:
+                where = os.path.normpath(report["file"])
+                if where in written_files:
+                    continue
+                written_files.add(where)
+                keys_out.add({"kind": "masterkey", "guid": (report.get("guid") or "").lower(), "sid": sid, "file": report["file"],
+                              "verified_with": report["verified_with"], "key_hex": key.hex()})
+        for guid, more in earlier_keys.items():
+            for key in more:
+                add_key(keys, guid, key)
         blob_report = None
         if blob_input is not None:
             PROGRESS["stage"] = "while the blob was tried"
@@ -1127,21 +1167,28 @@ def main():
                                    trailing_bytes=blob["trailing_bytes"])
                 why = blob_supported(blob)
                 blob_report["supported"] = why is None
-                key = keys.get(blob["masterkey_guid"])
-                blob_report["masterkey_available"] = key is not None
+                available = len(keys.get(blob["masterkey_guid"], ()))
+                blob_report["masterkey_available"] = available > 0
+                blob_report["masterkeys_of_guid"] = available
                 if why:
                     blob_report["unsupported_why"] = why
-                elif key is None:
+                elif not available:
                     blob_report["why_not"] = ("the blob names master key %s, and no verified key of that GUID is at hand: verify that master key file first "
                                               "(it is in the same user's Protect/<SID> directory)" % blob["masterkey_guid"])
                 elif out_of_time():
                     blob_report["why_not"] = "the tool's own clock ran out before the blob was tried"
                 else:
                     blob_report["attempted"] = True
-                    clear = decrypt_dpapi_blob(blob, key, entropy)
-                    if clear is None:
-                        blob_report["why_not"] = ("the blob's signature did not verify under the master key of its GUID%s: nothing was written"
-                                                  % ("" if entropy is not None else " (a blob made with an optional entropy needs entropy_file)"))
+                    clear, tried, late = open_blob(blob, keys, entropy, out_of_time)
+                    blob_report["masterkeys_tried"] = tried
+                    if late:
+                        blob_report["not_tried_for_time"] = True
+                        blob_report["why_not"] = ("the tool's own clock ran out after %d of the %d verified master keys of the blob's GUID were tried, and "
+                                                  "none opened it: nothing was written" % (tried, available))
+                    elif clear is None:
+                        blob_report["why_not"] = ("the blob's signature did not verify under %s%s: nothing was written"
+                                                  % ("the master key of its GUID" if available == 1 else "any of the %d verified master keys of its GUID" % available,
+                                                     "" if entropy is not None else " (a blob made with an optional entropy needs entropy_file)"))
                     else:
                         blob_report["decrypted"], blob_report["plaintext_bytes"] = True, len(clear)
                         row = {"kind": "blob_plaintext", "blob_file": args["blob_file"], "masterkey_guid": blob["masterkey_guid"], "bytes": len(clear), "hex": clear.hex()}
@@ -1165,6 +1212,8 @@ def main():
                        "lists what was tried): those files are neither verified nor refused" % (DEADLINE_SECONDS, len(cut_short)))
     if blob_report is not None and not blob_report["attempted"]:
         reasons.append("the blob was not tried: %s" % (blob_report.get("error") or blob_report.get("unsupported_why") or blob_report.get("why_not")))
+    if blob_report is not None and blob_report.get("not_tried_for_time"):
+        reasons.append("the blob was not tried with every verified key of its GUID: %s" % blob_report["why_not"])
     said = []
     if reports:
         said.append("%d of %d master key file(s) verified (the block's own HMAC matched)" % (verified, len(reports)))
@@ -1172,6 +1221,10 @@ def main():
         if refused_whole:
             said.append("for %d file(s) that did not verify, every derivation of %s for this SID was tried and the HMAC matched none: not this secret for this SID, or a "
                         "key the secret does not open by itself (an older key behind the credential history, a domain key)" % (len(refused_whole), secret_kind))
+        shared = sorted({(r.get("guid") or "").lower() for r in reports if r.get("same_guid_as")})
+        if shared:
+            said.append("%d GUID(s) are carried by more than one verified master key file (masterkeys[].same_guid_as): the keys file has a line for each file, "
+                        "with the key that file holds, and a blob of such a GUID is tried with each key" % len(shared))
         if any(r.get("verified") and not str(r.get("guid_from", "")).startswith("the file's header") for r in reports):
             said.append("a verified key's GUID was not in its file's header (masterkeys[].guid_from says where it was taken from)")
     if blob_report is not None and blob_report["attempted"]:

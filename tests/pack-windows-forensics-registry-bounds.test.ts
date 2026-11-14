@@ -22,6 +22,10 @@ function dual(name: string, fn: (v: Variant) => Promise<void>): void {
 
 type Answer = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 
+/** What the HIVE BOUNDS block says when it stops reading a repeating index: past what the hive can hold, or after a run of elements that name keys
+ * the list already named (whichever comes first: the stand-in's hive file is JSON, larger than the regf bytes, so its bound is further). */
+const REPEAT_STOP = /more keys than a \d+-byte hive can hold|named keys it had already named \d+ times in a row/;
+
 const keys = (n: number, prefix = "K"): Node[] => Array.from({ length: n }, (_, i) => ({ name: prefix + String(i).padStart(5, "0") }));
 
 /** Every file a tool wrote for the agent (work/s1/...), with its size. */
@@ -50,7 +54,7 @@ dual("regkv reads a subkey index that repeats one list for what a hive of that s
     assert.ok(out.nodes_listed <= Math.floor(hiveBytes / 76), `${out.nodes_listed} keys listed from a ${hiveBytes}-byte hive`);
     assert.equal(out.status, "partial");
     assert.match(out.status_basis, /problem/);
-    assert.ok(out.problems.some((p: Answer) => /more keys than a \d+-byte hive can hold/.test(p.error)), JSON.stringify(out.problems));
+    assert.ok(out.problems.some((p: Answer) => REPEAT_STOP.test(p.error)), JSON.stringify(out.problems));
     assert.ok(out.problems.some((p: Answer) => /more than once; each is listed once/.test(p.error)), "the repeated elements are said");
     assert.equal(new Set(out.subkeys.map((s: Answer) => s.name)).size, out.subkeys.length, "a key is listed once");
     assert.equal(out.subkeys.length, 500, "every distinct key is listed");
@@ -66,7 +70,7 @@ dual("shellbags reads a BagMRU index that repeats one list for what a hive of th
     assert.ok(out.keys_walked <= Math.floor(hiveBytes / 76) + 1, `${out.keys_walked} keys walked`);
     assert.ok(out.entry_count <= 500 + 1);
     assert.equal(out.status, "partial");
-    assert.ok(out.problems.some((p: Answer) => /more keys than a \d+-byte hive can hold/.test(p.why)), JSON.stringify(out.problems));
+    assert.ok(out.problems.some((p: Answer) => REPEAT_STOP.test(p.why)), JSON.stringify(out.problems));
     assert.ok((await written(cwd)).every((f) => f.bytes < 2_000_000));
   });
 });
@@ -86,7 +90,7 @@ dual("amcache_apps reads an inventory index that repeats one list for what a hiv
     assert.ok(out.entry_count <= Math.floor(hiveBytes / 76), `${out.entry_count} rows from a ${hiveBytes}-byte hive`);
     assert.equal(out.entry_count, 500, "every distinct key is a row, once");
     assert.equal(out.status, "partial");
-    assert.ok(out.problems.some((p: string) => /more keys than a \d+-byte hive can hold/.test(p)), JSON.stringify(out.problems));
+    assert.ok(out.problems.some((p: string) => REPEAT_STOP.test(p)), JSON.stringify(out.problems));
     assert.ok((await written(cwd)).every((f) => f.bytes < 2_000_000));
   });
 });

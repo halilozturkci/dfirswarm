@@ -475,9 +475,10 @@ test("a signal that ends the tool after the recovered copy was placed and before
     assert.equal(code, 143);
     const last = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Answer;
     assert.deepEqual([last.status, last.interrupted], ["failed", true]);
-    assert.match(last.status_basis, /the recovered copy, which had no receipt yet/);
+    assert.match(last.status_basis, /file\(s\) it had placed \(a recovered copy, the keys and changes files, the values file\), which had no receipt yet/);
     const left = await everyFileUnder(join(cwd, "work"));
     assert.deepEqual(left.filter((f) => /recovered/.test(f)), [], "no recovered copy without its receipt");
     assert.deepEqual(left.filter((f) => /receipt/.test(f)), []);
+    assert.deepEqual(left.filter((f) => /(keys|changes)(-\d+)?\.jsonl$/.test(f)), [], "no keys or changes file without its receipt");
   });
 });

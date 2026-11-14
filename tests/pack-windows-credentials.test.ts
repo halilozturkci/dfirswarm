@@ -665,7 +665,7 @@ test("a logins table with a column named rowid is read by its real row id: every
     assert.deepEqual(lines(join(env.OUT, "chromium_logins-values.jsonl")).map((v) => v.password), SECRETS);
     assert.equal(out.status, "partial", "the cell over the limit is said");
     assert.doesNotMatch(out.status_basis, /bound of \d+ rows|clock/);
-    assert.equal(out.parser, "chromium_logins/4");
+    assert.equal(out.parser, "chromium_logins/5");
     // rowid, _rowid_ and oid all taken by columns: the real row id has no name left, and the table is refused rather than read by a column.
     py(
       "import sqlite3, sys\nc = sqlite3.connect(sys.argv[1])\nc.execute('CREATE TABLE logins (rowid, _rowid_, OID, origin_url, password_value BLOB)')\n" +
@@ -772,6 +772,53 @@ test("a master key file whose header holds no GUID is matched to a blob by its f
     const p = profile(cwd);
     const good = await call("dpapi_masterkey", cwd, { masterkey: join(p.protect, GUID), password_file: "work/pw" }, secretJob(cwd));
     assert.equal(good.out.masterkeys[0].guid_from, "the file's header");
+  });
+});
+
+test("two master key files that carry one GUID, each with its own key: a keys line per file, and a blob under either key is opened by both tools", async () => {
+  await withCwd(async (cwd) => {
+    // Windows names a master key file by the GUID in its header; a copy under another name (a restored backup, a file made so) carries the same
+    // GUID with a key of its own. Keeping one key per GUID wrote one line for two verified files and left a blob under the other key unopened.
+    const first = randomBytes(64);
+    const second = randomBytes(64);
+    const protect = `work/Protect/${SID}`;
+    const other = "ffffffff-0000-4000-8000-000000000001";
+    mkdirSync(join(cwd, protect), { recursive: true });
+    writeFileSync(join(cwd, protect, GUID), masterKeyFile(prekeySha1(PASSWORD), first));
+    writeFileSync(join(cwd, protect, other), masterKeyFile(prekeySha1(PASSWORD), second));
+    const password = secretFile(cwd, "work/pw", PASSWORD);
+    for (const [which, key] of [["first", first], ["second", second]] as Array<[string, Buffer]>) {
+      const clear = Buffer.from(`clear text under the ${which} key of the shared GUID`);
+      const env = secretJob(cwd);
+      const { out, raw } = await call("dpapi_masterkey", cwd, { masterkey: protect, password_file: password, blob_file: secretFile(cwd, `work/blob-${which}`, dpapiBlob(key, clear)) }, env);
+      assert.equal(out.status, "complete", `${which}: ${out.status_basis}`);
+      assert.equal(out.parser, "dpapi_masterkey/3");
+      assert.equal(out.verified_count, 2);
+      const reports = out.masterkeys as Answer[];
+      assert.deepEqual(reports.map((r) => [r.guid, r.same_guid_as]), [[GUID, [join(protect, other)]], [GUID, [join(protect, GUID)]]]);
+      assert.match(out.status_basis, /1 GUID\(s\) are carried by more than one verified master key file \(masterkeys\[\]\.same_guid_as\)/);
+      assert.deepEqual([out.blob.decrypted, out.blob.masterkeys_of_guid, out.blob.masterkeys_tried], [true, 2, which === "first" ? 1 : 2], which);
+      const keys = lines(join(env.OUT, "dpapi_masterkey-keys.jsonl"));
+      assert.deepEqual(keys.map((k) => [k.guid, k.file, k.key_hex]), [[GUID, join(protect, GUID), first.toString("hex")], [GUID, join(protect, other), second.toString("hex")]],
+        "one line per verified master key file, each with the key that file holds");
+      assert.equal(lines(join(env.OUT, "dpapi_masterkey-plaintext.jsonl"))[0].utf8, clear.toString("utf8"));
+      assertNoSecret(raw, [first, second, clear], "the answer");
+    }
+    // The same file named twice is one file: one line.
+    const env = secretJob(cwd);
+    const twice = await call("dpapi_masterkey", cwd, { masterkey: [join(protect, GUID), join(protect, GUID)], password_file: password }, env);
+    assert.equal(twice.out.status, "complete", twice.out.status_basis);
+    assert.deepEqual((twice.out.masterkeys as Answer[]).map((r) => [r.verified, r.same_guid_as]), [[true, undefined], [true, undefined]]);
+    assert.deepEqual(lines(join(env.OUT, "dpapi_masterkey-keys.jsonl")).map((k) => k.file), [join(protect, GUID)]);
+    // chromium_logins tries each key too: a Local State whose profile key is under the first key opens with both files named.
+    const profileKey = randomBytes(32);
+    mkdirSync(join(cwd, "work/dup/Default"), { recursive: true });
+    writeFileSync(join(cwd, "work/dup/Local State"), localState(dpapiBlob(first, profileKey)));
+    loginData(join(cwd, "work/dup/Default/Login Data"), [{ origin: "https://a.example/", username: "u", value: v10(profileKey, SECRETS[0]) }]);
+    const cr = await call("chromium_logins", cwd, { login_data: "work/dup/Default/Login Data", local_state: "work/dup/Local State", masterkey: protect, password_file: password }, secretJob(cwd));
+    assert.equal(cr.out.status, "complete", cr.out.status_basis);
+    assert.deepEqual([cr.out.profile_key.obtained, cr.out.decrypted], [true, 1]);
+    assert.deepEqual((cr.out.masterkeys as Answer[]).map((r) => r.same_guid_as?.length), [1, 1]);
   });
 });
 
