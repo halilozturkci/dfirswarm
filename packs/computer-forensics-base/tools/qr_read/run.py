@@ -447,7 +447,7 @@ sys.excepthook = _unexpected_tool
 install_signal_handlers(lambda signum: (kill_decoder(), interrupted_answer(signum)))
 
 
-TOOL = {"name": "qr_read", "version": 8}
+TOOL = {"name": "qr_read", "version": 9}
 PARSER = "qr_read/5"
 DEFAULT_SECONDS, MAX_SECONDS = 90, 100          # under the manifest's 120
 MAX_INPUTS = 64
@@ -1505,6 +1505,7 @@ def jpeg_check(data, tick, budget):
 # PackBits in photometric 0 to 3, which Pillow reads strip by strip through libtiff and which fail the read on data that does not
 # decode. Every other page is counted as not walked.
 TIFF_MAGICS = (b"II*\x00", b"MM\x00*", b"II+\x00", b"MM\x00+")
+TIFF_NUMBER_TYPES = (3, 4, 16)    # SHORT, LONG, LONG8: the types the walk reads the tags it uses as
 TIFF_TYPE_SIZES = {1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8, 13: 4, 16: 8, 17: 8, 18: 8}
 TIFF_TAGS = (256, 257, 258, 259, 262, 273, 277, 278, 279, 284, 322, 323, 324, 325, 347)
 TIFF_SINGLE_TAGS = (256, 257, 259, 262, 277, 278, 284, 322, 323)    # tags of one value: a page that gives more is not walked
@@ -1548,6 +1549,10 @@ def _tiff_pages(data, most, tick):
             width = TIFF_TYPE_SIZES.get(kind)
             if width is None:
                 raise JpegUnchecked("tag %d of page %d is of the type %d, which the walk does not take" % (tag, len(pages) + 1, kind))
+            if tag != 347 and kind not in TIFF_NUMBER_TYPES:
+                # Pillow keeps a tag of another type as bytes, a float or a rational, and so reads the page differently from a walk that
+                # reads every type as a whole number (a PlanarConfiguration of type BYTE reads as "contiguous" there, as 2 here).
+                raise JpegUnchecked("tag %d of page %d is of the type %d; the walk takes the tags it reads only as SHORT, LONG or LONG8" % (tag, len(pages) + 1, kind))
             if n > MAX_TIFF_PIECES and tag != 347:
                 raise JpegUnchecked("tag %d of page %d holds %d values, more than the %d the walk takes" % (tag, len(pages) + 1, n, MAX_TIFF_PIECES))
             where = at + 4 + word if n * width <= word else number(at + 4 + word, word)
@@ -1574,6 +1579,10 @@ def _tiff_needs(tags, tiled, pieces):
     samples = (tags.get(277) or [1])[0]
     depths = tags.get(258) or [1]
     planar = (tags.get(284) or [1])[0] == 2
+    if planar and any(depth != 8 for depth in depths):
+        # Pillow's raw path takes each plane's mode from one character of the page's ("RGB;16B" gives "R", "G", "B"): a plane of 16-bit
+        # (or 4-bit) samples is decoded as 8-bit, with no error and nothing on stderr.
+        raise JpegUnchecked("an uncompressed page in separate planes whose samples are not all 8 bits; Pillow decodes each plane as 8-bit")
     bits = depths[0] if planar else (sum(depths) if len(depths) == samples else depths[0] * samples)
     if tiled:
         across, down = (tags.get(322) or [0])[0], (tags.get(323) or [0])[0]
