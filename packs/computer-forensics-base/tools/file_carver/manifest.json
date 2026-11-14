@@ -32,6 +32,12 @@
   "example": "{\"path\":\"inputs/[UNALLOCATED]\",\"offset\":675840,\"sig_type\":\"PE\",\"output\":\"work/s183904/carved/pe_675840.bin\"}",
   "by": "s183904",
   "at": "2026-09-18T22:20:17.004Z",
-  "version": 13,
-  "sha256": "61e073b8c45fdad15c93fd5edeff7628c313a91b55ef64c214460763752cb99e"
+  "not_for": [
+    {
+      "what": "finding where file headers occur in a blob",
+      "use": "sig_carve"
+    }
+  ],
+  "version": 14,
+  "sha256": "f926f14c77ee7a631d0ec26fbca2355e15586481f162b385c22ba2507aabb80a"
 }

@@ -2,6 +2,7 @@
 id: data/browser-storage
 title: Browser storage in LevelDB and IndexedDB
 when: IndexedDB, Local or Session Storage of a Chromium or Electron app.
+card: browser_storage {"path": "<the .leveldb directory>"} first: cite a record by its locator, never by a count. failed with unavailable is no reader, not an empty store; partial names the files not read to their end. A put or a delete is a state at a sequence number, the newest winning, and LevelDB gives no time. Previews withhold only by shape: where secrets matter run it as a secret_output job with {"write_values": true}. Does not show: what a page did with a record, or when it was written.
 needs: []
 tools: [browser_storage]
 requires_host: [ccl_indexeddb_dump]

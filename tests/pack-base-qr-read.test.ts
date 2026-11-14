@@ -842,7 +842,7 @@ for name, kw in (("base", {}), ("prog", {"progressive": True}), ("rst", {"restar
   });
 });
 
-test("a TIFF coded with CCITT (compression 2 or 4), whose decoder fills a damaged strip and only warns, is counted as not walked; LZW and Deflate are counted as not walked", { skip: pillowHere(ROOT) ? false : "Pillow does not import here: the tool reads no TIFF without it" }, async () => {
+test("a TIFF coded with CCITT (compression 2 or 4), whose decoder fills a damaged strip and only warns, is counted as not walked; whole LZW, PackBits and Deflate pages are walked and complete", { skip: pillowHere(ROOT) ? false : "Pillow does not import here: the tool reads no TIFF without it" }, async () => {
   await withRun(async (run, out) => {
     encode(String.raw`
 d = sys.argv[1]
@@ -857,7 +857,7 @@ d = sys.argv[1]; w, h = map(int, open(d + "/size").read().split())
 im = Image.frombytes("L", (w, h), open(d + "/sym.raw", "rb").read())
 if not features.check_codec("libtiff"):
     print("no libtiff"); sys.exit(0)
-for comp in ("group4", "tiff_ccitt", "tiff_lzw", "tiff_adobe_deflate"):
+for comp in ("group4", "tiff_ccitt", "tiff_lzw", "tiff_adobe_deflate", "packbits"):
     b = io.BytesIO(); (im.convert("1") if comp in ("group4", "tiff_ccitt") else im).save(b, "TIFF", compression=comp)
     open(d + "/" + comp + ".tif", "wb").write(b.getvalue())
     if comp == "group4":
@@ -876,13 +876,14 @@ print("made")
       assert.equal(r.doc.not_read_or_judged.jpeg_data_not_walked, 1, name);
       assert.doesNotMatch(r.doc.status_basis, /read whole/, name);
     }
-    // LZW and Deflate: libtiff decodes damaged data (a zeroed tail of Deflate, a strip damaged in its middle) as noise and says nothing, so a
-    // page of any codec but JPEG is counted as not walked: the picture is decoded all the same, and the answer is partial.
-    for (const [name, code] of [["tiff_lzw", 5], ["tiff_adobe_deflate", 8]] as const) {
+    // LZW, PackBits and Deflate: libtiff decodes a strip damaged in its middle out of step (or stops inflating before the checksum) and says
+    // nothing, so the tool walks each strip's code stream to its end itself; a whole page passes that walk and the answer is complete.
+    for (const name of ["tiff_lzw", "tiff_adobe_deflate", "packbits"]) {
       const r = await call("qr_read", run, { image: `work/s1/${name}.tif` }, { out });
-      assert.equal(r.doc.status, "partial", `${name}: ${r.stdout.slice(0, 900)}`);
+      assert.equal(r.doc.status, "complete", `${name}: ${r.stdout.slice(0, 900)}`);
       assert.equal((r.doc.rows[0] as Doc).result, "decoded", name);
-      assert.match((r.doc.rows[0] as Doc).jpeg_data_not_walked, new RegExp(`TIFF compression ${code}`), name);
+      assert.equal((r.doc.rows[0] as Doc).jpeg_data_not_walked, undefined, name);
+      assert.equal(r.doc.not_read_or_judged.jpeg_data_not_walked, 0, name);
     }
   });
 });

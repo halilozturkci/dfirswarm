@@ -1530,8 +1530,8 @@ def _unexpected_tool(kind, value, _tb):
 sys.excepthook = _unexpected_tool
 
 
-TOOL = {"name": "glyph_strip", "version": 14}
-PARSER = "glyph_strip/5"
+TOOL = {"name": "glyph_strip", "version": 15}
+PARSER = "glyph_strip/6"
 DEFAULT_SECONDS, MAX_SECONDS = 50, 55           # under the manifest's 60
 OCR_SECONDS = 20
 OCR_START_SECONDS = 2              # the OCR engine is started only with this much of the clock left (it is given at least a second, and its pipes one more)
@@ -2072,10 +2072,11 @@ def clock_deadline():
 #   walked by the tool:    PNG (every PNG Pillow decodes has its image data, and each animation frame's, inflated and measured against
 #                          what its rows need: png_check); JPEG, the first picture of the file (its coded data walked block by block:
 #                          jpeg_check); TIFF pages whose shape is on the allowlist in tiff_check: uncompressed (as many pieces as its size needs, byte counts against
-#                          the rows, Pillow's own decoder) and JPEG (each strip or tile walked as a JPEG, its frame the strip's or
-#                          tile's size).
-#   shown to raise:        GIF and BMP (and BMP's RLE) data cut short; WebP cut short (a TIFF coded with LZW or PackBits is not on this list: libtiff
-#                          decodes a strip damaged in its middle out of step and says nothing).
+#                          the rows, Pillow's own decoder), JPEG (each strip or tile walked as a JPEG, its frame the strip's or
+#                          tile's size), and LZW, PackBits and Deflate (each strip or tile's code stream walked to its end, which
+#                          must come at the bytes the piece decodes to and at the end of its data: _tiff_coded).
+#   shown to raise:        GIF and BMP (and BMP's RLE) data cut short; WebP cut short (a TIFF coded with LZW, PackBits or Deflate is not on this
+#                          list: libtiff decodes a strip damaged in its middle out of step and says nothing; those pages are walked instead).
 #   counted as not walked: every other TIFF shape (any other codec, YCbCr or another photometric that sends Pillow to libtiff's RGBA
 #                          interface, which fills and only prints, a tag named twice, strip and tile tags together, a directory the walk
 #                          cannot follow); the pictures of a JPEG past its first (MPO).
@@ -2525,12 +2526,14 @@ def jpeg_check(data, tick, budget):
 # the walk would take the tiles), and one of: uncompressed (1) in photometric 0, 1, 2, 3 or 5, whose strips or tiles must hold the bytes
 # their rows need; JPEG (7) in photometric 0, 1, 2 or 6, of one plane, each strip or tile walked as a JPEG (the page's JPEGTables put
 # before its own data) whose frame is the strip's or tile's size with a component for each sample. A page of a palette has a ColorMap of 3 x 2^bits values (Pillow paints the indices a short map lacks black, libtiff drops the map).
-# Every other page, any compressed one but JPEG included, is counted as not walked: a codec is not taken for safe because libtiff raises on
-# damage (it raises on a cut or zeroed tail, not on a strip damaged in its middle, nor on Deflate).
+# LZW (5), PackBits (32773) and Deflate (8, 32946) in photometric 0, 1, 2 or 3, FillOrder 1 or 2, each strip or tile's code stream walked
+# to its end by _tiff_coded. A codec is not taken for safe because libtiff raises on damage: it raises on a cut or zeroed tail, but decodes
+# a strip damaged in its middle out of step (LZW, PackBits) and stops inflating once a strip's rows are full (Deflate, whose checksum is then
+# never read), and says nothing. Every other page, any other codec included, is counted as not walked.
 TIFF_MAGICS = (b"II*\x00", b"MM\x00*", b"II+\x00", b"MM\x00+")
 TIFF_NUMBER_TYPES = (3, 4, 16)    # SHORT, LONG, LONG8: the types the walk reads the tags it uses as
 TIFF_TYPE_SIZES = {1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8, 13: 4, 16: 8, 17: 8, 18: 8}
-TIFF_TAGS = (256, 257, 258, 259, 262, 273, 277, 278, 279, 284, 320, 322, 323, 324, 325, 339, 347)
+TIFF_TAGS = (256, 257, 258, 259, 262, 266, 273, 277, 278, 279, 284, 320, 322, 323, 324, 325, 339, 347)
 TIFF_SINGLE_TAGS = (256, 257, 259, 262, 277, 278, 284, 322, 323)    # tags of one value: a page that gives more is not walked
 MAX_TIFF_PIECES = 1 << 20          # the strips or tiles of one page that are walked; a page with more is not walked
 
@@ -2637,6 +2640,211 @@ def _tiff_needs(tags, tiled, pieces):
     return need, read
 
 
+# ---- the tool's own walk of a TIFF strip's or tile's LZW, PackBits or Deflate code stream ----------------------------------------
+# libtiff decodes a strip (TIFFReadEncodedStrip) or a tile (TIFFReadEncodedTile) into a buffer of exactly the bytes the piece decodes to:
+# a strip of R rows, R x stride (its last strip has the rows that are left of the page's height), a tile its full TileLength rows x the
+# tile's stride, an edge tile too; stride = ceil(across x bits x samples / 8). It stops when that buffer is full and takes what it decoded:
+# an LZW stream whose codes went out of step (a code naming an entry left over from before the last clear decodes as that old string),
+# a PackBits stream whose control byte was changed (the rows after it shift) and a Deflate stream that fills the buffer before its end
+# (its adler32 is never checked) all decode in silence. So each piece is walked here to the end of its stream, counting lengths only (no
+# decoded byte is held), and must decode to exactly its bytes and end where its data ends. A Predictor does not change those lengths.
+# FillOrder 2 (libtiff reverses the bits of each byte of these codecs' data before decoding) is reversed here too. What the walk cannot
+# see: damage that keeps the stream valid (a changed literal byte of PackBits or LZW, Deflate data rewritten with a checksum that agrees),
+# the same known limit as an uncompressed page with a changed byte.
+TIFF_CODECS_WALKED = {5: "LZW", 8: "Deflate", 32946: "Deflate", 32773: "PackBits"}
+TIFF_PHOTOMETRIC_CODED = (0, 1, 2, 3)               # libtiff's decoder into Pillow's own unpackers (not the RGBA interface)
+TIFF_REVERSED_BITS = bytes(int("{:08b}".format(i)[::-1], 2) for i in range(256))
+TIFF_INFLATE_CHUNK = 1 << 16
+
+
+def _tiff_lzw_walk(piece, need, tick, budget):
+    """TIFF LZW (5.0, MSB-first: 9- to 12-bit codes, clear 256, end of information 257, the width growing one entry early as libtiff's
+    decoder does) walked through the lengths of its table's entries: None when the stream decodes to exactly `need` bytes and its end
+    code ends in its last byte, or a sentence saying where it does not. Each entry's first byte and the pair it is made of are kept too
+    (4096 at most): an LZW encoder emits the longest string its table holds, so a code whose entry (the string before it and the next
+    one's first byte) is already in the table was not written by one; most codes changed in place show so, and since an encoder that
+    is not greedy would show it too, a stream that is otherwise whole but holds such a code is not walked rather than called damaged.
+    JpegUnchecked for that, for the old LSB-first form (libtiff's own test: a first byte 0 and a second byte whose low bit is set) and
+    for the clock."""
+    size = len(piece)
+    if size >= 2 and piece[0] == 0 and piece[1] & 1:
+        raise JpegUnchecked("its data is in the old LSB-first LZW form, which the walk does not take")
+    lengths = [1] * 256 + [0] * (4096 - 256)
+    firsts = list(range(256)) + [0] * (4096 - 256)
+    pairs, again = set(), None
+    acc = nacc = at = out = codes = 0
+    width, free, prev = 9, 258, -1           # prev: the code before this one, -1 just after a clear (or at the start)
+    while True:
+        while nacc < width:
+            if at >= size:
+                return "its LZW codes end without an end-of-information code, after %d of the %d bytes it decodes to" % (out, need)
+            acc = (acc << 8) | piece[at]
+            at += 1
+            nacc += 8
+        nacc -= width
+        code = acc >> nacc
+        acc &= (1 << nacc) - 1
+        codes += 1
+        if codes % 65536 == 0:
+            tick()
+            if budget() <= 0:
+                raise JpegUnchecked("the walk's share of the clock ran out in its LZW codes")
+        if code == 257:
+            break
+        if code == 256:
+            width, free, prev = 9, 258, -1
+            pairs.clear()
+            continue
+        if prev < 0:
+            if code > 255:
+                return "LZW code %d follows a clear code, where a code of one byte (0 to 255) must, after %d bytes" % (code, out)
+        else:
+            if code > free:
+                return "LZW code %d names an entry past the table's next one (%d), after %d bytes: its codes are out of step" % (code, free, out)
+            if free >= 4096:
+                return "its LZW table grows past 4096 entries without a clear code, after %d bytes" % out
+            pair = (prev << 8) | firsts[prev if code == free else code]
+            if again is None and pair in pairs:
+                again = ("LZW code %d, after %d bytes, adds an entry its table already holds: not the codes of an encoder that emits its "
+                         "longest match (damaged, or an encoder the walk does not judge)" % (code, out))
+            pairs.add(pair)
+            lengths[free], firsts[free] = lengths[prev] + 1, firsts[prev]
+            free += 1
+            if free > (1 << width) - 2 and width < 12:
+                width += 1
+        prev = code
+        out += lengths[code]
+        if out > need:
+            return "its LZW codes decode to more than the %d bytes it holds, with no end-of-information code there" % need
+    if out != need:
+        return "its LZW end-of-information code comes after %d of the %d bytes it decodes to" % (out, need)
+    if at != size:
+        return "its LZW end-of-information code ends in byte %d of its %d" % (at, size)
+    if again is not None:
+        raise JpegUnchecked(again)
+    return None
+
+
+def _tiff_packbits_walk(piece, rows, stride, tick, budget):
+    """PackBits walked through its control bytes (a control byte n of 0 to 127 copies the n + 1 bytes after it, -1 to -127 repeats the
+    next byte 1 - n times, -128 does nothing): None when the piece decodes to exactly its rows x `stride` bytes, every run inside its row,
+    and the data is used up (no-op bytes aside), or a sentence saying where it is not (a run past the last row's end, data that ends
+    first or bytes left after it). TIFF 6.0 packs each row on its own; libtiff decodes the piece as one run of bytes and takes a run that
+    crosses into the next row, so a piece that is whole as one run of bytes but holds such a run is JpegUnchecked: the walk does not
+    guess whether an encoder packed across rows or the data was damaged."""
+    size, at, out, total, crossed, step = len(piece), 0, 0, rows * stride, None, 0
+    while out < total:
+        step += 1
+        if step % 65536 == 0:
+            tick()
+            if budget() <= 0:
+                raise JpegUnchecked("the walk's share of the clock ran out in its PackBits data")
+        if at >= size:
+            return "its PackBits data ends in row %d of %d, %d of the %d bytes it decodes to short" % (out // stride + 1, rows, total - out, total)
+        control = piece[at]
+        at += 1
+        if control == 128:
+            continue
+        if control < 128:
+            run, at = control + 1, at + control + 1
+        else:
+            run, at = 257 - control, at + 1
+        if at > size:
+            return "a PackBits run of row %d of %d runs past the end of its data" % (out // stride + 1, rows)
+        if out + run > total:
+            return "a PackBits run from row %d of %d runs %d byte(s) past the end of its last row" % (out // stride + 1, rows, out + run - total)
+        if crossed is None and out // stride != (out + run - 1) // stride:
+            crossed = ("a PackBits run crosses from row %d into the next (libtiff takes it; the walk does not take rows packed across)"
+                       % (out // stride + 1))
+        out += run
+    while at < size and piece[at] == 128:
+        at += 1
+    if at != size:
+        return "%d byte(s) of its PackBits data are left after its last row" % (size - at)
+    if crossed is not None:
+        raise JpegUnchecked(crossed)
+    return None
+
+
+def _tiff_deflate_walk(piece, need, tick, budget):
+    """A zlib stream inflated in chunks, its output counted and dropped: None when it ends (its adler32 checked by zlib) with no data
+    after it and inflates to exactly `need` bytes, or a sentence saying where it does not."""
+    inflater, size, at, out, tail = zlib.decompressobj(), len(piece), 0, 0, b""
+    try:
+        while not inflater.eof:
+            tick()
+            if budget() <= 0:
+                raise JpegUnchecked("the walk's share of the clock ran out in its Deflate data")
+            if tail:
+                chunk = tail
+            elif at < size:
+                chunk = piece[at:at + TIFF_INFLATE_CHUNK]
+                at += len(chunk)
+            else:
+                chunk = b""
+            got = len(inflater.decompress(chunk, TIFF_INFLATE_CHUNK))
+            out += got
+            tail = inflater.unconsumed_tail
+            if out > need:
+                return "its Deflate data inflates to more than the %d bytes it holds" % need
+            if not got and not tail and at >= size:
+                break
+    except zlib.error as exc:
+        return "its Deflate data does not inflate (%s), after %d of the %d bytes it holds" % (exc, out, need)
+    if not inflater.eof:
+        return "its Deflate data ends before its zlib stream does, after %d of the %d bytes it holds" % (out, need)
+    left = len(inflater.unused_data) + len(tail) + size - at
+    if left:
+        return "%d byte(s) follow the end of its zlib stream" % left
+    if out != need:
+        return "its Deflate data inflates to %d bytes where it holds %d" % (out, need)
+    return None
+
+
+def _tiff_coded(data, tags, tiled, offsets, counts, compression, page, tick, budget):
+    """Walk every strip or tile of an LZW, PackBits or Deflate page (see above): None when each decodes to exactly its bytes and ends where
+    its data ends, or a sentence saying where one does not. JpegUnchecked for a shape the walk cannot judge."""
+    codec, what = TIFF_CODECS_WALKED[compression], "tile" if tiled else "strip"
+    fill = tags.get(266) or [1]
+    if len(fill) != 1 or fill[0] not in (1, 2):
+        raise JpegUnchecked("page %d gives a FillOrder of %s; the walk does not take it" % (page, "/".join(str(f) for f in fill[:4])))
+    width, height = (tags.get(256) or [0])[0], (tags.get(257) or [0])[0]
+    bits = (tags.get(258) or [1])[0] * (tags.get(277) or [1])[0]
+    if tiled:
+        across, down = (tags.get(322) or [0])[0], (tags.get(323) or [0])[0]
+    else:
+        across, down = width, min(height, (tags.get(278) or [height])[0])
+    if not width or not height or not across or not down:
+        raise JpegUnchecked("page %d: a %s page whose size, strips or tiles are not given" % (page, codec))
+    per_row = -(-width // across)
+    expected = per_row * -(-height // down)
+    if len(offsets) != expected:
+        raise JpegUnchecked("page %d holds %d %ss of %s data where its size needs %d; the walk does not take it" % (page, len(offsets), what, codec, expected))
+    stride = -(-across * bits // 8)
+    for k, (start, length) in enumerate(zip(offsets, counts)):
+        tick()
+        if budget() <= 0:
+            raise JpegUnchecked("the walk's share of the clock ran out at page %d, %s %d" % (page, what, k + 1))
+        if length == 0 or start + length > len(data):
+            return "page %d, %s %d of %s data: it is not in the file (byte count %d at byte %d)" % (page, what, k + 1, codec, length, start)
+        piece = memoryview(data)[start:start + length]
+        if fill[0] == 2:
+            piece = bytes(piece).translate(TIFF_REVERSED_BITS)     # the coded bytes, as libtiff reverses them; nothing decoded is held
+        rows = down if tiled else min(down, height - (k // per_row) * down)
+        try:
+            if compression == 5:
+                found = _tiff_lzw_walk(piece, rows * stride, tick, budget)
+            elif compression == 32773:
+                found = _tiff_packbits_walk(piece, rows, stride, tick, budget)
+            else:
+                found = _tiff_deflate_walk(piece, rows * stride, tick, budget)
+        except JpegUnchecked as exc:
+            raise JpegUnchecked("page %d, %s %d of %s data: %s" % (page, what, k + 1, codec, exc))
+        if found is not None:
+            return "page %d, %s %d of %s data: %s" % (page, what, k + 1, codec, found)
+    return None
+
+
 def _jpeg_frame(data):
     """The frame header of a JPEG stream: (height, width, components), or None when no frame header comes before its first scan."""
     at, size = 2, len(data)
@@ -2671,7 +2879,8 @@ TIFF_STRIP_TAGS, TIFF_TILE_TAGS = (273, 278, 279), (322, 323, 324, 325)
 def tiff_check(data, pages, tick, budget):
     """The tool's own walk of the strips and tiles of a TIFF's first `pages` pages (see above). Returns None when every page is of a
     shape the walk takes and every strip and tile Pillow reads holds what its rows need, or a sentence saying where one does not.
-    JpegUnchecked for every page of a shape the allowlist does not hold (old-style JPEG, another codec, a photometric interpretation
+    JpegUnchecked for every page of a shape the allowlist does not hold (old-style JPEG, a codec but uncompressed, JPEG, LZW, PackBits and
+    Deflate, a photometric interpretation
     that sends Pillow to libtiff's RGBA interface, a tag named twice, strip and tile tags together, a directory it cannot follow, a
     JPEG coding the JPEG walk does not take) and when `budget()` (seconds the walk may still take) runs out; tick() reads the clock."""
     for page, (tags, twice) in enumerate(_tiff_pages(data, pages, tick), 1):
@@ -2713,10 +2922,11 @@ def tiff_check(data, pages, tick, budget):
                                 "does not take it" % page)
         if compression == 6:
             raise JpegUnchecked("page %d is coded as old-style JPEG (TIFF compression 6), whose data the walk does not take" % page)
-        if compression not in (1, 7):
+        if compression not in (1, 7) and compression not in TIFF_CODECS_WALKED:
             raise JpegUnchecked("page %d is coded with TIFF compression %d, whose decoder may fill a cut or damaged strip with noise or zeros "
                                 "and say nothing; the walk does not take it" % (page, compression))
-        if photometric not in (TIFF_PHOTOMETRIC_UNCOMPRESSED if compression == 1 else TIFF_PHOTOMETRIC_JPEG) or (compression == 7 and planar != 1):
+        allowed = TIFF_PHOTOMETRIC_UNCOMPRESSED if compression == 1 else TIFF_PHOTOMETRIC_JPEG if compression == 7 else TIFF_PHOTOMETRIC_CODED
+        if photometric not in allowed or (compression == 7 and planar != 1):
             raise JpegUnchecked("page %d is coded with TIFF compression %d in photometric interpretation %d%s, which the walk does not "
                                 "take" % (page, compression, photometric, "" if planar == 1 else " in separate planes"))
         what = "tile" if tiled else "strip"
@@ -2731,6 +2941,11 @@ def tiff_check(data, pages, tick, budget):
                 if counts[k] < need(k):
                     return ("page %d, %s %d of uncompressed data: its byte count is %d and its rows need %d (Pillow reads them from the "
                             "file at its offset all the same)" % (page, what, k + 1, counts[k], need(k)))
+            continue
+        if compression in TIFF_CODECS_WALKED:
+            found = _tiff_coded(data, tags, tiled, offsets, counts, compression, page, tick, budget)
+            if found is not None:
+                return found
             continue
         width, height, samples = (tags.get(256) or [0])[0], (tags.get(257) or [0])[0], (tags.get(277) or [1])[0]
         if tiled:

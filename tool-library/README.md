@@ -134,7 +134,7 @@ or `tools/`.
 | `evtx_filter` | python3 | `sd1d101` | 1 | Parse a local EVTX; return EventID/TimeCreated/EventData for matching IDs or a time prefix |
 | `evtx_query` | python3 | `sbe1801` | 15 | Query an EVTX event log and return filtered events with timestamp, event id, channel, computer, provider, Eve… |
 | `extract_stream` | python3 | `sfcc303` | 15 | Extract one data stream of an NTFS volume by inode address to a file with icat (the Sleuth Kit). The stream i… |
-| `file_carver` | python3 | `s183904` | 13 | Cut ONE candidate file out of a raw dump at a known offset: from the offset to the end the format's own struc… |
+| `file_carver` | python3 | `s183904` | 14 | Cut ONE candidate file out of a raw dump at a known offset: from the offset to the end the format's own struc… |
 | `fls_root` | python3 | `s9d8306` | 2 | Run fls on an EXT4 volume (default offset 503808, image inputs/Webserver.E01). Reads inode/recursive/image/of… |
 | `ftk_csv` | python3 | `s9d8303` | 1 | Query the UTF-16 FTK Imager CSV for path/date/deleted filters; return matching rows as JSON. |
 | `fve_metadata` | python3 | `s864a05` | 2 | Parse a BitLocker -FVE-FS- volume (raw image or VHD partition) and return metadata: GUID, encryption method, … |
@@ -156,9 +156,9 @@ or `tools/`.
 | `reg_hive_query` | python3 | `sbe1805` | 1 | Query a Windows registry hive file (regipy) and return a key's values and subkey names as JSON. |
 | `regkeys` | python3 | `sf4b205` | 4 | Dump a registry key's values and subkeys from a hive with regipy. Text values are decoded, REG_BINARY comes b… |
 | `regkv` | python3 | `s9f2005` | 24 | Read a Windows registry hive with regipy: a key's values (each with its registry type and length, read whole:… |
-| `sig_carve` | python3 | `s183906` | 17 | A signature scan: find where known file headers (magic bytes) occur in a binary file, in one pass over it, an… |
+| `sig_carve` | python3 | `s183906` | 18 | A signature scan: find where known file headers (magic bytes) occur in a binary file, in one pass over it, an… |
 | `sigscan_e01` | python3 | `s5d1001` | 3 | Scan an E01/raw image for a byte signature via TSK img_cat (logical media, not the EWF wrapper). Returns offs… |
-| `sqlite_query` | python3 | `s881002` | 20 | Run a read-only SQL query over a SQLite database file through Python's sqlite3 module and an authorizer that … |
+| `sqlite_query` | python3 | `s881002` | 21 | Run a read-only SQL query over a SQLite database file through Python's sqlite3 module and an authorizer that … |
 | `usn_journal` | python3 | `maintainer` | 9 | Parse an NTFS change journal ($UsnJrnl:$J) into records from v2, v3 and v4 entries: name, USN, timestamp (ISO… |
 | `utf16_urls` | python3 | `s5d1003` | 7 | String candidates for URLs, file: and Visited: entries and 192.168.x.x addresses in a file; not a browser par… |
 | `volrun` | python3 | `s69d306` | 2 | Run a Volatility 3 plugin against a memory image with typed arguments. Returns stdout/stderr. |

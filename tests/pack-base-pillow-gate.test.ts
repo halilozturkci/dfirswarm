@@ -6,7 +6,8 @@
  * only when its shape is one the tool's walk sees as libtiff and Pillow do; every other shape is counted as not walked. Each case here
  * is one shape that a verification found passed as whole before (a Compression tag named twice, YCbCr through libtiff's RGBA
  * interface, a JPEG strip whose frame is smaller than the strip, strip and tile tags in one directory, a PNG header chunk longer than
- * 13 bytes), each with its whole control, and each run through both tools. The fixtures are drawn here: the symbol by
+ * 13 bytes, an LZW, PackBits or Deflate strip damaged in its middle that libtiff decodes in silence), each with its whole control, and
+ * each run through both tools. The fixtures are drawn here: the symbol by
  * scripts/lib/qrgen.py, the codings by Pillow's own writer, the directories and chunks by this file. The safety net under the walk
  * (the decoding child's standard error read as damage) is held directly: a stand-in for Pillow prints a decoder's line there.
  */
@@ -34,7 +35,7 @@ function withPillow(code: string, args: string[], cwd: string): string {
  * a pipe: whether it loads, and whether libtiff printed anything while it did.
  */
 const BUILD = String.raw`
-import io, json, os, struct, sys, zlib
+import hashlib, io, json, os, struct, sys, zlib
 sys.path.insert(0, sys.argv[1])
 import qrgen
 from PIL import Image
@@ -207,6 +208,65 @@ long_header = struct.pack(">IIBBBBB", W, W, 8, 0, 0, 0, 0) + b"\x00"      # 14 b
 files["header 14 whole.png"] = png(long_header, rows)
 files["header 14 half.png"] = png(long_header, rows[:len(rows) // 2])  # a zlib stream that ends after half the rows
 
+def decoded(data, whole):
+    """How Pillow takes the file in a child whose standard error is a pipe: 0 the picture whole digests to, 4 another picture, 3 an
+    error; and whether anything was printed."""
+    r, w = os.pipe(); pid = os.fork()
+    if pid == 0:
+        os.dup2(w, 2); os.close(r)
+        try:
+            i = Image.open(io.BytesIO(data)); i.load()
+            os._exit(0 if hashlib.sha256(i.tobytes()).digest() == whole else 4)
+        except Exception:
+            os._exit(3)
+    os.close(w); said = b""
+    while True:
+        block = os.read(r, 65536)
+        if not block: break
+        said += block
+    os.close(r); _pid, status = os.waitpid(pid, 0)
+    return os.WEXITSTATUS(status), bool(said.strip())
+
+def silently_damaged(data, places, change):
+    """The file changed at the first of the places (offsets in its first strip) where Pillow decodes it with no error and nothing printed to
+    a picture that is not the whole one: the damage libtiff takes in silence. None when there is no such place."""
+    whole = hashlib.sha256(Image.open(io.BytesIO(data)).tobytes()).digest()
+    o = Image.open(io.BytesIO(data)).tag_v2[273][0]
+    for at in places:
+        for out in change(bytearray(data), o + at):
+            if bytes(out) != data and decoded(bytes(out), whole) == (4, False):
+                return bytes(out)
+    return None
+
+def first_strip(data):
+    t = Image.open(io.BytesIO(data)).tag_v2; o, c = t[273][0], t[279][0]; return data[o:o + c]
+
+def zero_four(out, at):
+    out[at:at + 4] = bytes(4); yield out
+
+def packbits_controls(strip):
+    """The offsets of a PackBits strip's control bytes, read by TIFF 6.0's rule (n of 0 to 127: n + 1 literal bytes follow; -1 to -127: one
+    byte follows; -128: none)."""
+    at, out = 0, []
+    while at < len(strip):
+        out.append(at); n = strip[at]
+        at += 1 + (n + 1 if n < 128 else (0 if n == 128 else 1))
+    return out
+
+def control_moved(out, at):
+    for step in (1, 255, 2, 254):                  # a run made one or two bytes longer or shorter
+        changed = bytearray(out); changed[at] = (changed[at] + step) % 256; yield changed
+
+files["packbits whole"] = saved(im, compression="packbits")
+files["bilevel packbits whole"] = saved(im.convert("1"), compression="packbits")
+middle = lambda strip: range(len(strip) // 3, 2 * len(strip) // 3)
+for name, data, places, change in (
+        ("lzw", rgb, None, zero_four), ("deflate", dfl, None, zero_four),
+        ("packbits", files["packbits whole"], [at for at in packbits_controls(first_strip(files["packbits whole"])) if at in middle(first_strip(files["packbits whole"]))], control_moved)):
+    found = silently_damaged(data, places if places is not None else middle(first_strip(data)), change)
+    if found is not None:
+        files["%s damaged silently" % name] = found
+
 def taken(data):
     r, w = os.pipe(); pid = os.fork()
     if pid == 0:
@@ -252,9 +312,10 @@ test("the Pillow gate passes a TIFF page only in a shape its walk takes: a tag n
     }
     const file = (name: string): string => (name.endsWith(".png") ? name : name + ".tif");
 
-    // The whole controls: the shapes the walk takes (LZW in RGB, one JPEG strip of the page's size, an uncompressed strip, a PNG
-    // whose header chunk is 14 bytes) are complete in both tools, and Pillow's decoder printed nothing on them.
-    for (const name of ["palette whole", "jpeg strip whole", "raw strip whole", "strips whole", "header 14 whole.png"]) {
+    // The whole controls: the shapes the walk takes (LZW and Deflate in RGB, PackBits in grey and in one bit, one JPEG strip of the page's
+    // size, an uncompressed strip, a PNG whose header chunk is 14 bytes) are complete in both tools, and Pillow's decoder printed nothing on them.
+    for (const name of ["palette whole", "jpeg strip whole", "raw strip whole", "strips whole", "header 14 whole.png", "rgb lzw whole", "deflate whole",
+      "packbits whole", "bilevel packbits whole"]) {
       assert.equal(report[name]!.printed, false, `${name}: libtiff printed on a whole file`);
       const { qr, glyph } = await both(run, out, file(name));
       assert.equal(qr.status, "complete", `qr_read, ${name}: ${JSON.stringify(qr.row).slice(0, 600)}`);
@@ -282,24 +343,29 @@ test("the Pillow gate passes a TIFF page only in a shape its walk takes: a tag n
           if (state === "zeroed" && report[name]!.printed) {
             assert.match(seen.row.picture_damaged, /it printed \d+ line\(s\) on its standard error while it decoded, the first: /, `${who}, ${name}`);
           } else {
-            assert.match(seen.row.jpeg_data_not_walked, /is coded with TIFF compression (5|8|32773|32946), whose decoder may fill a cut or damaged strip/, `${who}, ${name}`);
+            assert.match(seen.row.jpeg_data_not_walked, /is coded with TIFF compression (5|8|32773|32946) in photometric interpretation 6, which the walk does not take/, `${who}, ${name}`);
           }
         }
       }
     }
 
-    // LZW and PackBits are not walked: libtiff raises on a cut or zeroed tail, not on a strip damaged in its middle (decoded out of step, in silence).
+    // LZW, PackBits and Deflate: libtiff raises on a cut or zeroed tail, not on a strip damaged in its middle (decoded out of step, or a
+    // Deflate strip whose rows are full before its checksum is read, in silence). The tool walks each strip's code stream to its end.
     {
       // This fixture's damage is one Pillow refuses (the verifier's, a few zeroed bytes in an LZW palette page, decodes silently): never complete.
       const { qr, glyph } = await both(run, out, file("lzw damaged in the middle"));
       assert.notEqual(qr.status, "complete", JSON.stringify(qr.row).slice(0, 600));
       assert.notEqual(glyph.status, "complete", JSON.stringify(glyph.row).slice(0, 600));
     }
-    for (const name of ["rgb lzw whole"]) {
+    // A strip damaged in its middle that Pillow decodes to another picture with no error and nothing printed (four zeroed bytes of LZW or
+    // Deflate, a PackBits control byte moved by one or two): the walk finds the stream out of step, and the picture is damaged.
+    for (const [name, codec] of [["lzw damaged silently", "LZW"], ["deflate damaged silently", "Deflate"], ["packbits damaged silently", "PackBits"]] as const) {
+      assert.ok(report[name], `Pillow decodes no damaged ${codec} strip of this fixture in silence here, so it is not the case this test holds`);
+      assert.equal(report[name]!.printed, false, name);
       const { qr, glyph } = await both(run, out, file(name));
       for (const [who, seen] of [["qr_read", qr], ["glyph_strip", glyph]] as const) {
         assert.equal(seen.status, "partial", `${who}, ${name}: ${JSON.stringify(seen.row).slice(0, 600)}`);
-        assert.match(seen.row.jpeg_data_not_walked, /is coded with TIFF compression 5/, `${who}, ${name}`);
+        assert.match(seen.row.picture_damaged, new RegExp(`page 1, strip 1 of ${codec} data: `), `${who}, ${name}`);
       }
     }
 
@@ -359,11 +425,9 @@ test("the Pillow gate passes a TIFF page only in a shape its walk takes: a tag n
       }
     }
 
-    // A 16-bit grey page (clipped to white), four samples of RGB with no ExtraSamples (taken for alpha by Pillow), and Deflate (a zeroed tail
-    // decodes as noise): none is walked.
+    // A 16-bit grey page (clipped to white) and four samples of RGB with no ExtraSamples (taken for alpha by Pillow): neither is walked.
     for (const [name, why] of [["grey 16 bit", /has 1 sample\(s\) of depths 16; the walk takes pages whose samples are all 1, 2, 4 or 8 bits/],
-      ["rgb 4 samples no extrasamples", /has 4 sample\(s\) in photometric interpretation 2, which needs 3/],
-      ["deflate whole", /is coded with TIFF compression 8/]] as const) {
+      ["rgb 4 samples no extrasamples", /has 4 sample\(s\) in photometric interpretation 2, which needs 3/]] as const) {
       const { qr, glyph } = await both(run, out, file(name));
       for (const [who, seen] of [["qr_read", qr], ["glyph_strip", glyph]] as const) {
         assert.equal(seen.status, "partial", `${who}, ${name}: ${JSON.stringify(seen.row).slice(0, 600)}`);
@@ -371,7 +435,8 @@ test("the Pillow gate passes a TIFF page only in a shape its walk takes: a tag n
       }
     }
 
-    // The zeroed Deflate page of this fixture is one Pillow refuses (the verifier's, with a tail that decodes as noise, it does not): never complete.
+    // The zeroed Deflate page of this fixture is one Pillow refuses (the verifier's, with a tail that decodes as noise, it does not): never complete;
+    // where Pillow takes it, the walk finds the stream damaged.
     {
       const { qr, glyph } = await both(run, out, file("deflate zeroed"));
       assert.notEqual(qr.status, "complete", JSON.stringify(qr.row).slice(0, 600));
@@ -474,5 +539,130 @@ test("the safety net: a line a decoder prints on the decoding child's standard e
     assert.equal(damaged.damage, "frame 1: it printed 2 line(s) on its standard error while it decoded, the first: TIFFFillStrip: Read error on strip 3; got 0 bytes, expected 4096.", name);
     assert.equal(run("TIFFReadDirectory: Warning, Unknown field with tag 50001 (0xc351) encountered.\n").damage, null, name);
     assert.equal(run("").damage, null, name);
+  }
+});
+
+/**
+ * The walk of LZW, PackBits and Deflate strips and tiles, held without Pillow: each tool's file is loaded as a module and its tiff_check
+ * given pages built here from the TIFF 6.0 specification (zlib for Deflate, PackBits packed row by row by this file), in the shapes the
+ * walk takes (1, 2, 4 and 8-bit grey, palette, RGB; strips and tiles, an edge tile stored full size; odd widths; II and MM; BigTIFF;
+ * FillOrder 2) and in the shapes it does not judge.
+ */
+const CODED = String.raw`
+import importlib.util, json, struct, sys, zlib
+spec = importlib.util.spec_from_file_location("gate_under_test", sys.argv[1])
+tool = importlib.util.module_from_spec(spec); spec.loader.exec_module(tool)
+REV = bytes(int("{:08b}".format(i)[::-1], 2) for i in range(256))
+
+def page(width, height, bits, photometric, compression, pieces, tile=None, rows=None, order="<", big=False, fill=1, samples=1):
+    out = bytearray((b"II" if order == "<" else b"MM") + (struct.pack(order + "HHHQ", 43, 8, 0, 0) if big else struct.pack(order + "HI", 42, 0)))
+    offs = []
+    for p in pieces:
+        offs.append(len(out)); out += p
+    tags = [(256, 4, [width]), (257, 4, [height]), (258, 3, [bits] * samples), (259, 3, [compression]), (262, 3, [photometric]), (266, 3, [fill]), (277, 3, [samples])]
+    if photometric == 3:
+        tags.append((320, 3, list(range(3 << bits))))
+    if tile:
+        tags += [(322, 3, [tile[0]]), (323, 3, [tile[1]]), (324, 4, offs), (325, 4, [len(p) for p in pieces])]
+    else:
+        tags += [(273, 4, offs), (278, 4, [rows or height]), (279, 4, [len(p) for p in pieces])]
+    word = 8 if big else 4
+    entries = []
+    for tag, kind, values in sorted(tags):
+        raw = struct.pack(order + "%d%s" % (len(values), "H" if kind == 3 else "I"), *values)
+        if len(raw) > word:
+            if len(out) % 2: out += b"\x00"
+            at = len(out); out += raw; raw = struct.pack(order + ("Q" if big else "I"), at)
+        entries.append(struct.pack(order + ("HHQ" if big else "HHI"), tag, kind, len(values)) + raw.ljust(word, b"\x00"))
+    if len(out) % 2: out += b"\x00"
+    at = len(out)
+    out += struct.pack(order + ("Q" if big else "H"), len(entries)) + b"".join(entries) + b"\x00" * word
+    struct.pack_into(order + ("Q" if big else "I"), out, 8 if big else 4, at)
+    return bytes(out)
+
+def packbits(row):
+    """One row packed by TIFF 6.0's rule: a run of three or more equal bytes repeated, the rest as literals of at most 128."""
+    out, at = bytearray(), 0
+    while at < len(row):
+        run = 1
+        while at + run < len(row) and run < 128 and row[at + run] == row[at]:
+            run += 1
+        if run >= 3:
+            out += bytes([257 - run, row[at]]); at += run; continue
+        end = at
+        while end < len(row) and end - at < 128 and not (end + 2 < len(row) and row[end] == row[end + 1] == row[end + 2]):
+            end += 1
+        out += bytes([end - at - 1]) + row[at:end]; at = end
+    return bytes(out)
+
+def rows_of(width, height, bits, samples=1):
+    stride = -(-width * bits * samples // 8)
+    return [bytes((x * 37 + y * 11 + (x * y) % 7) % 256 for x in range(stride)) for y in range(height)]
+
+def pieces(width, height, bits, coder, tile=None, rows=None, samples=1):
+    """The page cut as the specification does: strips of rows, or tiles each stored full size (the edge ones padded)."""
+    grid = rows_of(width, height, bits, samples)
+    if not tile:
+        r = rows or height
+        return [coder(grid[y:y + r]) for y in range(0, height, r)]
+    tw, th = tile; stride = -(-tw * bits * samples // 8); out = []
+    full = [row + bytes(stride * (-(-width // tw)) + stride) for row in grid] + [bytes(stride * (-(-width // tw)) + stride)] * th
+    for ty in range(0, height, th):
+        for tx in range(0, -(-width // tw)):
+            out.append(coder([full[y][tx * stride:(tx + 1) * stride] for y in range(ty, ty + th)]))
+    return out
+
+deflate = lambda rows: zlib.compress(b"".join(rows))
+pack_rows = lambda rows: b"".join(packbits(r) for r in rows)
+
+def check(data):
+    try:
+        found = tool.tiff_check(data, 1, lambda: None, lambda: 60.0)
+        return "whole" if found is None else "damaged: " + found
+    except tool.JpegUnchecked as exc:
+        return "not walked: " + str(exc)
+
+report = {}
+for name, coder, compression in (("deflate", deflate, 8), ("adobe deflate", deflate, 32946), ("packbits", pack_rows, 32773)):
+    for bits, photometric, samples in ((1, 1, 1), (2, 0, 1), (4, 3, 1), (8, 1, 1), (8, 3, 1), (8, 2, 3)):
+        for shape in ({"rows": 5}, {"rows": 1}, {}, {"tile": (16, 16)}, {"tile": (32, 48)}):
+            for order, big, fill in (("<", False, 1), (">", False, 1), ("<", True, 1), (">", True, 2)):
+                p = pieces(37, 23, bits, coder, samples=samples, **shape)
+                if fill == 2:
+                    p = [x.translate(REV) for x in p]
+                key = "%s %d-bit photometric %d %s %s%s fill %d" % (name, bits, photometric, shape, order, " big" if big else "", fill)
+                report[key] = check(page(37, 23, bits, photometric, compression, p, order=order, big=big, fill=fill, samples=samples, **shape))
+grey = rows_of(37, 23, 8)
+report["deflate with a byte after its stream"] = check(page(37, 23, 8, 1, 8, [deflate(grey) + b"\x00"]))
+report["deflate of one row too few"] = check(page(37, 23, 8, 1, 8, [deflate(grey[:-1])]))
+report["deflate whose checksum is wrong"] = check(page(37, 23, 8, 1, 8, [deflate(grey)[:-1] + bytes([deflate(grey)[-1] ^ 1])]))
+report["packbits packed across rows"] = check(page(37, 23, 8, 1, 32773, [packbits(b"".join(grey))]))
+report["packbits with a byte after its last row"] = check(page(37, 23, 8, 1, 32773, [pack_rows(grey) + b"\x05"]))
+report["packbits of one row too few"] = check(page(37, 23, 8, 1, 32773, [pack_rows(grey[:-1])]))
+report["lzw of the old LSB-first form"] = check(page(37, 23, 8, 1, 5, [b"\x00\x01" + bytes(40)]))
+report["lzw whose first code names an entry not yet made"] = check(page(37, 23, 8, 1, 5, [bytes([0x80, 0x40, 0x80])]))   # clear, then code 258
+report["lzw past photometric 3"] = check(page(37, 23, 8, 5, 5, [b"\x80"], samples=4))
+report["deflate with fill order 3"] = check(page(37, 23, 8, 1, 8, [deflate(grey)], fill=3))
+print(json.dumps(report))
+`;
+
+test("the walk of LZW, PackBits and Deflate strips and tiles: whole pages of every shape it takes pass, a stream that ends wrong is damaged, a shape it cannot judge is not walked", () => {
+  for (const name of ["qr_read", "glyph_strip"]) {
+    const r = spawnSync(PYTHON3, ["-I", "-c", CODED, join(CFB, "tools", name, "run.py")], { encoding: "utf8", maxBuffer: 16 << 20 });
+    assert.equal(r.status, 0, `${name}: ${r.stderr.slice(-800)}`);
+    const report = JSON.parse(r.stdout) as Record<string, string>;
+    const shapes = Object.entries(report).filter(([key]) => / fill \d$/.test(key));
+    assert.equal(shapes.length, 3 * 6 * 5 * 4, name);
+    for (const [key, said] of shapes) assert.equal(said, "whole", `${name}, ${key}`);
+    assert.match(report["deflate with a byte after its stream"]!, /^damaged: page 1, strip 1 of Deflate data: 1 byte\(s\) follow the end of its zlib stream/, name);
+    assert.match(report["deflate of one row too few"]!, /^damaged: page 1, strip 1 of Deflate data: its Deflate data inflates to 814 bytes where it holds 851/, name);
+    assert.match(report["deflate whose checksum is wrong"]!, /^damaged: page 1, strip 1 of Deflate data: its Deflate data does not inflate \(.*incorrect data check/, name);
+    assert.match(report["packbits packed across rows"]!, /^not walked: page 1, strip 1 of PackBits data: a PackBits run crosses from row 1 into the next/, name);
+    assert.match(report["packbits with a byte after its last row"]!, /^damaged: page 1, strip 1 of PackBits data: 1 byte\(s\) of its PackBits data are left after its last row/, name);
+    assert.match(report["packbits of one row too few"]!, /^damaged: page 1, strip 1 of PackBits data: its PackBits data ends in row 23 of 23, 37 of the 851 bytes it decodes to short/, name);
+    assert.match(report["lzw of the old LSB-first form"]!, /^not walked: page 1, strip 1 of LZW data: its data is in the old LSB-first LZW form/, name);
+    assert.match(report["lzw whose first code names an entry not yet made"]!, /^damaged: page 1, strip 1 of LZW data: LZW code 258 follows a clear code/, name);
+    assert.match(report["lzw past photometric 3"]!, /^not walked: page 1 is coded with TIFF compression 5 in photometric interpretation 5/, name);
+    assert.match(report["deflate with fill order 3"]!, /^not walked: page 1 gives a FillOrder of 3/, name);
   }
 });
