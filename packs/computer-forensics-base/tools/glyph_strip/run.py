@@ -1530,8 +1530,8 @@ def _unexpected_tool(kind, value, _tb):
 sys.excepthook = _unexpected_tool
 
 
-TOOL = {"name": "glyph_strip", "version": 7}
-PARSER = "glyph_strip/4"
+TOOL = {"name": "glyph_strip", "version": 8}
+PARSER = "glyph_strip/5"
 DEFAULT_SECONDS, MAX_SECONDS = 50, 55           # under the manifest's 60
 OCR_SECONDS = 20
 OCR_START_SECONDS = 2              # the OCR engine is started only with this much of the clock left (it is given at least a second, and its pipes one more)
@@ -2065,6 +2065,24 @@ def clock_deadline():
 # the limit is enforced), its CPU time by the clock, it dies with the tool (Linux), it takes the stop signals' default action, it writes
 # nothing on standard output, and it ends with os._exit (no hook of the tool runs in it). A JPEG is counted before it is handed over: one
 # with more than MAX_JPEG_SCANS start-of-scan markers is refused (a picture has one, a progressive one about ten).
+#
+# What the gate does with each format Pillow may open here (PILLOW_FORMATS; nothing else is opened). A decoder that meets data cut short
+# or zeroed may raise (the picture is then not read), or fill what it lacks and say nothing (the tool must then find the damage itself).
+# Every format, and every TIFF shape, is in one of three groups:
+#   walked by the tool:    PNG (every PNG Pillow decodes has its image data, and each animation frame's, inflated and measured against
+#                          what its rows need: png_check); JPEG, the first picture of the file (its coded data walked block by block:
+#                          jpeg_check); TIFF pages whose shape is on the allowlist in tiff_check: uncompressed (byte counts against
+#                          the rows, Pillow's own decoder) and JPEG (each strip or tile walked as a JPEG, its frame the strip's or
+#                          tile's size).
+#   shown to raise:        GIF and BMP (and BMP's RLE) data cut short; WebP cut short; TIFF pages coded with LZW, either Deflate or
+#                          PackBits in photometric 0 to 3 with one of strip or tile tags (Pillow reads them strip by strip through
+#                          libtiff, which fails the read on a strip that does not decode).
+#   counted as not walked: every other TIFF shape (any other codec, YCbCr or another photometric that sends Pillow to libtiff's RGBA
+#                          interface, which fills and only prints, a tag named twice, strip and tile tags together, a directory the walk
+#                          cannot follow); the pictures of a JPEG past its first (MPO).
+# Under all three, a safety net that does not depend on parsing: the child's standard error (where libtiff, and libjpeg and zlib under
+# it, print what they could not decode) is read, its first DECODER_SAID_BYTES kept, and any line on it but a note on a tag libtiff does
+# not know makes the frame damaged. A known limit: WebP and BMP data whose tail is zeroed, which decodes as zeros without a word.
 import resource as _resource
 import select as _decode_select
 
@@ -2074,6 +2092,9 @@ MAX_ROWS = 100_000                 # a picture higher than this is refused: each
 MAX_JPEG_SCANS = int(os.environ.get("TOOL_MAX_JPEG_SCANS") or 256)        # the environment variable is for the tests
 DECODE_MEMORY = 1 << 30            # what the decoding child may add to the address space it was forked with (Linux)
 DECODER = {"pid": None}            # the decoding child that is running, which the stop's last word and the exit end
+DECODER_SAID_BYTES = 1 << 16       # what is kept of the decoding child's standard error (the rest is read and dropped, and counted)
+DECODER_QUIET = (b"Unknown field with tag",)   # libtiff's note on a tag it does not know: about the directory, not the image data
+DECODER_SAID_BY = "Pillow's decoder (libtiff, or libjpeg or zlib under it)"
 
 
 def kill_decoder():
@@ -2495,21 +2516,29 @@ def jpeg_check(data, tick, budget):
 
 # ---- the tool's own walk of a TIFF's strips and tiles ------------------------------------------------------------------------------
 # libtiff hands a strip or tile of JPEG data (TIFF compression 7, and the old style, 6) to libjpeg, which takes one cut short and given its
-# end marker back as whole, fills what is missing with grey and only warns. Pillow reads an uncompressed strip or tile itself, at its
-# offset, for the bytes its rows need, whatever its byte count says (one of byte count 0, a strip the file does not hold, is read from
-# wherever its offset points). So a TIFF Pillow decoded is walked here too, page by page, as many pages as are searched: a JPEG strip or
-# tile is walked as a JPEG (the page's JPEGTables put before its own data), and an uncompressed one must hold the bytes its rows need.
-# libtiff's other codings (LZW, Deflate, PackBits and the rest) end in an error when their data ends before the rows do, and Pillow then
-# does not read the picture.
+# end marker back as whole, fills what is missing with grey and only warns; a JPEG strip whose frame is smaller than the strip leaves the
+# rows it lacks unwritten. Pillow reads an uncompressed strip or tile itself, at its offset, for the bytes its rows need, whatever its
+# byte count says (one of byte count 0, a strip the file does not hold, is read from wherever its offset points). libtiff's RGBA
+# interface, which Pillow uses for YCbCr pages (but JPEG-coded ones of one plane), fills a strip that does not decode and only prints.
+# So a TIFF Pillow decoded is walked here too, page by page, as many pages as are searched, and a page passes only when its shape is
+# one the walk sees as libtiff and Pillow do (an allowlist): no tag named twice in its directory (Pillow keeps the last copy, libtiff
+# the first), the tags of a size or a coding given once, strip tags or tile tags but not both (Pillow's own decoder takes the strips,
+# the walk would take the tiles), and one of: uncompressed (1) in photometric 0, 1, 2, 3 or 5, whose strips or tiles must hold the bytes
+# their rows need; JPEG (7) in photometric 0, 1, 2 or 6, of one plane, each strip or tile walked as a JPEG (the page's JPEGTables put
+# before its own data) whose frame is the strip's or tile's size with a component for each sample; or LZW, Deflate (either) or
+# PackBits in photometric 0 to 3, which Pillow reads strip by strip through libtiff and which fail the read on data that does not
+# decode. Every other page is counted as not walked.
 TIFF_MAGICS = (b"II*\x00", b"MM\x00*", b"II+\x00", b"MM\x00+")
 TIFF_TYPE_SIZES = {1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8, 13: 4, 16: 8, 17: 8, 18: 8}
-TIFF_TAGS = (256, 257, 258, 259, 273, 277, 278, 279, 284, 322, 323, 324, 325, 347)
+TIFF_TAGS = (256, 257, 258, 259, 262, 273, 277, 278, 279, 284, 322, 323, 324, 325, 347)
+TIFF_SINGLE_TAGS = (256, 257, 259, 262, 277, 278, 284, 322, 323)    # tags of one value: a page that gives more is not walked
 MAX_TIFF_PIECES = 1 << 20          # the strips or tiles of one page that are walked; a page with more is not walked
 
 
 def _tiff_pages(data, most, tick):
     """The directories of a TIFF (classic or BigTIFF) in the order of their chain, up to `most`, the clock read as they are read: each a
-    dict of the TIFF_TAGS it holds, tag -> list of numbers (JPEGTables -> its bytes). JpegUnchecked when the chain cannot be followed."""
+    pair (a dict of the TIFF_TAGS it holds, tag -> list of numbers (JPEGTables -> its bytes); the tags, of any number, its directory
+    names more than once). JpegUnchecked when the chain cannot be followed."""
     order = "little" if data[:2] == b"II" else "big"
     big = data[2:4] in (b"+\x00", b"\x00+")
     size = len(data)
@@ -2529,13 +2558,16 @@ def _tiff_pages(data, most, tick):
         count = number(offset, head)
         if offset + head + count * entry + word > size:
             raise JpegUnchecked("the TIFF's directory %d runs past the end of the file" % (len(pages) + 1))
-        tags = {}
+        tags, named, twice = {}, set(), set()
         for i in range(count):
             if i % 1024 == 0:
                 tick()
             at = offset + head + i * entry
             tag, kind, n = number(at, 2), number(at + 2, 2), number(at + 4, word)
-            if tag not in TIFF_TAGS:
+            if tag in named:
+                twice.add(tag)
+            named.add(tag)
+            if tag not in TIFF_TAGS or tag in twice:
                 continue
             width = TIFF_TYPE_SIZES.get(kind)
             if width is None:
@@ -2554,7 +2586,7 @@ def _tiff_pages(data, most, tick):
                         tick()
                     values.append(number(where + k * width, width))
                 tags[tag] = values
-        pages.append(tags)
+        pages.append((tags, sorted(twice)))
         offset = number(offset + head + count * entry, word)
     return pages
 
@@ -2587,27 +2619,76 @@ def _tiff_needs(tags, tiled, pieces):
     return need, read
 
 
-# The TIFF codecs whose decoder in Pillow's libtiff was shown to raise on a cut or damaged strip (LZW, Adobe and zlib Deflate,
-# PackBits): their pictures need no walk of their own. Every other codec but none (1) and JPEG (7), which the walk takes, is counted
-# as not walked: CCITT (2, 3, 4) fills a damaged strip and only warns.
+def _jpeg_frame(data):
+    """The frame header of a JPEG stream: (height, width, components), or None when no frame header comes before its first scan."""
+    at, size = 2, len(data)
+    while at + 4 <= size:
+        if data[at] != 0xFF:
+            return None
+        marker = data[at + 1]
+        if marker == 0xFF:
+            at += 1
+            continue
+        if marker in (0xD8, 0xD9, 0xDA):
+            return None
+        if 0xD0 <= marker <= 0xD7 or marker == 0x01:
+            at += 2
+            continue
+        length = int.from_bytes(data[at + 2:at + 4], "big")
+        if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+            body = data[at + 4:at + 2 + length]
+            if length < 8 or len(body) < 6:
+                return None
+            return int.from_bytes(body[1:3], "big"), int.from_bytes(body[3:5], "big"), body[5]
+        at += 2 + length
+    return None
+
+
+# The TIFF codecs whose decoder in Pillow's libtiff was shown to raise on a cut or damaged strip when Pillow reads the page strip by
+# strip (LZW, Adobe and zlib Deflate, PackBits): their pages need no walk of their own, in the photometric interpretations that keep
+# Pillow off libtiff's RGBA interface. Every other codec but none (1) and JPEG (7), which the walk takes, is counted as not walked:
+# CCITT (2, 3, 4) fills a damaged strip and says nothing.
 TIFF_CODECS_THAT_RAISE = (5, 8, 32773, 32946)
+TIFF_PHOTOMETRIC_STRIP_BY_STRIP = (0, 1, 2, 3)      # grey (either way), RGB, palette: not YCbCr (6), which Pillow reads through RGBA
+TIFF_PHOTOMETRIC_UNCOMPRESSED = (0, 1, 2, 3, 5)     # Pillow's own decoder, the bytes of whose rows the walk counts (5: CMYK)
+TIFF_PHOTOMETRIC_JPEG = (0, 1, 2, 6)                # libjpeg's frame of one plane, YCbCr given back as RGB by libjpeg itself
+TIFF_STRIP_TAGS, TIFF_TILE_TAGS = (273, 278, 279), (322, 323, 324, 325)
 
 
 def tiff_check(data, pages, tick, budget):
-    """The tool's own walk of the strips and tiles of a TIFF's first `pages` pages (see above). Returns None when every one Pillow reads
-    holds what its rows need, or a sentence saying where one does not. JpegUnchecked for what the walk does not take (old-style JPEG, a
-    directory it cannot follow, a JPEG coding the JPEG walk does not take) and when `budget()` (seconds the walk may still take) runs
-    out; tick() reads the tool's clock."""
-    for page, tags in enumerate(_tiff_pages(data, pages, tick), 1):
+    """The tool's own walk of the strips and tiles of a TIFF's first `pages` pages (see above). Returns None when every page is of a
+    shape the walk takes and every strip and tile Pillow reads holds what its rows need, or a sentence saying where one does not.
+    JpegUnchecked for every page of a shape the allowlist does not hold (old-style JPEG, another codec, a photometric interpretation
+    that sends Pillow to libtiff's RGBA interface, a tag named twice, strip and tile tags together, a directory it cannot follow, a
+    JPEG coding the JPEG walk does not take) and when `budget()` (seconds the walk may still take) runs out; tick() reads the clock."""
+    for page, (tags, twice) in enumerate(_tiff_pages(data, pages, tick), 1):
+        if twice:
+            raise JpegUnchecked("page %d names tag%s %s more than once in its directory (Pillow reads the last copy, libtiff the first); "
+                                "the walk does not take it" % (page, "s" if len(twice) > 1 else "", ", ".join(str(t) for t in twice[:8])))
+        for tag in TIFF_SINGLE_TAGS:
+            if tag in tags and len(tags[tag]) != 1:
+                raise JpegUnchecked("page %d gives tag %d %d values where it takes one; the walk does not take it" % (page, tag, len(tags[tag])))
         compression = (tags.get(259) or [1])[0]
+        photometric = (tags.get(262) or [0])[0]
+        planar = (tags.get(284) or [1])[0]
+        stripped, tiled = any(t in tags for t in TIFF_STRIP_TAGS), any(t in tags for t in TIFF_TILE_TAGS)
+        if stripped and tiled:
+            raise JpegUnchecked("page %d holds both strip and tile tags (Pillow's decoder and libtiff may read different ones); the walk "
+                                "does not take it" % page)
         if compression == 6:
             raise JpegUnchecked("page %d is coded as old-style JPEG (TIFF compression 6), whose data the walk does not take" % page)
         if compression in TIFF_CODECS_THAT_RAISE:
+            if photometric not in TIFF_PHOTOMETRIC_STRIP_BY_STRIP:
+                raise JpegUnchecked("page %d is coded with TIFF compression %d in photometric interpretation %d, which Pillow reads through "
+                                    "libtiff's RGBA interface; that fills a strip that does not decode and only prints; the walk does not "
+                                    "take it" % (page, compression, photometric))
             continue
         if compression not in (1, 7):
             raise JpegUnchecked("page %d is coded with TIFF compression %d, whose decoder may fill a cut strip and only warn; the walk does "
                                 "not take it" % (page, compression))
-        tiled = 324 in tags
+        if photometric not in (TIFF_PHOTOMETRIC_UNCOMPRESSED if compression == 1 else TIFF_PHOTOMETRIC_JPEG) or (compression == 7 and planar != 1):
+            raise JpegUnchecked("page %d is coded with TIFF compression %d in photometric interpretation %d%s, which the walk does not "
+                                "take" % (page, compression, photometric, "" if planar == 1 else " in separate planes"))
         what = "tile" if tiled else "strip"
         offsets, counts = tags.get(324 if tiled else 273), tags.get(325 if tiled else 279)
         if not offsets or counts is None or len(offsets) != len(counts):
@@ -2621,6 +2702,17 @@ def tiff_check(data, pages, tick, budget):
                     return ("page %d, %s %d of uncompressed data: its byte count is %d and its rows need %d (Pillow reads them from the "
                             "file at its offset all the same)" % (page, what, k + 1, counts[k], need(k)))
             continue
+        width, height, samples = (tags.get(256) or [0])[0], (tags.get(257) or [0])[0], (tags.get(277) or [1])[0]
+        if tiled:
+            across, down = (tags.get(322) or [0])[0], (tags.get(323) or [0])[0]
+        else:
+            across, down = width, min(height, (tags.get(278) or [height])[0])
+        if not width or not height or not across or not down:
+            raise JpegUnchecked("page %d: a JPEG page whose size, strips or tiles are not given" % page)
+        per_row = -(-width // across)
+        expected = per_row * -(-height // down)
+        if len(offsets) != expected:
+            raise JpegUnchecked("page %d holds %d %ss of JPEG data where its size needs %d; the walk does not take it" % (page, len(offsets), what, expected))
         tables = tags.get(347)
         if tables is not None and (tables[:2] != b"\xff\xd8" or tables[-2:] != b"\xff\xd9"):
             raise JpegUnchecked("page %d: its JPEGTables are not a JPEG of tables (start and end markers)" % page)
@@ -2633,8 +2725,19 @@ def tiff_check(data, pages, tick, budget):
             piece = data[start:start + length]
             if piece[:2] != b"\xff\xd8":
                 raise JpegUnchecked("page %d, %s %d of JPEG data does not begin with a start-of-image marker" % (page, what, k + 1))
+            stream = tables[:-2] + piece[2:] if tables else piece
+            frame = _jpeg_frame(stream)
+            if frame is None:
+                raise JpegUnchecked("page %d, %s %d of JPEG data: no frame header before its first scan" % (page, what, k + 1))
+            rows = down if tiled else min(down, height - (k // per_row) * down)
+            if frame != (rows, across, samples):
+                if frame[1:] == (across, samples) and 0 < frame[0] < rows:
+                    return ("page %d, %s %d of JPEG data: its frame is %d rows high where the %s is %d (libtiff leaves the rows it lacks "
+                            "unwritten)" % (page, what, k + 1, frame[0], what, rows))
+                raise JpegUnchecked("page %d, %s %d of JPEG data: its frame is %d x %d pixels of %d component(s) where the %s is %d x %d of "
+                                    "%d sample(s); the walk does not take it" % (page, what, k + 1, frame[1], frame[0], frame[2], what, across, rows, samples))
             try:
-                found = jpeg_check(tables[:-2] + piece[2:] if tables else piece, tick, budget)
+                found = jpeg_check(stream, tick, budget)
             except JpegUnchecked as exc:
                 raise JpegUnchecked("page %d, %s %d of JPEG data: %s" % (page, what, k + 1, exc))
             if found is not None:
@@ -2642,15 +2745,103 @@ def tiff_check(data, pages, tick, budget):
     return None
 
 
+# ---- the tool's own measure of a PNG's image data ----------------------------------------------------------------------------------
+# Pillow takes a zlib stream that ends before the rows do as the end of the picture and fills the rows it did not get, and says nothing.
+# So every PNG handed to Pillow, whatever the built-in reader said of it, has its image data measured here, as Pillow reads it: the
+# header's first 13 bytes (Pillow takes a longer header chunk), the run of IDAT chunks that begins at the first one (Pillow reads no
+# IDAT after another chunk), and each animation frame's run of fdAT chunks after its fcTL. The data is inflated a piece at a time and
+# dropped, never held.
+PNG_CHANNELS = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}
+PNG_DEPTHS = {0: (1, 2, 4, 8, 16), 2: (8, 16), 3: (1, 2, 4, 8), 4: (8, 16), 6: (8, 16)}
+
+
+def _png_data_length(width, height, channels, depth, interlace):
+    """The bytes a PNG image of this size and form inflates to: its rows, each with its filter byte, or the rows of its seven passes."""
+    if not interlace:
+        return height * (1 + (width * channels * depth + 7) // 8)
+    want = 0
+    for x0, y0, dx, dy in ((0, 0, 8, 8), (4, 0, 8, 8), (0, 4, 4, 8), (2, 0, 4, 4), (0, 2, 2, 4), (1, 0, 2, 2), (0, 1, 1, 2)):
+        pass_width, pass_height = (width - x0 + dx - 1) // dx, (height - y0 + dy - 1) // dy
+        if pass_width > 0 and pass_height > 0:
+            want += pass_height * (1 + (pass_width * channels * depth + 7) // 8)
+    return want
+
+
+def png_check(data, pages, tick, budget):
+    """The tool's own measure of a PNG's image data (see above), and of the data of up to `pages` animation frames after it. Returns None
+    when each inflates to every byte its rows need, or a sentence saying which does not. JpegUnchecked for chunks that cannot be walked
+    as Pillow reads them, and when `budget()` runs out; tick() reads the tool's clock."""
+    def check():
+        tick()
+        if budget() <= 0:
+            raise JpegUnchecked("the measure's share of the clock ran out")
+
+    at, size, header, image, closed, frames, previous, chunks = 8, len(data), None, None, False, [], None, 0
+    while at + 8 <= size:
+        chunks += 1
+        if chunks % 1024 == 0:
+            check()
+        length = int.from_bytes(data[at:at + 4], "big")
+        kind = data[at + 4:at + 8]
+        body = data[at + 8:min(size, at + 8 + length)]
+        if kind == b"IHDR":
+            if header is not None:
+                raise JpegUnchecked("a PNG with a second header chunk")
+            if length < 13 or len(body) < 13:
+                raise JpegUnchecked("a PNG whose header chunk is %d bytes (it takes 13)" % length)
+            header = struct.unpack(">IIBBBBB", body[:13])
+        elif kind == b"IDAT":
+            if image is None:
+                image = [body]
+            elif not closed:
+                image.append(body)
+        elif kind == b"fcTL" and image is not None and len(frames) < pages:
+            if len(body) < 12:
+                raise JpegUnchecked("a PNG whose frame control chunk is cut")
+            frames.append((int.from_bytes(body[4:8], "big"), int.from_bytes(body[8:12], "big"), []))
+        elif kind == b"fdAT" and frames and previous in (b"fcTL", b"fdAT") and len(body) > 4:
+            frames[-1][2].append(body[4:])
+        elif kind == b"IEND":
+            break
+        if image is not None and kind != b"IDAT":
+            closed = True
+        previous = kind
+        at += 12 + length
+    if header is None or image is None:
+        raise JpegUnchecked("a PNG with no header or no image data before its end")
+    width, height, depth, colour, _compression, _filter, interlace = header
+    channels = PNG_CHANNELS.get(colour)
+    if channels is None or depth not in PNG_DEPTHS[colour] or not 0 < width * height <= MAX_PIXELS:
+        raise JpegUnchecked("a PNG of %d x %d pixels, colour type %d at %d bits, which the measure does not take" % (width, height, colour, depth))
+    try:
+        want = _png_data_length(width, height, channels, depth, interlace)
+        got = _inflated_length(image, want, check)
+        if got < want:
+            return "its image data (IDAT) inflates to %d of the %d bytes its rows need" % (got, want)
+        for number, (frame_width, frame_height, parts) in enumerate(frames, 1):
+            if not 0 < frame_width * frame_height <= MAX_PIXELS:
+                raise JpegUnchecked("animation frame %d after the image data is %d x %d pixels, which the measure does not take" % (number, frame_width, frame_height))
+            want = _png_data_length(frame_width, frame_height, channels, depth, interlace)
+            got = _inflated_length(parts, want, check)
+            if got < want:
+                return "animation frame %d after the image data (fdAT) inflates to %d of the %d bytes its rows need" % (number, got, want)
+    except NotAPicture as exc:
+        return str(exc)
+    return None
+
+
 def walk_coded_data(data, picture, tick, pages):
-    """The tool's own walk of a picture Pillow decoded, for the formats whose decoder fills a cut picture and only warns: a JPEG's coded
-    data (its first picture) and a TIFF's strips and tiles (its first `pages` pages). It sets picture.damage and picture.damage_by when
-    the walk finds the data cut or corrupt, picture.unchecked when the walk does not reach it; a picture of another format is left as it
-    is. The walk takes at most JPEG_CHECK_SECONDS and half of what the clock has left."""
+    """The tool's own walk of a picture Pillow decoded, for the formats whose decoder fills a cut picture and says nothing: a JPEG's coded
+    data (its first picture), a TIFF's strips and tiles (its first `pages` pages) and a PNG's image data (and its first `pages` animation
+    frames'). It sets picture.damage and picture.damage_by when the walk finds the data cut or corrupt, picture.unchecked when the walk
+    does not reach it; a picture of another format (GIF, BMP, WebP: their decoders raise on data cut short) is left as it is. The walk
+    takes at most JPEG_CHECK_SECONDS and half of what the clock has left."""
     if data[:2] == b"\xff\xd8":
         walk, by = jpeg_check, "the tool's own walk of the JPEG's coded data"
     elif data[:4] in TIFF_MAGICS:
         walk, by = (lambda whole, read_clock, left: tiff_check(whole, pages, read_clock, left)), "the tool's own walk of the TIFF's strips and tiles"
+    elif data[:8] == PNG_MAGIC:
+        walk, by = (lambda whole, read_clock, left: png_check(whole, pages, read_clock, left)), "the tool's own measure of the PNG's image data"
     else:
         return
     until = time.monotonic() + min(JPEG_CHECK_SECONDS, max(0.5, (clock_deadline() - time.monotonic()) / 2.0 if clock_deadline() is not None else JPEG_CHECK_SECONDS))
@@ -2733,8 +2924,9 @@ def _decode_frames(data, image_module, fd, frames):
             _send(fd, b"X", json.dumps({"frame": k, "class": type(exc).__name__}).encode("ascii"))
 
 
-def _decoder_child(data, image_module, fd, frames, parent):
-    """The forked child: it never returns."""
+def _decoder_child(data, image_module, fd, frames, parent, said_fd):
+    """The forked child: it never returns. Its standard error is `said_fd`, the pipe on which the tool reads what libtiff, libjpeg and
+    zlib print there; its standard input and output are /dev/null."""
     code = 0
     try:
         for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
@@ -2744,8 +2936,9 @@ def _decoder_child(data, image_module, fd, frames, parent):
         except (AttributeError, ValueError, OSError):
             pass
         null = os.open(os.devnull, os.O_RDWR)
-        for target in (0, 1, 2):
+        for target in (0, 1):
             os.dup2(null, target)
+        os.dup2(said_fd, 2)
         _bound_decoder(parent)
         _decode_frames(data, image_module, fd, frames)
     except BaseException as exc:  # noqa: BLE001 - nothing may return into the tool's own code
@@ -2761,11 +2954,19 @@ class PillowFrames:
     """The frames of one picture as Pillow decodes them in a child. next_frame() is the next frame as a Picture, or None when there is no
     other: then `total` is how many frames the picture has, or `more` is True when it has more than were asked for. NotAPicture when
     Pillow does not read it (or a frame of it), Clock when the clock runs out first; either way the child is ended. `check(width, height)`
-    may refuse a frame by its size before its rows are taken. close() ends the child."""
+    may refuse a frame by its size before its rows are taken. close() ends the child. The child's standard error is read as its frames
+    are: a frame before whose rows the child printed a line there (a decoder's warning or error) comes with that line in its `damage`."""
 
     def __init__(self, data, image_module, frames, check=None):
         self.total, self.more, self.check, self.k, self.buf, self.pid, self.fd = None, False, check, 0, bytearray(), None, None
-        read_fd, write_fd = os.pipe()
+        self.said, self.said_fd, self.said_dropped, self.said_seen, self.said_dropped_seen = bytearray(), None, 0, 0, 0
+        said_read, said_write = os.pipe()
+        try:
+            read_fd, write_fd = os.pipe()
+        except OSError:
+            os.close(said_read)
+            os.close(said_write)
+            raise
         stops = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
         try:
             before = signal.pthread_sigmask(signal.SIG_BLOCK, stops)   # a stop between the fork and the child's own handlers waits
@@ -2775,17 +2976,19 @@ class PillowFrames:
         try:
             pid = os.fork()
         except OSError as exc:
-            os.close(read_fd)
-            os.close(write_fd)
+            for end in (read_fd, write_fd, said_read, said_write):
+                os.close(end)
             if before is not None:
                 signal.pthread_sigmask(signal.SIG_SETMASK, before)
             raise NotAPicture("Pillow decodes in a child process here, and none could be started (%s)" % describe(exc))
         if pid == 0:
             os.close(read_fd)
-            _decoder_child(data, image_module, write_fd, frames, parent)
+            os.close(said_read)
+            _decoder_child(data, image_module, write_fd, frames, parent, said_write)
         DECODER["pid"] = self.pid = pid
         os.close(write_fd)
-        self.fd = read_fd
+        os.close(said_write)
+        self.fd, self.said_fd = read_fd, said_read
         if before is not None:
             signal.pthread_sigmask(signal.SIG_SETMASK, before)
 
@@ -2815,7 +3018,38 @@ class PillowFrames:
         if self.fd is not None:
             os.close(self.fd)
             self.fd = None
+        if self.said_fd is not None:
+            os.close(self.said_fd)
+            self.said_fd = None
         return status
+
+    def _read_said(self):
+        """Read once from the child's standard error: the first DECODER_SAID_BYTES are kept, the rest counted and dropped."""
+        block = os.read(self.said_fd, 1 << 16)
+        if not block:
+            os.close(self.said_fd)
+            self.said_fd = None
+            return
+        room = max(0, DECODER_SAID_BYTES - len(self.said))
+        self.said += block[:room]
+        self.said_dropped += len(block) - min(room, len(block))
+
+    def _decoder_said(self):
+        """What the child printed on its standard error since the last call, read to what is there now: (lines, first line), or None
+        when it printed nothing but notes on tags libtiff does not know. The child writes there before it sends the frame's rows, so
+        what it printed while it decoded a frame is there when the rows have come."""
+        for _read in range(256):
+            if self.said_fd is None or not _decode_select.select([self.said_fd], [], [], 0)[0]:
+                break
+            self._read_said()
+        text, self.said_seen = bytes(self.said[self.said_seen:]), len(self.said)
+        dropped, self.said_dropped_seen = self.said_dropped - self.said_dropped_seen, self.said_dropped
+        lines = [line.strip() for line in text.splitlines() if line.strip() and not any(quiet in line for quiet in DECODER_QUIET)]
+        if dropped:
+            lines.append(b"(%d more bytes past the %d kept)" % (dropped, DECODER_SAID_BYTES))
+        if not lines:
+            return None
+        return len(lines), printable(lines[0].decode("utf-8", "replace"))
 
     def _fill(self, need):
         while len(self.buf) < need:
@@ -2823,7 +3057,11 @@ class PillowFrames:
             wait = 1.0 if deadline is None else deadline - time.monotonic()
             if wait <= 0:
                 raise Clock()
-            if not _decode_select.select([self.fd], [], [], min(wait, 1.0))[0]:
+            watched = [self.fd] if self.said_fd is None else [self.fd, self.said_fd]
+            ready = _decode_select.select(watched, [], [], min(wait, 1.0))[0]
+            if self.said_fd is not None and self.said_fd in ready:
+                self._read_said()
+            if self.fd not in ready:
                 continue
             block = os.read(self.fd, max(1 << 16, min(need - len(self.buf), 1 << 22)))
             if not block:
@@ -2887,7 +3125,12 @@ class PillowFrames:
                 raise NotAPicture(self._refusal(kind, body) if kind in (b"U", b"X") else "Pillow's decoding process sent what it should not")
             self.k += 1
             gray = [body[y * width:(y + 1) * width] for y in range(height)]
-            return Picture(width, height, gray, None, "Pillow %s" % _PILLOW.get("version", "?"))
+            picture = Picture(width, height, gray, None, "Pillow %s" % _PILLOW.get("version", "?"))
+            said = self._decoder_said()
+            if said is not None:
+                picture.damage = "frame %d: it printed %d line(s) on its standard error while it decoded, the first: %s" % (self.k, said[0], said[1])
+                picture.damage_by = DECODER_SAID_BY
+            return picture
         except BaseException:
             self.close()
             raise
@@ -2898,8 +3141,9 @@ def read_picture(data, want_rgb=False, reader="auto", tick=None):
     and a PNG the built-in reader refuses, by Pillow in a child when it imports (grey only: want_rgb is for the built-in reader).
     NotAPicture says which reader said what; Refused for a picture that is no crop of one line (by its size, before its rows are taken);
     Clock when the clock runs out first. `more_frames` says whether the file holds frames after the first. `damage` is what the built-in
-    reader found cut or corrupt in a PNG Pillow then read, or what the tool's own walk of a JPEG's coded data or of a TIFF's strips and
-    tiles found (Pillow fills what is missing), or None; `damage_by` says which; `unchecked` is why that walk did not reach it, or None."""
+    reader found cut or corrupt in a PNG Pillow then read, what Pillow's decoder printed on its standard error while it decoded the
+    frame, or what the tool's own walk of a JPEG's coded data, of a TIFF's strips and tiles or of a PNG's image data found (Pillow fills
+    what is missing), or None; `damage_by` says which; `unchecked` is why that walk did not reach it, or None."""
     first = damage = None
     if data[:8] == PNG_MAGIC or reader == "builtin":
         try:
@@ -2931,8 +3175,9 @@ def read_picture(data, want_rgb=False, reader="auto", tick=None):
         raise NotAPicture("%s%s" % (said, exc))
     finally:
         stream.close()
-    picture.damage = damage
-    if damage is None:
+    if damage is not None:
+        picture.damage, picture.damage_by = damage, "the built-in reader"
+    if picture.damage is None:
         walk_coded_data(data, picture, tick, 1)
     return picture
 
@@ -3387,7 +3632,7 @@ def main():
                                          "missing from the line" % (picture.damage_by, picture.damage))
     if picture.unchecked:
         unread.add("jpeg_data_not_walked", 1, "the tool's own walk of the picture's coded data did not reach it (%s): coded data cut short (a JPEG's "
-                                              "given its end marker back, or a TIFF strip's or tile's) is not told from whole data" % picture.unchecked)
+                                              "given its end marker back, a TIFF strip's or tile's, a PNG's image data) is not told from whole data" % picture.unchecked)
     common = {"tool": TOOL, "parser": PARSER, "image": printable(image), "sha256": hashlib.sha256(data).hexdigest(), "pixels": "%d x %d" % (picture.width, picture.height),
               "picture_reader": picture.reader, "rules": RULES, **({"unrecognised_parameters": unknown} if unknown else {}),
               **({"frames_not_read": frames_not_read} if frames_not_read else {}),
