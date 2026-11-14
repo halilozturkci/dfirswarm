@@ -8,8 +8,9 @@
  *   registry_recover bounded its inline pages by rows only and printed 144.8 MB. Every inline page is bounded by bytes too, a long row is
  *   shown by its small fields with its line in the file, and `next` says where to read on.
  *
- *   regipy leaves a value out without a word (a value of type 0x00200000 by design). registry_recover counts what the keys declare against
- *   what it was given, names each key that is short, and is partial.
+ *   regipy leaves a value out without a word (a value of type 0x00200000 by design, which the HIVE BOUNDS block now reads as its bytes; the
+ *   rest of a list after a record it cannot parse). registry_recover counts what the keys declare against what it was given, names each key
+ *   that is short, and is partial.
  *
  * And the wording a dirty hive gets is one text in the five readers that carry it.
  */
@@ -57,12 +58,13 @@ test("regkv reads an inline value of a type regipy has no branch for from its re
     const out = body<Answer>(run);
     assert.ok(run.stdout.length < 20_000, `the answer is ${run.stdout.length} bytes for four small values`);
     assert.equal(out.status, "complete", out.status_basis);
-    // regipy decodes a type it does not know as text, best effort: what matters is that it decodes the record's own bytes and no more.
-    assert.ok(String(out.values.Present).length <= 4, `Present is ${String(out.values.Present).length} characters`);
-    assert.ok(String(out.values.Odd).length <= 4);
+    // A type Windows does not define, and a device property, is the record's own bytes, whole, named by its number (VALUE_TYPES in the block).
+    assert.equal(out.values.Present, "ff000000");
+    assert.equal(out.values.Odd, "0708");
+    assert.deepEqual([out.value_types.Present, out.value_types.Odd], [String(DEVPROP_BOOLEAN), String(0x1234)]);
     assert.equal(out.values.Count, 5);
     assert.equal(out.values.Name, "disk");
-    assert.ok(out.value_lengths.Present <= 4 && out.value_lengths.Odd <= 4, JSON.stringify(out.value_lengths));
+    assert.deepEqual([out.value_lengths.Present, out.value_lengths.Odd], [4, 2]);
   });
 });
 
@@ -100,20 +102,35 @@ test("registry_recover reads every value of such a hive, and its answer stays sm
   });
 });
 
-test("registry_recover says which values regipy left out: a value of type 0x00200000 is counted against what the key declares, named, and makes the answer partial", { skip: REAL.skip }, async () => {
+test("registry_recover reads a value of type 0x00200000 as its bytes, and says which values the reading left out: a list that ends at a record it cannot parse", { skip: REAL.skip }, async () => {
   await withCwd(async (cwd) => {
     const root: Node = { name: "ROOT", children: [{ name: "Driver", values: [{ name: "A", type: "dword", value: 1 }, { name: "Hidden", type: "binary", value: Buffer.alloc(40, 9) }, { name: "B", type: "sz", value: "x" }] }] };
     const env = await REAL.writePatched(cwd, "work/SYSTEM", root, { real: (buf) => retype(buf, "Hidden", 0x200000), stub: () => undefined });
-    const out = body<Answer>(await tool("registry_recover", cwd, { hive: "work/SYSTEM" }, env));
+    const read = body<Answer>(await tool("registry_recover", cwd, { hive: "work/SYSTEM" }, env));
+    assert.equal(read.status, "complete", read.status_basis);
+    assert.deepEqual([read.records.values, read.records.values_declared_by_keys, read.records.values_not_yielded_by_regipy], [3, 3, 0]);
+    const rows = readFileSync(join(cwd, read.records.keys_file), "utf8").trimEnd().split("\n").map((l) => JSON.parse(l) as Answer);
+    const hidden = rows.find((r) => r.name === "Hidden")!;
+    assert.deepEqual([hidden.type, hidden.length, hidden.data_hex], [String(0x200000), 40, "09".repeat(40)]);
+
+    // A value record whose signature is not "vk": the list ends there without an error, as regipy's does, and the count the key declares says so.
+    const broken = await REAL.writePatched(cwd, "work/SYSTEM2", root, { real: (buf) => { buf.write("xx", vkAt(buf, "Hidden"), "latin1"); }, stub: () => undefined });
+    const out = body<Answer>(await tool("registry_recover", cwd, { hive: "work/SYSTEM2" }, broken));
     assert.equal(out.status, "partial");
-    assert.deepEqual([out.records.values, out.records.values_declared_by_keys, out.records.values_not_yielded_by_regipy, out.records.keys_short_of_values], [2, 3, 1, 1]);
-    assert.match(out.records.problems[0].error, /the key declares 3 value\(s\) and regipy gave 2: the 1 it left out are not in keys\.jsonl \(the library skips a value of registry type 0x00200000/);
+    assert.deepEqual([out.records.values, out.records.values_declared_by_keys, out.records.values_not_yielded_by_regipy, out.records.keys_short_of_values], [1, 3, 2, 1]);
+    assert.match(out.records.problems[0].error, /the key declares 3 value\(s\) and regipy gave 1: the 2 it left out are not in keys\.jsonl \(the library ends a key's list at a value record it cannot parse/);
     assert.equal(out.records.problems[0].where, "Driver");
-    assert.match(out.status_basis, /the key and value records are partial: 1 problem\(s\), the first 1 under records\.problems; 1 of the 3 value\(s\) the keys declare were not given by regipy and are not in keys\.jsonl/);
-    assert.deepEqual(out.records.keys_page.next, null);
-    assert.equal(out.records.keys_page.cut_by, null);
   });
 });
+
+/** The offset of the "vk" record of the value named `name` (its name sits 0x14 bytes in). */
+function vkAt(buf: Buffer, name: string): number {
+  const bytes = Buffer.from(name, "latin1");
+  for (let at = 0x1000; at + 0x14 + bytes.length <= buf.length; at++) {
+    if (buf[at] === 0x76 && buf[at + 1] === 0x6b && buf.readUInt16LE(at + 2) === bytes.length && buf.subarray(at + 0x14, at + 0x14 + bytes.length).equals(bytes)) return at;
+  }
+  throw new Error("no value named " + name);
+}
 
 test("the wording of a dirty hive is one text in regkv, amcache_apps, shellbags, userassist_bam_shimcache and persistence_normalise", () => {
   const cut = (name: string): string => {
