@@ -6407,7 +6407,21 @@ export type ForgedToolManifest = {
    * (`*` for any run of characters). Matched, never enforced.
    */
   use?: { extensions?: string[]; magic?: Array<{ offset: number; hex: string }>; names?: string[] };
+  /**
+   * What the tool is not for, and the tool that is (IMPROVEMENT-PLAN-2 D4):
+   * at most four lines, each `{what, use}` with `use` another tool of the
+   * library. Shown in the tool's description; tests/tool-not-for.test.ts
+   * holds every pack's lines to a tool that exists.
+   */
+  not_for?: Array<{ what: string; use: string }>;
 };
+
+/** A manifest's not_for lines, as its description shows them: "" when it has none. */
+export function notForWords(m: { not_for?: unknown }): string {
+  const rows = Array.isArray(m.not_for) ? m.not_for.filter((r): r is { what: string; use: string } => Boolean(r) && typeof r === "object" && typeof (r as { what?: unknown }).what === "string" && typeof (r as { use?: unknown }).use === "string") : [];
+  if (!rows.length) return "";
+  return ` Not for: ${rows.slice(0, 4).map((r) => `${r.what.slice(0, 160)} (use ${r.use.slice(0, 64)})`).join("; ")}.`;
+}
 
 export type ForgeToolSpec = {
   name: string;

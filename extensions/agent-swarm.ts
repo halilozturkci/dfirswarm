@@ -133,6 +133,7 @@ import {
   useHarnessTrace,
   SENSITIVE_READ_NOTE,
   couldNameOutput,
+  notForWords,
 } from "./protocol.ts";
 // The board: protocol.ts on the host, the hub on the other side of a VM's wall (board.ts says why).
 import {
@@ -3297,7 +3298,7 @@ export default function (pi: ExtensionAPI) {
     pi.registerTool({
       name: manifest.name,
       label: manifest.name,
-      description: `${manifest.description} (${manifest.pack ? `a tool of the pack ${manifest.pack}` : `forged by ${manifest.by}`}, v${manifest.version}, ${manifest.runtime}; runs in the sandbox with a ${toolTimeoutSeconds(manifest)}s timeout${manifest.pack && process.env.SWARM_PACK_PROGRAMS_IN_JOBS ? `; when your VM lacks a program or module it needs, it runs again as a job in the ${manifest.pack} pack's image, an output path under work/<your id>/ becoming that job's $OUT` : ""})${manifest.example ? ` Example: ${manifest.example}` : ""}`,
+      description: `${manifest.description} (${manifest.pack ? `a tool of the pack ${manifest.pack}` : `forged by ${manifest.by}`}, v${manifest.version}, ${manifest.runtime}; runs in the sandbox with a ${toolTimeoutSeconds(manifest)}s timeout${manifest.pack && process.env.SWARM_PACK_PROGRAMS_IN_JOBS ? `; when your VM lacks a program or module it needs, it runs again as a job in the ${manifest.pack} pack's image, an output path under work/<your id>/ becoming that job's $OUT` : ""})${notForWords(manifest)}${manifest.example ? ` Example: ${manifest.example}` : ""}`,
       promptSnippet: `${manifest.description} — ${manifest.pack ? `a tool of the pack ${manifest.pack}` : `forged by ${manifest.by}`}`,
       parameters: forgedSchema(manifest),
       async execute(_id, params, signal, _onUpdate, toolCtx: ToolCtx) {
