@@ -89,6 +89,12 @@ could read no image. At kickoff one job per job image tries x86-64 disassembly, 
 brotli, numpy, a C compiler and a crypto library against inputs whose answers are known, and posts the result
 (`job-capabilities.json`).
 
+### Fixed: the decision after a large sensitive commit does not read its files
+
+The job service takes a sensitive commit into the run's sensitive index right after it writes `job_committed`, in the
+background: after a 200,000-file sensitive commit the next job's decision takes under a millisecond (it took about 200 ms).
+A job's `job.json` is written to a temporary file and renamed into place, so a reader never finds it cut.
+
 ### Changed: every image holds a disassembler of more than one architecture
 
 computer-forensics-base 1.17.18 declares radare2 6.2.2 (upstream's package per architecture, a pinned download), so each image
