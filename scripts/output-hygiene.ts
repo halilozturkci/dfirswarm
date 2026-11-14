@@ -366,6 +366,7 @@ async function readJson<T>(path: string): Promise<T | null> {
 // The empty file's digest is not a mark: it says nothing, and every empty
 // file of the run would match it (a sensitive job's empty log among them).
 const EMPTY = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+const HEX64 = /^[0-9a-f]{64}$/;
 
 /** One run's index and how much of its journal it was built from. */
 type IndexState = { index: SensitiveIndex; ino: number; offset: number; mtimeMs: number; /** The journal's last bytes before `offset`: what a journal that only grew still holds there. */ end: Buffer; tail: Promise<unknown> };
@@ -404,8 +405,13 @@ async function addSensitive(S: string, index: SensitiveIndex, l: { job: string; 
   const partial = Array.isArray(l.sensitive.files);
   const j: SensitiveJob = { id: l.job, sensitivity: l.sensitive, status: l.status ?? null, files: await sensitiveFiles(S, l.job, l.sensitive), logs: partial || !l.logs ? [] : Object.values(l.logs).filter((h) => typeof h === "string" && /^[0-9a-f]{64}$/.test(h)), ...(partial ? { partial: true as const } : {}) };
   index.jobs.set(j.id, j);
-  for (const f of j.files) if (/^[0-9a-f]{64}$/.test(f.sha256) && f.sha256 !== EMPTY && !index.digests.has(f.sha256)) index.digests.set(f.sha256, j.id);
-  for (const f of j.files) if (/^[0-9a-f]{64}$/.test(f.sha256) && f.sha256 !== EMPTY && !index.content.has(f.sha256)) index.content.set(f.sha256, j.id);
+  // One pass, one test of the digest's form a file: a job of 200,000 files is absorbed in one walk of its rows.
+  for (const f of j.files) {
+    const sha = f.sha256;
+    if (sha === EMPTY || sha.length !== 64 || !HEX64.test(sha)) continue;
+    if (!index.digests.has(sha)) index.digests.set(sha, j.id);
+    if (!index.content.has(sha)) index.content.set(sha, j.id);
+  }
   for (const sha of j.logs) if (sha !== EMPTY && !index.content.has(sha)) index.content.set(sha, j.id);
   return true;
 }

@@ -140,3 +140,30 @@ test("the index is brought up to date from what the journal gained: after a sens
   assert.deepEqual([...(await sensitiveIndex(o.S)).jobs.keys()], ["j000009"]);
   assert.equal(sensitiveIndexStats.rebuilds, rebuilds + 1);
 });
+
+test("a sensitive commit of 200,000 files is taken in when it is committed, as the job service does: the decision after it takes under 50 ms", async (t) => {
+  const o = await run();
+  await commit(o, "j000001", { "k.txt": "a recovered value" }, { command: "extract", secret_output: true });
+  await sensitiveIndex(o.S);
+  const dir = join(storePaths(o.S).jobs, "j000002");
+  mkdirSync(dir, { recursive: true });
+  const files = Array.from({ length: 200000 }, (_, i) => {
+    const path = `tree/Users/u${i % 20}/AppData/d${i % 300}/secret-${i}.bin`;
+    return { path, path_b64: Buffer.from(path).toString("base64"), bytes: 100 + i, sha256: (i + 1).toString(16).padStart(64, "0"), mode: "644" };
+  });
+  writeFileSync(join(dir, "manifest.json"), `${JSON.stringify({ v: 1, job: "j000002", attempt: 1, sealed_at: "2026-11-13T00:00:00.000Z", files, dirs: [], rejected: [], totals: { files: files.length, bytes: 0 } })}\n`);
+  await indexManifestFile(join(dir, "manifest.json"));
+  await o.journal.append({ type: "job_committed", job: "j000002", attempt: 1, status: "ok", logs: {}, sensitive: ownSensitivity({ secret_output: true }) });
+
+  // What JobService.record does after it writes a sensitive job_committed line.
+  let at = performance.now();
+  await sensitiveIndex(o.S);
+  const takenInMs = performance.now() - at;
+  at = performance.now();
+  const next = await jobSensitivity(o.S, { id: "j000003", spec: { command: "copy" } }, { outputs: [{ sha256: files[123456].sha256, path: "copied.bin" }, { sha256: "f".repeat(64), path: "own.bin" }] });
+  const decisionMs = performance.now() - at;
+  t.diagnostic(`a 200,000-file sensitive commit taken in at its commit in ${takenInMs.toFixed(0)} ms; the decision after it ${decisionMs.toFixed(2)} ms`);
+  assert.deepEqual(next?.files, ["copied.bin"]);
+  assert.equal((await sensitiveIndex(o.S)).jobs.get("j000002")!.files.length, 200000);
+  assert.ok(decisionMs < 50, `the decision after the commit took ${decisionMs.toFixed(1)} ms`);
+});

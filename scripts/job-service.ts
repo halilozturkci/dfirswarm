@@ -38,7 +38,7 @@
  */
 import { createHash } from "node:crypto";
 import { constants, existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
-import { chmod, copyFile, link, lstat, mkdir, open, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, link, lstat, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { INDEX_MIN_BYTES } from "./manifest-index.ts";
 import { hubAlive, hubProcessFor, Journal, manifestFile, manifestOf, maybeCrash, publishGeneration, publishRevision, readManifest, resealMoved, sealTree, sha256File, sha256Hex, storePaths, traceLineBytes, traceOrigin, type JournalLine, type Manifest, type TraceOrigin } from "./evidence-store.ts";
@@ -2374,6 +2374,12 @@ export class JobService {
       return { why: "derived" as const, from: [], note: `its sensitivity could not be decided when it was sealed (${err.message}): held sensitive` };
     });
     await this.journal.append({ type: "job_committed", job: job.id, attempt: job.attempt, status: r.status, exit: r.exit, ...(r.reason ? { reason: r.reason } : {}), outputs, logs: sealed.logs, ...(job.image_digest ? { image_digest: job.image_digest } : {}), ...(sensitive ? { sensitive } : {}) });
+    // A sensitive commit is taken into the run's sensitive index now, in the
+    // background, so that the next job's decision does not read its files: a
+    // tree of 200,000 files takes about 200 ms here, after the commit, and
+    // the decision after it under a millisecond (a decision asked while it
+    // is taken in waits for it, never answers without it).
+    if (sensitive) void sensitiveIndex(this.S).catch((err: Error) => this.log(`${job.id}: the sensitive index was not brought up to date at its commit (${err.message}); the next decision does it`));
     await rm(st.base, { recursive: true, force: true }).catch(() => undefined);
     if (where !== "out") return false;
     // In memory only, before the record says committed (whoever reads the
@@ -3496,10 +3502,22 @@ export class JobService {
     const dir = join(storePaths(this.S).jobs, job.id);
     await mkdir(dir, { recursive: true });
     const path = join(dir, "job.json");
-    await chmod(path, 0o644).catch(() => undefined);
-    await writeFile(path, `${JSON.stringify(job, null, 2)}\n`);
-    await chmod(path, 0o444).catch(() => undefined);
+    const text = `${JSON.stringify(job, null, 2)}\n`;
+    // Whole or not at all: a reader (a seat's job_status, the hub, a test) never sees the file cut while it is written again.
+    const tmp = join(dir, `.job.json.${process.pid}.${(this.projected += 1)}.tmp`);
+    try {
+      await writeFile(tmp, text, { mode: 0o444 });
+      await rename(tmp, path);
+    } catch {
+      await rm(tmp, { force: true }).catch(() => undefined);
+      // A directory that takes no new file (made read-only): the file itself, written in place as before.
+      await chmod(path, 0o644).catch(() => undefined);
+      await writeFile(path, text);
+      await chmod(path, 0o444).catch(() => undefined);
+    }
   }
+  /** Distinct names for the temporary files project() renames into place. */
+  private projected = 0;
 
   // --- stopping -----------------------------------------------------------------------------------
 
