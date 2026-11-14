@@ -348,7 +348,7 @@ dual("persistence_normalise reads the first ImagePath of a service, as Windows d
   });
 });
 
-test("persistence_normalise holds at most 100,000 tasks from an evtx result file, counts the rest, and reads past a line nested too deep", async () => {
+test("persistence_normalise holds at most 100,000 tasks from an evtx result file, counts the rest, and reads past a line nested too deep", { skip: REGIPY }, async () => {
   await withCwd(async (cwd) => {
     const lines: string[] = ["[".repeat(200_000) + "]".repeat(200_000)];
     for (let i = 0; i < 120_000; i++) lines.push(JSON.stringify({ channel: "Microsoft-Windows-TaskScheduler/Operational", event_id: 106, record_id: i, data: { TaskName: `\\T${i}` } }));

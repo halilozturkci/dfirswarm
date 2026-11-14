@@ -187,6 +187,7 @@ import json
 import os
 import shutil
 import signal
+import stat as _stat
 import subprocess
 import sys
 import time
@@ -1488,6 +1489,13 @@ def detect_cut(status, basis):
 
 
 def detect_os(image):
+    # A pipe or a socket is not an image: target-query would wait on it to the end of DETECT_SECONDS. It is not opened, and not told.
+    try:
+        mode = os.stat(image).st_mode
+    except (OSError, ValueError):
+        mode = None
+    if mode is not None and (_stat.S_ISFIFO(mode) or _stat.S_ISSOCK(mode)):
+        undetermined("the target is a pipe or a socket, not an image: it is not opened (a read could wait for ever), so the OS was not identified and this route is not closed")
     binary = shutil.which("target-query")
     if not binary:
         undetermined("target-query is not in this image: the OS of the target was not identified, so this route is not closed")

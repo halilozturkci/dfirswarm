@@ -118,7 +118,10 @@ test("a large tree is hashed in worker threads: the same manifest as one thread 
   assert.ok(seen.every((p, i) => i === 0 || p.files_done >= seen[i - 1].files_done));
   assert.equal(seen.at(-1)?.files_done, total);
   assert.equal(seen.at(-1)?.bytes_done, second.manifest.totals.bytes);
-  assert.ok(seen.filter((p) => p.phase === "hash").length >= 3, "told while hashing, not only at the ends");
+  // Told at most every 200 ms: a hash phase longer than 600 ms is told between its ends too (a fast runner's may end sooner).
+  const hashTold = seen.filter((p) => p.phase === "hash");
+  const hashMs = Date.parse(seen.find((p) => p.phase === "manifest")?.at ?? "") - Date.parse(hashTold[0]?.at ?? "");
+  assert.ok(hashTold.length >= (hashMs > 600 ? 3 : 2), `told ${hashTold.length} times in a hash phase of ${hashMs} ms: while hashing, not only at the ends`);
 
   assert.ok(late < 500, `a timer in the sealing process was ${Math.round(late)} ms late`);
   // How many times sooner depends on the file system: each file is one link into store/blobs, and where

@@ -1004,7 +1004,7 @@ test("a seat that is done while the swarm goes on has its VM put away a grace pe
   await probe.hub.stop();
   const { hub } = await setup({ extra: { run: "t1", vmCli: fake.cli, seatLeaveMs: 50 } });
   await board.callBoard(hub.socketFor("a0"), "markDone", [null, { reason: "agent_cap", outputFile: "work/a0.md", createSentinel: false }]);
-  await until(() => existsSync(fake.log), "the seat's VM is put away", 5000);
+  await until(() => existsSync(fake.log) && readFileSync(fake.log, "utf8").endsWith("\n"), "the seat's VM is put away", 5000);
   const calls = (await readFile(fake.log, "utf8")).trim().split("\n").map((l) => JSON.parse(l) as string[]);
   assert.ok(calls.some((c) => c.includes("--agent") && c[c.indexOf("--agent") + 1] === "a0"), JSON.stringify(calls));
   assert.ok(!calls.some((c) => c.includes("--agent") && c[c.indexOf("--agent") + 1] === "a1"), "and no other seat's");
@@ -1694,7 +1694,8 @@ test("a seat that said done before a hub restart still has its VM put away when 
   const again = new Hub({ sandbox, dir, agents, tokens: hub.cfg.tokens, collector: hub.cfg.collector, backstop: false, quiet: true, settleMs: 0, herdrBin: "/usr/bin/false", run: "t1", vmCli: fake.cli, seatLeaveMs: 60_000 });
   await again.start();
   cleanups.push(async () => again.stop());
-  await until(() => existsSync(fake.log), "the seat's VM is put away after the restart", 5000);
+  // A whole line, not only the file: the fake CLI creates it and then writes it.
+  await until(() => existsSync(fake.log) && readFileSync(fake.log, "utf8").endsWith("\n"), "the seat's VM is put away after the restart", 5000);
   const calls = (await readFile(fake.log, "utf8")).trim().split("\n").map((l) => JSON.parse(l) as string[]);
   assert.ok(calls.some((c) => c.includes("--agent") && c[c.indexOf("--agent") + 1] === "a0"), "at the time it was due, not a grace period after the restart");
   await until(() => {

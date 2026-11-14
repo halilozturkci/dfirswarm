@@ -1128,7 +1128,8 @@ def detect(path):
                 unlisted, "y" if unlisted == 1 else "ies")
         return False, "no Users or Documents and Settings folder and no NTUSER.DAT within three levels of the directory"
     if not stat.S_ISREG(st.st_mode):
-        return False, "neither a directory nor a regular file"
+        # a pipe, a device or a socket is not opened (a read could wait for ever): a file it cannot read is a file it cannot tell about
+        return "unknown", "neither a directory nor a regular file (a pipe, a device or a socket): not opened, so not told"
     try:
         with open_regular(path) as fh:
             read, tail = 0, ""

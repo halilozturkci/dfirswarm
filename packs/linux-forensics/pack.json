@@ -1,7 +1,7 @@
 {
   "id": "linux-forensics",
   "name": "Linux Forensics Pack",
-  "version": "1.12.11",
+  "version": "1.12.12",
   "description": "Artefact-by-artefact method and tooling for a Linux host: the system profile and its clocks, authentication and journal records, accounts and authorization, scheduling and systemd candidates, ext metadata and storage layers, container evidence locations, and package verification against local and independently trusted baselines. Each tool says what it read, what it did not, and where the whole result is kept.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -39,8 +39,8 @@
       "README.md": "9ac7a7a99b862c584b856131e5b2beb90de13c255816430a1f711a48d86c504c",
       "goals/server-compromise.md": "0118cd428d15cdd68293ca017333a2302fa3b42a67df32aea89e77c672f9a18b",
       "goals/what-was-scheduled.md": "52389a312d07d57dc4f76c6b274dcccd6d88952a494e2750c93693a2240a1820",
-      "recipes/linux-target/recipe.json": "002161d7bde43f49bd2d123978490483505439250002569ab40aa3d6ed8c3af5",
-      "recipes/linux-target/run.py": "7d543eb261b49390eef070d2fda338a3772864a03e9954c80d24dcbe6ed68d0f",
+      "recipes/linux-target/recipe.json": "fd402707ed47e81c6142d92c967c16015ee61902175b71445965aad64ca5f7c7",
+      "recipes/linux-target/run.py": "a4ac2b9697434aed0c103af8b218d4d9f98644f2261a8891c53d2b076ab818f3",
       "requires/host.json": "3f89f3d558cf5330fc87fd8ae988422df5f351d1d42eb0abb568b94f3b6a8453",
       "requires/locks/dissect.txt": "00fa79172caa304e07eab8c2a8d778d024036efae76cd5bf8424f33710bb8e42",
       "requires/python.txt": "2a8f433b1779c884ea3307bd9d0dbf04fa2d9f909e19d0ab32c4b81a14ddb22f",

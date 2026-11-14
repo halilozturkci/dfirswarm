@@ -1,7 +1,7 @@
 {
   "id": "computer-forensics-base",
   "name": "Computer Forensics Base Pack",
-  "version": "1.17.18",
+  "version": "1.17.19",
   "description": "Method and tooling every examination needs, whatever the platform: read the container and find the volume, verify the evidence, read the catalogue, extract and carve, tell an encrypted volume from an unreadable one, keep a timeline, cite what you claim.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -25,8 +25,8 @@
       "recipes/disk-timeline/run.py": "2e70ba240ec6ccab3cfa030ee82dee99e35cb4ea23dec5f39b85aa1bd0cb9729",
       "recipes/disk-volumes/recipe.json": "59e66f166097cdbf91e90641ec8c5dd783f820036d7da22d94e99bf1306c865a",
       "recipes/disk-volumes/run.sh": "7320429e142669eb413d23f72b90cadd1781c2ee5bd7f43d54119472af486d95",
-      "recipes/first-stage-candidates/recipe.json": "55276adaa6ab1ce92c0ab1f42867238b9266e1d73c6e91583f176fd9ac2c77c5",
-      "recipes/first-stage-candidates/run.py": "08c48fbd73f2fa01e2573c36f14077af7c829fb0a3ba226852b2331550f9f50a",
+      "recipes/first-stage-candidates/recipe.json": "d7480c93a02025ffdf5ff4aba048a30aa0bde96e7b736956571f9b20738707c5",
+      "recipes/first-stage-candidates/run.py": "ff1aa15a87b3a19f7c6d38ea0bc5a8f8b76de7d0b9ee2ac266a1c83f17cf71fb",
       "recipes/memory-windows/recipe.json": "acde9ef7d17fc29c0cf7097a6622aa4bf8a0b3770bad65165052ee2276e8aec6",
       "recipes/memory-windows/run.sh": "da6a61841eaf5755b44fa371abd93c5f7557eca222b5d5e775d666253539c3d6",
       "requires/host.json": "150e40993766c244373df7fe3cc8b7c723b02b6c6fddaf2be1d6df404a80da1f",

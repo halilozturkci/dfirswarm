@@ -185,6 +185,19 @@ export function missingModule(stderr: string): string | null {
   return m ? m[2]!.slice(0, 120) : null;
 }
 
+/** A tool that caught the ImportError and says so in its JSON answer ("the tool could not start: a library it needs is missing"): it reads no path on this host either. */
+export function missingLibrary(stdout: string): string | null {
+  for (const text of [stdout.trim(), stdout.trim().split("\n").pop() ?? ""]) {
+    try {
+      const a = JSON.parse(text) as { error?: unknown; status_basis?: unknown };
+      if (a && typeof a === "object" && /a library it needs is missing/.test(String(a.status_basis ?? ""))) return String(a.error ?? "a library it needs is missing").slice(0, 120);
+    } catch {
+      // not one JSON document: the next form, or none
+    }
+  }
+  return null;
+}
+
 type Run = { code: number | null; stdout: string; stderr: string; killed: boolean };
 
 /** SECRET_OUTPUT=1 where the job service sets it: the manifest's declaration and these arguments (scripts/job-service.ts toolCheck). */
@@ -277,8 +290,9 @@ test("every pack tool with an input path, called as job_run calls it with a rela
       const r = await runAsJob(root, tool, jobId, args);
       runs++;
       const missing = missingModule(r.stderr);
-      if (missing && /Traceback/.test(r.stderr)) {
-        skipped.push(`${tool.id} (${missing})`);
+      const library = missingLibrary(r.stdout);
+      if ((missing && /Traceback/.test(r.stderr)) || library) {
+        skipped.push(`${tool.id} (${missing ?? library})`);
         return;
       }
       let why = jobRunFailure(r);

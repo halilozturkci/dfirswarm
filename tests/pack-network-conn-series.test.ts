@@ -551,11 +551,16 @@ for (const flood of CUT_FLOODERS) {
           assert.equal(out.status, "partial", `${out.status_basis}`);
           assert.equal(out.ok, false);
           const said = JSON.stringify([out.status_basis, out.problems]);
-          assert.match(said, /a process that held a program's pipe after the program ended went on writing: the tool read no more than 1048576 bytes of it/);
-          assert.match(said, /tshark's version line/);
-          assert.match(JSON.stringify(out.program_group.notes), /went on writing/);
+          // The version probe has the shared PROCESS block's running cap of 64 KiB, and the stand-in starts its flooder before it exits: the probe is
+          // cut there, while the program runs, or (where the program was seen to end first) at the 1 MiB the block reads after a program ended.
+          // Either way the version is not recorded and the answer says why.
+          assert.match(said, /`tshark --version` printed past its cap and was ended|tshark's version line/);
+          assert.match(said, /a program's output was not read whole: the program printed more than 65536 bytes|a process that held a program's pipe after the program ended went on writing: the tool read no more than 1048576 bytes of it/);
+          assert.match(JSON.stringify(out.program_group.notes), /went on writing|the program printed more than 65536 bytes/);
           if (host === "linux") {
-            assert.ok(out.program_group.left_behind >= 1, JSON.stringify(out.program_group));
+            // Cut at the running cap, the program's tree (the flooder in it) is ended with the program and nothing is left to adopt; cut after
+            // the program ended, the flooder is adopted and ended (left_behind). Either way no flooder is left.
+            if (!/the program printed more than 65536 bytes/.test(said)) assert.ok(out.program_group.left_behind >= 1, JSON.stringify(out.program_group));
             for (const pid of await pids(cwd)) assert.equal(alive(pid), false, `flooder ${pid} is gone`);
           } else {
             assert.equal(out.program_group.left_behind, 0, "nothing was found: the cut alone makes it partial");
