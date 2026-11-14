@@ -42,8 +42,8 @@
   "example": "{\"operation\": \"bitlocker_image\", \"source\": \"inputs/disk.raw\", \"offset\": 1048576, \"key_kind\": \"recovery_password\", \"key_ref\": \"work/sealed-recovery.txt\"}",
   "by": "maintainer",
   "at": "2026-11-01T12:00:00.000Z",
-  "version": 8,
-  "sha256": "b22343afc82bfd952ed54125314361776d89ac387e207ec5aa8182c63dba6215",
+  "version": 9,
+  "sha256": "00a6d35b0630a14ef153a3b0b4b1a6f82e691f8dfaed8fb2a3df251b092a2f6f",
   "use": {
     "extensions": []
   }

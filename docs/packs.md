@@ -752,11 +752,28 @@ of this itself:
   cut at the byte cap is counted in `PIPE_CUT["cut"]`, said in
   `process_notes()` and, through `process_apply`, makes a complete answer
   partial; the return value is the same three-tuple, and the bytes kept are the
-  program's output plus at most 1 MiB of the leftover's. While the program is
-  still alive the block caps nothing (its output is its caller's to bound; no
-  output cap is known that every carrier could take), so a holder that floods a
-  pipe while the program still runs is read until the program has ended. A
-  reader that decodes or parses the output still bounds it itself.
+  program's output plus at most 1 MiB of the leftover's.
+- What a running program prints is capped too (the output caps). Each stream
+  `communicate_bounded` (and `preflight`, which calls it) reads has a running
+  byte cap: `STDOUT_CAP`, 64 MiB of standard output kept; `STDERR_CAP`, 8 MiB of
+  standard error read, of which the head and the last `STDERR_TAIL` (1 MiB) are
+  kept; a call can name smaller caps (`caps=(stdout, stderr)`; a version probe
+  takes 64 KiB). When a stream passes its cap the program is ended on the
+  deadline's own path (`kill_tree`: the program and what it started, nothing
+  else), and the call returns what it kept. A stream that passes its cap only
+  after the program has ended is cut as well, unless the pipes were then cut
+  at `POST_EXIT_BYTES`: what passed it is a holder's flood, which `PIPE_CUT`
+  says, and the program's own output was read whole. The two byte strings it returns are
+  `Output`s: bytes with a `cut` attribute, `None` for a stream read whole and a
+  sentence for one that was cut (`output_cut(out, err)` gives the first). The
+  call is counted in `OUTPUT_CUT` and said in `process_notes()`, and
+  `process_apply` turns a complete answer partial. A carrier never takes a cut
+  output for a whole one: one that parses it (ffprobe's JSON, a child's answer,
+  a listing) does not parse it and answers partial or failed with the cut said;
+  one that reads a version line from it does not record the version. A
+  call at the default caps holds at most about 3.5 times the standard output
+  cap at its peak (the buffer as it grows and the bytes it returns), about
+  230 MB; what a carrier parses from it comes on top.
 - Where nothing is adopted (the kernel or a seccomp rule refuses the call, or
   the host is not Linux) `settle()` ends only what the tool saw below a program
   whose parent is gone, and `unproven` says so; on a host that is not Linux
@@ -783,12 +800,13 @@ of this itself:
 - **Not covered.** A writer that is not a descendant of a program (a service
   manager, a socket, another PID namespace). The tool itself being killed (the
   harness ends its group; a process in a session of its own survives, as it
-  always did). A flood that starts while the program is still alive: the byte
-  cap starts at the program's exit. The start of the interpreter, before a
+  always did). The pipe readers of a carrier's own (not `communicate_bounded`)
+  keep their own caps; the registry's `local-mechanism` entries and the
+  carriers' own code say which. The start of the interpreter, before a
   handler is in, is a window a stop signal can land in. A tool that reads a
   pipe through the block and neither calls `process_apply` nor reads
-  `PIPE_CUT` does not turn a cut pipe into `partial`; the cut is
-  in `program_group.notes`. The registry lists no such tool now (it fails for
+  `PIPE_CUT` (or `OUTPUT_CUT`, or the `cut` of what it read) does not turn a
+  cut pipe into `partial`; the cut is in `program_group.notes`. The registry lists no such tool now (it fails for
   one); the pipe-only tools that read `PIPE_CUT` themselves count one cut for
   the whole run, so a cut while a version was read makes the answer `partial`
   too. And the mechanisms that are not the block: the
@@ -800,7 +818,7 @@ of this itself:
   end only their direct child and have no abandoned-child test.
 - **The registry is the arbiter, not this text.**
   `tests/process-sweep-coverage.json` lists every file under `packs/` and
-  `tool-library/` (outside `tests/`) that starts a program: the 62 copies of
+  `tool-library/` (outside `tests/`) that starts a program: the 64 copies of
   the block, the files with a mechanism of their own, the library twins and the
   shell recipes. Each entry has its class (`held`, `pipe-only`, `no-program`,
   `local-mechanism`, `twin`), where the class is stated, and the test files
@@ -1297,11 +1315,42 @@ are written to the budget; a finding is not added to the list to get a change in
 A tool or a recipe that starts a program carries the shared PROCESS block,
 starts every program through its `spawn()`, and calls `process_apply` (or says
 in `tests/process-sweep-coverage.json` what it does instead) where it prints
-its answer. What the block does and does not do is in section 7, "What a
+its answer. What it reads of a program's output through the block is held to
+the block's output caps: 64 MiB of standard output and 8 MiB of standard error
+(its head and last 1 MiB kept) by default, smaller where the call names them.
+A stream past its cap ends the program, and the tool treats that output as not
+read whole (`output_cut()`, `OUTPUT_CUT`): partial or failed, with the cut said,
+never complete. `tests/process-sweep-coverage.test.ts` fails a held or
+pipe-only tool that reads output through the block and never looks at a cut;
+`tests/pack-shared-process-output-cap.test.ts` floods the block of every pack
+and a carrier of each pack that reads output through it. What the block does and does not do is in section 7, "What a
 program leaves behind". Which tools are covered, and how, is decided by the
 registry `tests/process-sweep-coverage.json` and its test, not by a pack's
 changelog: a tool that starts a program and is not listed there, or is listed
 with a claim its code does not keep, fails `tests/process-sweep-coverage.test.ts`.
+
+### A tool that reads SQLite evidence
+
+A tool that opens evidence with `sqlite3` (a database the caller names or one
+found in the evidence, or a copy of it) carries the shared SQLITE WATCH block
+(`# BEGIN SHARED SQLITE WATCH`) and runs every statement on that database under
+it. A step of SQLite runs in C: a progress handler is called only between the
+steps of SQLite's own program, and one `count(*)` over a b-tree whose pages are
+reached from many parents (a DAG), or one page of `PRAGMA integrity_check`, is
+a single step that walks without end; a Python signal handler cannot run in it
+either. `SqliteWatch(deadline, on_interrupt=None)` is a thread that waits on
+the deadline (a callable it reads every quarter second, so a deadline that
+moves is followed) and on the signal wake-up pipe, and calls `interrupt()` on
+every connection it watches at the deadline, every quarter second after it,
+and when SIGTERM, SIGINT or SIGHUP arrives; SQLite honours it inside the walk,
+and the tool's stop handler then answers. The tool watches each connection
+before its first statement (`watch.watch(conn)`, a second connection for blob
+handles included) and closes the watch before it prints its answer. A tool
+whose only database is its own scratch file, filled from what it parsed (the
+cloud pack's working tables, `pcap_summary`'s spill, `registry_recover`'s
+comparison, `ransomware_scope_report`'s index, the ios-filesystem recipe), does
+not carry it. `tests/pack-sqlite-watch.test.ts` runs every carrier against a
+DAG b-tree with a short clock and with a SIGTERM.
 
 ### Closing a pack's review
 

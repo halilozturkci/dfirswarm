@@ -16,6 +16,9 @@
  *   f  a twin differs from its pack file by a byte, or its pack file is not a carrier of the registry
  *   h  a held or pipe-only tool reads a pipe through the block and neither calls process_apply, nor reads PIPE_CUT, nor names a `cut_through` function, and
  *      has no `pipe_cut_gap` that says so (and a `pipe_cut_gap` that is stale)
+ *   i  a held or pipe-only tool reads a program's output through communicate_bounded or preflight and does nothing with an output the block cut at its running
+ *      cap (STDOUT_CAP, STDERR_CAP): it neither calls process_apply, nor reads OUTPUT_CUT, nor calls output_cut(), nor names a `cut_through` function (which puts
+ *      process_notes(), where the block says the cut, into the reasons)
  *   g  the carriers of the registry that carry the shared block are not as many as the census counts (tests/shared-blocks.json, family PROCESS), or as the
  *      discovery finds
  * and the checking function is exported and tried on damaged copies of the registry at the end (the negative self-test).
@@ -163,6 +166,12 @@ export async function checkRegistry(registry: Registry, root: string, read: Read
         problems.push(`${where}: reads a pipe through the shared block, does not call process_apply and does not read PIPE_CUT: a cut pipe leaves the status alone; say so in pipe_cut_gap or wire it`);
       }
       if (e.pipe_cut_gap && (!readsPipe || reportsCut)) problems.push(`${where}: pipe_cut_gap is stale (the tool reports a cut now, or reads no pipe through the block)`);
+      // i: an output the block cut at its running cap (Output.cut, OUTPUT_CUT) is never taken for a whole one: the tool reads the cut, or process_apply makes the answer partial
+      const readsOutput = /\b(communicate_bounded|preflight)\(/.test(own);
+      const reportsOutputCut = /\bprocess_apply\(/.test(own) || /\bOUTPUT_CUT\b/.test(own) || /\boutput_cut\(/.test(own) || (!!e.cut_through && new RegExp(`\\b${e.cut_through}\\(`).test(own));
+      if (readsOutput && !reportsOutputCut) {
+        problems.push(`${where}: reads a program's output through communicate_bounded or preflight and never looks at an output cut at its running cap (process_apply, OUTPUT_CUT, output_cut() or a cut_through function)`);
+      }
       const group = [/\bprocess_verdict\(/, /\bprocess_apply\(/, ...(apply ? [new RegExp(`\\b${apply}\\(`)] : [])];
       if (!group.some((re) => re.test(own))) problems.push(`${where}: no call that makes a program_group (process_verdict, process_apply${apply ? ", " + apply : ""})`);
     }
@@ -304,6 +313,29 @@ test("self-test: a pipe read through the block by a tool that never reads PIPE_C
     assert.ok(!gap.some((p) => /a cut pipe leaves the status alone/.test(p)), "a named gap is accepted: " + gap.join(" | "));
     const through = await checkRegistry({ entries: [{ ...entry, cut_through: "program_group_problems" }] }, dir);
     assert.ok(!through.some((p) => /a cut pipe leaves the status alone/.test(p)), "a function that is called counts: " + through.join(" | "));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("self-test: a program's output read through the block by a tool that never looks at a running-cap cut fails the check (scratch copy of audit_events)", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "sweep-outcut-"));
+  try {
+    const { mkdir } = await import("node:fs/promises");
+    const rel = "packs/linux-forensics/tools/audit_events/run.py";
+    const real = (await readFile(join(ROOT, rel), "utf8")).replaceAll("OUTPUT_CUT", "OUTPUT_CUX").replaceAll("output_cut(", "output_cux(");
+    await mkdir(join(dir, "tests"), { recursive: true });
+    await mkdir(join(dir, "packs", "linux-forensics", "tools", "audit_events"), { recursive: true });
+    await mkdir(join(dir, "tool-library"), { recursive: true });
+    await writeFile(join(dir, "tests", "shared-blocks.json"), JSON.stringify({ families: { PROCESS: { variants: [{ carriers: 1 }] } } }));
+    await writeFile(join(dir, rel), real);
+    const entry: Entry = { path: rel, class: "pipe-only", apply: "program_group_problems", source: "x", tests: [] };
+    const problems = await checkRegistry({ entries: [entry] }, dir);
+    assert.ok(problems.some((p) => /never looks at an output cut at its running cap/.test(p)), problems.join(" | ") || "(no problem found)");
+    const real2 = await readFile(join(ROOT, rel), "utf8");
+    await writeFile(join(dir, rel), real2);
+    const wired = await checkRegistry({ entries: [entry] }, dir);
+    assert.ok(!wired.some((p) => /never looks at an output cut/.test(p)), "the real tool reads the cut: " + wired.join(" | "));
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

@@ -24,8 +24,8 @@
   "example": "{\"path\": \"inputs/backup.rar\"}",
   "by": "maintainer",
   "at": "2026-11-01T12:00:00.000Z",
-  "version": 7,
-  "sha256": "3ad359a25e29373ac227cddb02025eebd23db5e0e54949e6a1eee9c94b8fd583",
+  "version": 8,
+  "sha256": "43d34dd361f1c01d6ba1a4ee556d6029d94c09bb4ee3d83f9366cab39021f443",
   "use": {
     "extensions": [
       ".7z",

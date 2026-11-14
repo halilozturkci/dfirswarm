@@ -842,7 +842,7 @@ test("qemu_img never opens a name a file holds: a VMDK text descriptor and a QCO
     // a failing qemu-img: the second reading is missing, and the answer says so
     out = json(await tool(CHAIN, cwd, { root: "inputs/q", qemu_img: "auto" }, { QEMU_STUB_MODE: "fail" }, bin));
     assert.equal(out.status, "partial");
-    assert.match(out.status_basis, /qemu-img failed, timed out or printed no JSON on 1 image/);
+    assert.match(out.status_basis, /qemu-img failed, timed out, printed past its output cap or printed no JSON on 1 image/);
     assert.equal(out.qemu_img.failed, 1);
     out = json(await tool(CHAIN, cwd, { root: "inputs/q", qemu_img: "auto" }, { QEMU_STUB_MODE: "notjson" }, bin));
     assert.equal(out.status, "partial");

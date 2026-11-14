@@ -54,7 +54,8 @@ test("the five programs that run programs carry the same process block, byte for
     const text = (await readFile(path, "utf8")).replace(blocks[0], "");
     assert.doesNotMatch(strip(text), /start_new_session|setsid|process_group|os\.setpgid|preexec_fn\s*=\s*os\./, `${path} starts a program outside the tool's process group`);
     assert.doesNotMatch(strip(text), /subprocess\.(run|call|check_output|check_call)\(/, `${path} runs a program with a call that does not end its children`);
-    assert.doesNotMatch(text, /^import threading/m, `${path} uses a thread (preexec_fn and threads do not mix)`);
+    // preexec_fn and threads do not mix: a file that starts a program has no thread. One that starts none may (utmp_parse's SQLITE WATCH thread).
+    if (/\b(spawn|Popen)\(|subprocess\./.test(strip(text))) assert.doesNotMatch(text, /^import threading/m, `${path} uses a thread (preexec_fn and threads do not mix)`);
   }
 });
 

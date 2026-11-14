@@ -2954,6 +2954,141 @@ def list_tables(connection, deadline):
     return listed, total, seen
 
 
+# BEGIN SHARED SQLITE WATCH
+# A statement SQLite runs in C stops neither at the tool's clock nor at a stop signal by itself. A step of SQLite runs with the interpreter's
+# lock released: a progress handler is called only between the steps of SQLite's own program (one count(*) over a damaged b-tree is one
+# step, OP_Count; so is a page of PRAGMA integrity_check or quick_check), and a Python signal handler runs only when the main thread is back
+# in Python, so one step that walks a b-tree whose pages are reached from many parents neither ends at the clock nor answers a SIGTERM.
+# SqliteWatch is a thread that waits on the deadline and on the signal wake-up pipe (the C-level handler writes the signal's number to it,
+# whatever the main thread is doing) and calls interrupt() on every connection it watches: at the deadline, every TICK seconds after it (a
+# statement begun later is ended too), and when a stop signal (SIGTERM, SIGINT, SIGHUP) arrives; another signal (a SIGALRM of a regular
+# expression's clock) ends nothing. SQLite honours interrupt() inside such a walk: the step returns (sqlite3.OperationalError, "interrupted"),
+# and the tool's stop handler, already due, answers the stop. The thread holds the stop signals in its own mask, so that they reach the main
+# thread. A carrier makes one watch, SqliteWatch(deadline) (a callable that returns the time.monotonic() deadline or None, read on every
+# tick, so a deadline that moves is followed; or a number; or None for the stop signals only; on_interrupt(why), when given, is called in the
+# watch's thread just before it interrupts, so that a carrier whose progress handler names the reason sees it), watches every connection it opens on
+# evidence before its first statement (watch(conn); forget(conn) before it closes one), and closes the watch before it prints its answer
+# (close(), idempotent; or `with SqliteWatch(...) as watch:`). interrupted_by is None, "clock" or "stop". set_wakeup_fd works only in the
+# main thread: a watch made in another thread ends a statement at the clock only, and `note` says so.
+import os
+import select
+import signal
+import threading
+import time
+
+
+class SqliteWatch:
+    TICK = 0.25
+    STOP_SIGNALS = tuple(getattr(signal, name) for name in ("SIGTERM", "SIGINT", "SIGHUP") if hasattr(signal, name))
+
+    def __init__(self, deadline=None, on_interrupt=None):
+        self._deadline = deadline
+        self._on_interrupt = on_interrupt
+        self._conns = []
+        self._lock = threading.Lock()
+        self._done = threading.Event()
+        self._closed = False
+        self.interrupted_by = None                 # "clock" or "stop": the first reason this thread interrupted a statement
+        self.note = None                           # a sentence when a stop signal cannot end a statement here
+        self._read, self._write = os.pipe()
+        os.set_blocking(self._read, False)
+        os.set_blocking(self._write, False)
+        self._before, self._woken = -1, False
+        try:
+            self._before = signal.set_wakeup_fd(self._write, warn_on_full_buffer=False)
+            self._woken = True
+        except (ValueError, OSError) as exc:
+            self.note = "a stop signal does not end a statement SQLite runs in C here (%s: the watch was made outside the main thread); the clock does" % type(exc).__name__
+        self._thread = threading.Thread(target=self._watch, name="sqlite-watch", daemon=True)
+        self._thread.start()
+
+    def deadline(self):
+        """The deadline now (time.monotonic()), or None."""
+        value = self._deadline
+        try:
+            value = value() if callable(value) else value
+        except Exception:  # noqa: BLE001 - a deadline that cannot be read is no deadline
+            return None
+        return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+    def watch(self, conn):
+        with self._lock:
+            if conn is not None and not self._closed and all(c is not conn for c in self._conns):
+                self._conns.append(conn)
+        return conn
+
+    def forget(self, conn):
+        with self._lock:
+            self._conns = [c for c in self._conns if c is not conn]
+
+    def _interrupt(self, why):
+        with self._lock:
+            if self._on_interrupt is not None and self._conns:
+                try:
+                    self._on_interrupt(why)
+                except Exception:  # noqa: BLE001 - the reason is the carrier's to keep; the interrupt goes on without it
+                    pass
+            hit = False
+            for conn in self._conns:
+                try:
+                    conn.interrupt()
+                    hit = True
+                except Exception:  # noqa: BLE001 - a closed connection has nothing to end
+                    pass
+            if hit and self.interrupted_by is None:
+                self.interrupted_by = why
+
+    def _watch(self):
+        try:
+            signal.pthread_sigmask(signal.SIG_BLOCK, set(self.STOP_SIGNALS))
+        except (AttributeError, ValueError, OSError):
+            pass
+        while not self._done.is_set():
+            deadline = self.deadline()
+            left = self.TICK if deadline is None else deadline - time.monotonic()
+            if left <= 0:
+                self._interrupt("clock")
+            try:
+                ready = select.select([self._read], [], [], min(max(left, 0.0), self.TICK) or self.TICK)[0]
+            except (OSError, ValueError):
+                ready = []
+            if ready:
+                try:
+                    woke = os.read(self._read, 256)
+                except OSError:
+                    woke = b""
+                if any(number in self.STOP_SIGNALS for number in woke):
+                    self._interrupt("stop")
+
+    def close(self):
+        """Ends the thread and gives the wake-up pipe back, before the answer is printed."""
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            self._conns = []
+        self._done.set()
+        self._thread.join(timeout=2)
+        if self._woken:
+            try:
+                signal.set_wakeup_fd(self._before)
+            except (ValueError, OSError):
+                pass
+        for fd in (self._read, self._write):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        self.close()
+        return False
+# END SHARED SQLITE WATCH
+
+
 def run_tcc(args):
     started = time.monotonic()
     db = args.get("path")
@@ -3062,7 +3197,7 @@ def run_tcc(args):
             source["staged"] = True
             source["open_mode"] = "a private copy of the database and its sidecars, read-write so SQLite can apply the WAL, read through a read-only authorizer, removed at the end"
             connection = sqlite3.connect(staged_db)
-            st["opener"] = lambda: sqlite3.connect(staged_db)
+            st["opener"] = lambda: watch.watch(sqlite3.connect(staged_db))     # (the blob handles' connection is watched too)
         except StageTimeUp:
             st["stopped"] = "time"           # the copy used the whole of max_seconds: nothing was read, and the private copy is removed below
             return
@@ -3072,6 +3207,7 @@ def run_tcc(args):
             fail("the database could not be opened or staged", path=db,
                  reason=("%s: %s" % (type(exc).__name__, exc.strerror or "error")) if isinstance(exc, OSError) else type(exc).__name__)
         st["connection"] = connection
+        watch.watch(connection)          # before the first statement: the clock and a stop end one SQLite runs in C (SQLITE WATCH)
         connection.row_factory = sqlite3.Row
         connection.text_factory = lambda b: b.decode("utf-8", "backslashreplace")
         # The clock and the stop signals are installed before the first statement: SQLite parses the whole schema when the first statement runs.
@@ -3323,6 +3459,9 @@ def run_tcc(args):
                 st["stopped"] = "time"
                 break
 
+    # the clock (st["until"], which moves) and a stop end a statement SQLite runs in C, where the progress handler is not called; the reason is
+    # kept where the progress handler keeps it
+    watch = SqliteWatch(lambda: st["until"], on_interrupt=lambda why: st.__setitem__("abort", st["abort"] or ("signal" if why == "stop" else "time")))
     try:
         try:
             SWEEP["began"] = True
@@ -3336,6 +3475,7 @@ def run_tcc(args):
             hold_signals()
     finally:
         hold_signals()
+        watch.close()
         for opened in (st["shaper"] and st["shaper"].handles, st["connection"]):
             try:
                 if opened is not None:

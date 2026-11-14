@@ -25,6 +25,6 @@
   "example": "{\"path\": \"work/extracted/sample.exe\", \"compare_to\": \"work/extracted/variant.exe\"}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 14,
-  "sha256": "e0319ddd36f75a634bf49348c423199db1d8977a8fedcd9e3fc4e061639d54c0"
+  "version": 15,
+  "sha256": "a96f21b827b4f7ba64b4284e4be4a146039c04d3c69bae9f3574982b5f6e1a1c"
 }

@@ -32,6 +32,7 @@
       { "carriers": 8, "example": "packs/triage-collection/tools/collection_coverage/run.py", "why": "triage-collection's block (the error form, where an output may be written, the lossless table, the secret-safe values file, the withholding)" },
       { "carriers": 6, "example": "packs/cloud-forensics/tools/cloudtrail_parse/run.py", "why": "cloud-forensics' block: an unrelated text that happens to carry the same name" }
     ] },
+    "SQLITE WATCH": { "variants": [ { "carriers": 14, "example": "packs/windows-forensics/tools/chromium_logins/run.py" } ] },
     "SHOWN": { "variants": [ { "carriers": 8, "example": "packs/memory-forensics/tools/mem_fs/run.py" } ] },
     "STOP": { "variants": [
       { "carriers": 77, "example": "packs/windows-forensics/tools/regkv/run.py", "why": "the windows lineage (the windows pack, and the ransomware-response and reverse-engineering tools that adopted its text)" },

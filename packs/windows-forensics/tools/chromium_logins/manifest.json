@@ -56,7 +56,7 @@
   "example": "{\"login_data\": \"work/extracted/Default/Login Data\", \"key_file\": \"store/jobs/j000012/out/profile-key.hex\"}",
   "by": "maintainer",
   "at": "2026-11-13T12:00:00.000Z",
-  "version": 5,
+  "version": 6,
   "use": {
     "names": [
       "Login Data",
@@ -65,5 +65,5 @@
   },
   "requires": [],
   "secret_output": "required",
-  "sha256": "08aeeada09d6adcddd5eeb8ecb32966e3c3ee583bb9bc30c11b377c26cd01030"
+  "sha256": "a73738b26cdc0675c96980a39e54e25fa9c4a687e753357c8d3afdc4b2eb3004"
 }

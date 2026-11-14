@@ -26,8 +26,8 @@
   "example": "{\"path\": \"work/extracted/login.keychain-db\", \"password_file\": \"work/case/keychain-password.txt\"}",
   "by": "maintainer",
   "at": "2026-11-03T12:00:00.000Z",
-  "version": 6,
-  "sha256": "20782c4a2833cd93375b6f9d769dc73e3c4ee71c54424beaba7da93d89a52c94",
+  "version": 7,
+  "sha256": "911e38ffdfed9fa6aa7f42ceb20eec6fef0e3bbf290ac62a1d8541a26d8c23a9",
   "use": {
     "extensions": [],
     "magic": [

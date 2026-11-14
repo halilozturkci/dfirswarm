@@ -79,8 +79,8 @@
   "example": "{\"path\": \"work/extracted/var/log/wtmp\", \"types\": [\"USER_PROCESS\", \"BOOT_TIME\"]}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 16,
-  "sha256": "7117c25a57ae3c00c71336446b7040ba4074e58629fbb39d0a449402527f5e13",
+  "version": 17,
+  "sha256": "e7131789c50def5eb4b4cc8331f21aa3d8168456dca84f0ef1455049d0b5bde4",
   "use": {
     "names": [
       "utmp",

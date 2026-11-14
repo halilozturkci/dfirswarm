@@ -222,7 +222,7 @@ import unicodedata
 from pathlib import Path
 from urllib.parse import quote
 
-PARSER = "backup_decrypt/6"
+PARSER = "backup_decrypt/7"
 TOOL = "backup_decrypt"
 VALUES_NAME = "backup-decrypt-values.jsonl"        # unused: the tool has no values mode, the shared block names it
 VALUES_FORMAT = "unused"
@@ -911,7 +911,10 @@ def place_without_replacing(tmp, path):
 # pipe wrote can be cut. At the cap the tool stops reading, ends the holder (reap_orphans, settle) and lets the pipes go: PIPE_CUT["cut"]
 # counts the calls cut that way, process_notes() says so, and process_apply turns a complete answer partial. The bytes kept are the ones
 # read, not a whole stream: a caller that parses the output sees the program's output and at most 1 MiB of what a leftover wrote. While the
-# program is still alive nothing is capped here (a program's own output is its caller's to bound); the timing is unchanged.
+# program runs each stream has a running cap too (STDOUT_CAP 64 MiB, STDERR_CAP 8 MiB with its head and last STDERR_TAIL 1 MiB kept, or the
+# caller's `caps`): past it the program is ended on the deadline's own path (kill_tree, its tree only), the stream comes back cut
+# (Output.cut, output_cut()), OUTPUT_CUT counts the call and process_apply turns a complete answer partial; a caller that parses a cut
+# output says so and never takes it for a whole one.
 import select as _select
 import selectors as _selectors
 import time
@@ -1731,11 +1734,12 @@ def process_verdict():
 def process_apply(answer):
     """Put process_verdict() into `answer` as answer["program_group"] and, when a program left a process behind or that cannot be ruled out,
     turn a complete answer into a partial one (status "partial", the ok and complete flags that are there false, a sentence in status_basis;
-    a call of communicate_bounded that was cut at POST_EXIT_BYTES counts, PIPE_CUT):
-    what a program wrote while the tool read it is not a complete result. A carrier calls it once where it prints its answer. Returns `answer`."""
+    a call of communicate_bounded that was cut at POST_EXIT_BYTES counts, PIPE_CUT, and so does one that ended a program whose output passed
+    its running cap, OUTPUT_CUT): what a program wrote while the tool read it, or what it printed past a cap, is not a complete result. A
+    carrier calls it once where it prints its answer. Returns `answer`."""
     verdict = process_verdict()
     answer["program_group"] = verdict
-    if (verdict["left_behind"] > 0 or verdict["unproven"] or PIPE_CUT["cut"]) and answer.get("status") == "complete":
+    if (verdict["left_behind"] > 0 or verdict["unproven"] or PIPE_CUT["cut"] or OUTPUT_CUT["cut"]) and answer.get("status") == "complete":
         answer["status"] = "partial"
         for flag in ("ok", "complete"):
             if flag in answer:
@@ -1743,6 +1747,8 @@ def process_apply(answer):
         if verdict["left_behind"] > 0:
             sentence = "a program left %d process%s running after it ended; the tool ended them, and what they wrote before that is in the files named here" % (
                 verdict["left_behind"], "" if verdict["left_behind"] == 1 else "es")
+        elif OUTPUT_CUT["cut"]:
+            sentence = "a program's output was not read whole: %s" % OUTPUT_CUT["last"]
         elif PIPE_CUT["cut"]:
             sentence = "a process that held a program's pipe after it ended went on writing; the tool read no more than %d bytes of it and let the pipe go" % POST_EXIT_BYTES
         else:
@@ -1751,22 +1757,57 @@ def process_apply(answer):
         answer["status_basis"] = "%s; %s" % (basis, sentence) if isinstance(basis, str) and basis else sentence
     return answer
 
-
 PIPE_GRACE = 1.0    # seconds the pipes of a program that has ended are given to reach end of file
 POST_EXIT_BYTES = 1 << 20    # the most bytes (both pipes together) read from the pipes of a program that has ended
 PIPE_CUT = {"cut": 0}        # how many calls stopped reading at POST_EXIT_BYTES because a process still held the pipes and went on writing
+STDOUT_CAP = 64 << 20        # the most bytes of standard output one call of communicate_bounded keeps; past it the program is ended and the output is cut
+STDERR_CAP = 8 << 20         # the most bytes of standard error one call reads before it ends the program; it keeps the head and the last STDERR_TAIL bytes
+STDERR_TAIL = 1 << 20        # the tail of standard error kept once it passes STDERR_CAP (a program's last words are at its end)
+OUTPUT_CUT = {"cut": 0, "last": None}    # how many calls cut a stream at its running cap, and the sentence of the last one
 
 
-def communicate_bounded(proc, seconds, input=None):
-    """(stdout bytes, stderr bytes, timed out) for a program started with pipes, in bytes. At `seconds` the program and what it started
-    are killed (timed out). A program that has ended while something it started still holds its pipes (a daemon, a helper that
-    inherited them) does not hold the tool: from the moment the program has ended (or was killed) the pipes are given PIPE_GRACE seconds
-    and POST_EXIT_BYTES bytes, whichever is used up first; what the program wrote is kept, what the tool lost is killed (reap_orphans,
-    settle), and the pipes are let go. A cut at the byte cap is counted in PIPE_CUT and noted (process_notes()); the return shape is the
-    same. The pipes are read here and by nothing else (not by Popen.communicate), so letting them go is safe. `input` is written while
-    the program runs and is dropped once it has ended."""
+class Output(bytes):
+    """What communicate_bounded kept of one stream: the bytes, and `cut`, None when the stream was read whole, or a sentence saying it was
+    not (the program printed past the stream's cap and was ended there). A caller that parses the output reads `cut` first: a cut output
+    is never a whole one."""
+    cut = None
+
+
+def output_cut(*outputs):
+    """The sentence of the first of `outputs` (values communicate_bounded or preflight returned) that was cut at its cap; None when each was
+    read whole."""
+    for out in outputs:
+        text = getattr(out, "cut", None)
+        if text:
+            return text
+    return None
+
+
+def _output(data, cut):
+    out = Output(data)
+    out.cut = cut
+    return out
+
+
+def communicate_bounded(proc, seconds, input=None, caps=None):
+    """(stdout bytes, stderr bytes, timed out) for a program started with pipes, in bytes (Output: bytes with a `cut` sentence or None). At
+    `seconds` the program and what it started are killed (timed out). What the tool holds is capped while the program runs: `caps` is
+    (stdout cap, stderr cap), STDOUT_CAP and STDERR_CAP when it is None. Standard output is kept to its cap; standard error keeps its head and
+    its last STDERR_TAIL bytes (at most half its cap). When either stream passes its cap the program and what it started are ended (kill_tree,
+    the deadline's own path: its tree, nothing else), what was kept is returned with `cut` set on that stream, the call is counted in
+    OUTPUT_CUT and said in process_notes(), and process_apply turns a complete answer partial. A program that has ended while something it
+    started still holds its pipes (a daemon, a helper that inherited them) does not hold the tool: from the moment the program has ended (or
+    was killed) the pipes are given PIPE_GRACE seconds and POST_EXIT_BYTES bytes, whichever is used up first; what the program wrote is kept,
+    what the tool lost is killed (reap_orphans, settle), and the pipes are let go. A cut at the byte cap is counted in PIPE_CUT and noted
+    (process_notes()); the return shape is the same. The pipes are read here and by nothing else (not by Popen.communicate), so letting them
+    go is safe. `input` is written while the program runs and is dropped once it has ended."""
     deadline = time.monotonic() + max(0.1, seconds)
-    bufs = (bytearray(), bytearray())
+    out_cap, err_cap = (STDOUT_CAP, STDERR_CAP) if caps is None else (max(0, int(caps[0])), max(0, int(caps[1])))
+    tail_keep = min(STDERR_TAIL, err_cap // 2)
+    bufs = (bytearray(), bytearray())       # standard output; the head of standard error
+    tail = bytearray()                      # the last tail_keep bytes of standard error read past its head
+    seen, over = [0, 0], [False, False]     # bytes read from each stream; the stream passed its cap while the program ran
+    late = [False, False]                   # the stream passed its cap after the program had ended (by itself, or at the deadline)
     sel = _selectors.DefaultSelector()
     pending = memoryview(input) if input and proc.stdin is not None else None
     for index, stream in enumerate((proc.stdout, proc.stderr)):
@@ -1777,13 +1818,17 @@ def communicate_bounded(proc, seconds, input=None):
             sel.register(proc.stdin, _selectors.EVENT_WRITE, 2)
         else:
             _close_pipe(proc.stdin)
-    timed_out, note, ended, extra, cut, sampled = False, None, None, 0, False, 0.0
+    timed_out, note, ended, extra, cut, sampled, ended_at_cap = False, None, None, 0, False, 0.0, False
     try:
         while True:
             now = time.monotonic()
             if ended is None:
                 if proc.poll() is not None:
                     ended = now
+                elif over[0] or over[1]:
+                    ended_at_cap = True
+                    note = kill_tree(proc)
+                    ended = time.monotonic()
                 elif now >= deadline:
                     timed_out = True
                     note = kill_tree(proc)
@@ -1826,9 +1871,29 @@ def communicate_bounded(proc, seconds, input=None):
                 if not data:
                     sel.unregister(key.fileobj)
                     continue
-                bufs[key.data].extend(data)
+                index = key.data
+                seen[index] += len(data)
                 if ended is not None:
                     extra += len(data)
+                if index == 0:
+                    room = out_cap - len(bufs[0])
+                    if room > 0:
+                        bufs[0].extend(data[:room])
+                    if seen[0] > out_cap:
+                        over[0], late[0] = (over[0], True) if ended is not None else (True, late[0])
+                else:
+                    room = err_cap - tail_keep - len(bufs[1])
+                    if room > 0:
+                        bufs[1].extend(data[:room])
+                        data = data[room:]
+                    if data:
+                        tail.extend(data)
+                        if len(tail) > tail_keep:
+                            del tail[:len(tail) - tail_keep]
+                    if seen[1] > err_cap:
+                        over[1], late[1] = (over[1], True) if ended is not None else (True, late[1])
+                if (over[0] or over[1]) and ended is None:
+                    break           # the loop's head ends the program at once
         if any(key.data != 2 for key in sel.get_map().values()):
             reap_orphans(_pipe_inodes(proc))
             settle()
@@ -1844,10 +1909,27 @@ def communicate_bounded(proc, seconds, input=None):
     except subprocess.TimeoutExpired:
         pass
     settle()
+    # A stream that passed its cap only after the program had ended is cut too, unless the pipes were cut at POST_EXIT_BYTES: then what passed
+    # it is a process that held the pipe and went on writing, PIPE_CUT says so, and the program's own output was read whole.
+    for index in (0, 1):
+        over[index] = over[index] or (late[index] and not cut)
+    ending = "; the tool ended the program there" if ended_at_cap else ""
+    out_cut = ("the program printed more than %d bytes on its standard output; the tool kept the first %d and did not read the rest%s" % (
+        out_cap, len(bufs[0]), ending)) if over[0] else None
+    err_cut = ("the program printed more than %d bytes on its standard error; the tool kept the first %d and the last %d%s" % (
+        err_cap, len(bufs[1]), len(tail), ending)) if over[1] else None
+    for sentence in (out_cut, err_cut):
+        if sentence:
+            OUTPUT_CUT["cut"] += 1
+            OUTPUT_CUT["last"] = sentence
+            _note(sentence)
     err = bytes(bufs[1])
+    if over[1]:
+        err += b"\n[... %d bytes of standard error not kept ...]\n" % (seen[1] - len(bufs[1]) - len(tail))
+    err += bytes(tail)
     if note:
         err = err + (b"\n" if err else b"") + note.encode("utf-8", "replace")
-    return bytes(bufs[0]), err, timed_out
+    return _output(bufs[0], out_cut), _output(err, err_cut), timed_out     # (one copy of standard output, not two)
 
 
 def _close_pipe(pipe):
@@ -1894,19 +1976,19 @@ def _on_signal(signum, _frame):
     os._exit(128 + signum)
 
 
-def preflight(argv, seconds):
-    """Run a short program, bounded; (exit code or None, stdout bytes, stderr bytes, timed out)."""
+def preflight(argv, seconds, caps=None):
+    """Run a short program, bounded; (exit code or None, stdout bytes, stderr bytes, timed out). The outputs are communicate_bounded's (Output,
+    held to `caps`): a program ended because a stream passed its cap has that stream's `cut` set (output_cut()) and its own exit code."""
     try:
         proc = spawn(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except OSError as exc:
-        return None, b"", describe(exc).encode("utf-8", "replace"), False
+        return None, _output(b"", None), _output(describe(exc).encode("utf-8", "replace"), None), False
     ACTIVE.append(proc)
     try:
-        out, err, timed_out = communicate_bounded(proc, max(1.0, seconds))
+        out, err, timed_out = communicate_bounded(proc, max(1.0, seconds), caps=caps)
         return (None if timed_out else proc.returncode), out, err, timed_out
     finally:
         ACTIVE.remove(proc)
-
 
 def run_to_files(argv, stdout_path, stderr_path, seconds, cwd=None):
     """One program with its output in files, killed with what it started at `seconds`. (exit code, timed out)."""
@@ -2161,6 +2243,141 @@ def source_size(backup, file_id):
     return None
 
 
+# BEGIN SHARED SQLITE WATCH
+# A statement SQLite runs in C stops neither at the tool's clock nor at a stop signal by itself. A step of SQLite runs with the interpreter's
+# lock released: a progress handler is called only between the steps of SQLite's own program (one count(*) over a damaged b-tree is one
+# step, OP_Count; so is a page of PRAGMA integrity_check or quick_check), and a Python signal handler runs only when the main thread is back
+# in Python, so one step that walks a b-tree whose pages are reached from many parents neither ends at the clock nor answers a SIGTERM.
+# SqliteWatch is a thread that waits on the deadline and on the signal wake-up pipe (the C-level handler writes the signal's number to it,
+# whatever the main thread is doing) and calls interrupt() on every connection it watches: at the deadline, every TICK seconds after it (a
+# statement begun later is ended too), and when a stop signal (SIGTERM, SIGINT, SIGHUP) arrives; another signal (a SIGALRM of a regular
+# expression's clock) ends nothing. SQLite honours interrupt() inside such a walk: the step returns (sqlite3.OperationalError, "interrupted"),
+# and the tool's stop handler, already due, answers the stop. The thread holds the stop signals in its own mask, so that they reach the main
+# thread. A carrier makes one watch, SqliteWatch(deadline) (a callable that returns the time.monotonic() deadline or None, read on every
+# tick, so a deadline that moves is followed; or a number; or None for the stop signals only; on_interrupt(why), when given, is called in the
+# watch's thread just before it interrupts, so that a carrier whose progress handler names the reason sees it), watches every connection it opens on
+# evidence before its first statement (watch(conn); forget(conn) before it closes one), and closes the watch before it prints its answer
+# (close(), idempotent; or `with SqliteWatch(...) as watch:`). interrupted_by is None, "clock" or "stop". set_wakeup_fd works only in the
+# main thread: a watch made in another thread ends a statement at the clock only, and `note` says so.
+import os
+import select
+import signal
+import threading
+import time
+
+
+class SqliteWatch:
+    TICK = 0.25
+    STOP_SIGNALS = tuple(getattr(signal, name) for name in ("SIGTERM", "SIGINT", "SIGHUP") if hasattr(signal, name))
+
+    def __init__(self, deadline=None, on_interrupt=None):
+        self._deadline = deadline
+        self._on_interrupt = on_interrupt
+        self._conns = []
+        self._lock = threading.Lock()
+        self._done = threading.Event()
+        self._closed = False
+        self.interrupted_by = None                 # "clock" or "stop": the first reason this thread interrupted a statement
+        self.note = None                           # a sentence when a stop signal cannot end a statement here
+        self._read, self._write = os.pipe()
+        os.set_blocking(self._read, False)
+        os.set_blocking(self._write, False)
+        self._before, self._woken = -1, False
+        try:
+            self._before = signal.set_wakeup_fd(self._write, warn_on_full_buffer=False)
+            self._woken = True
+        except (ValueError, OSError) as exc:
+            self.note = "a stop signal does not end a statement SQLite runs in C here (%s: the watch was made outside the main thread); the clock does" % type(exc).__name__
+        self._thread = threading.Thread(target=self._watch, name="sqlite-watch", daemon=True)
+        self._thread.start()
+
+    def deadline(self):
+        """The deadline now (time.monotonic()), or None."""
+        value = self._deadline
+        try:
+            value = value() if callable(value) else value
+        except Exception:  # noqa: BLE001 - a deadline that cannot be read is no deadline
+            return None
+        return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+    def watch(self, conn):
+        with self._lock:
+            if conn is not None and not self._closed and all(c is not conn for c in self._conns):
+                self._conns.append(conn)
+        return conn
+
+    def forget(self, conn):
+        with self._lock:
+            self._conns = [c for c in self._conns if c is not conn]
+
+    def _interrupt(self, why):
+        with self._lock:
+            if self._on_interrupt is not None and self._conns:
+                try:
+                    self._on_interrupt(why)
+                except Exception:  # noqa: BLE001 - the reason is the carrier's to keep; the interrupt goes on without it
+                    pass
+            hit = False
+            for conn in self._conns:
+                try:
+                    conn.interrupt()
+                    hit = True
+                except Exception:  # noqa: BLE001 - a closed connection has nothing to end
+                    pass
+            if hit and self.interrupted_by is None:
+                self.interrupted_by = why
+
+    def _watch(self):
+        try:
+            signal.pthread_sigmask(signal.SIG_BLOCK, set(self.STOP_SIGNALS))
+        except (AttributeError, ValueError, OSError):
+            pass
+        while not self._done.is_set():
+            deadline = self.deadline()
+            left = self.TICK if deadline is None else deadline - time.monotonic()
+            if left <= 0:
+                self._interrupt("clock")
+            try:
+                ready = select.select([self._read], [], [], min(max(left, 0.0), self.TICK) or self.TICK)[0]
+            except (OSError, ValueError):
+                ready = []
+            if ready:
+                try:
+                    woke = os.read(self._read, 256)
+                except OSError:
+                    woke = b""
+                if any(number in self.STOP_SIGNALS for number in woke):
+                    self._interrupt("stop")
+
+    def close(self):
+        """Ends the thread and gives the wake-up pipe back, before the answer is printed."""
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            self._conns = []
+        self._done.set()
+        self._thread.join(timeout=2)
+        if self._woken:
+            try:
+                signal.set_wakeup_fd(self._before)
+            except (ValueError, OSError):
+                pass
+        for fd in (self._read, self._write):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        self.close()
+        return False
+# END SHARED SQLITE WATCH
+
+
 def child_main():
     os.umask(0o077)
     try:
@@ -2195,12 +2412,14 @@ def child_main():
     except Exception as exc:  # noqa: BLE001
         child_event(events, e="unlock_failed", stage="manifest", c=class_word(exc))
         return 0
+    # the child's clock is the wall clock the tool gave it (`until`): a statement SQLite runs in C is ended there, and at a stop (SQLITE WATCH)
+    watch = SqliteWatch(lambda: time.monotonic() + (until - time.time()))
     try:
         info = os.lstat(manifest)
         if not stat.S_ISREG(info.st_mode):
             raise OSError("not a regular file")
         os.chmod(manifest, 0o600)
-        conn = sqlite3.connect("file:%s?mode=ro&immutable=1" % quote(os.path.abspath(manifest)), uri=True)
+        conn = watch.watch(sqlite3.connect("file:%s?mode=ro&immutable=1" % quote(os.path.abspath(manifest)), uri=True))
         conn.set_progress_handler(lambda: 1 if time.time() > until else 0, 20000)
         conn.text_factory = lambda b: b.decode("utf-8", "surrogateescape")
         total = conn.execute("SELECT count(*) FROM Files").fetchone()[0]
@@ -2219,7 +2438,7 @@ def child_main():
     try:
         lookup_path = os.path.join(work, "lookup.db")
         shutil.copyfile(manifest, lookup_path)
-        lookup = sqlite3.connect(lookup_path)
+        lookup = watch.watch(sqlite3.connect(lookup_path))
         lookup.set_progress_handler(lambda: 1 if time.time() > until else 0, 20000)
         lookup.text_factory = lambda b: b.decode("utf-8", "surrogateescape")
         try:
@@ -2289,6 +2508,7 @@ def child_main():
             child_event(events, e="row", r=rowid, o="ok", b=made.st_size)
     except sqlite3.OperationalError:
         cut = "time"
+    watch.close()
     child_event(events, e="done", cut=cut, files=done_files, bytes=done_bytes)
     return 0
 
@@ -2621,8 +2841,9 @@ def main_inner():
     counts = {}
     problems = []
     manifest_ok, manifest_rows = False, 0
+    watch = SqliteWatch(read_deadline)      # the clock and a stop end a statement SQLite runs in C (a count over a damaged b-tree is one step): SQLITE WATCH
     try:
-        conn = sqlite3.connect("file:%s?mode=ro&immutable=1" % quote(str(manifest_path)), uri=True)
+        conn = watch.watch(sqlite3.connect("file:%s?mode=ro&immutable=1" % quote(str(manifest_path)), uri=True))
         conn.text_factory = lambda b: b.decode("utf-8", "surrogateescape")
 
         def guard():
@@ -2633,7 +2854,10 @@ def main_inner():
         conn.execute("SELECT count(*) FROM Files").fetchone()
         manifest_ok = True
     except Exception as exc:  # noqa: BLE001
-        problems.append("the decrypted Manifest.db did not open as SQLite here: %s" % class_word(exc))
+        if isinstance(exc, sqlite3.OperationalError) and time.monotonic() > read_deadline:
+            problems.append("the decrypted Manifest.db could not be counted in the time left: SQLite was interrupted at the clock")
+        else:
+            problems.append("the decrypted Manifest.db did not open as SQLite here: %s" % class_word(exc))
     cut = None
     if manifest_ok:
         try:
@@ -2690,6 +2914,7 @@ def main_inner():
         except Exception as exc:  # noqa: BLE001
             cut = "read"
             problems.append("the decrypted map could not be read to its end: %s" % class_word(exc))
+    watch.close()
     page = results.finish()
     remove_tree(str(work))
     if CLEANUP:

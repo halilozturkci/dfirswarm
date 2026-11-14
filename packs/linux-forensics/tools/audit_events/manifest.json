@@ -54,12 +54,12 @@
   "example": "{\"paths\": [\"work/extracted/var/log/audit/audit.log.1\", \"work/extracted/var/log/audit/audit.log\"], \"types\": [\"EXECVE\", \"USER_*\"]}",
   "by": "maintainer",
   "at": "2026-11-02T12:00:00.000Z",
-  "version": 8,
+  "version": 9,
   "use": {
     "names": [
       "audit.log",
       "audit.log.*"
     ]
   },
-  "sha256": "603fa0a4e10389d196dfe588e985733b845d8862b1568db75bc8732b3ffa3289"
+  "sha256": "bd010e79ca2c0a01cf3e0c294218ea93011a11ad7d8b5e4c9e8a5571f7ddde3b"
 }
