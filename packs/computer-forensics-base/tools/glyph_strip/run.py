@@ -1530,7 +1530,7 @@ def _unexpected_tool(kind, value, _tb):
 sys.excepthook = _unexpected_tool
 
 
-TOOL = {"name": "glyph_strip", "version": 11}
+TOOL = {"name": "glyph_strip", "version": 12}
 PARSER = "glyph_strip/5"
 DEFAULT_SECONDS, MAX_SECONDS = 50, 55           # under the manifest's 60
 OCR_SECONDS = 20
@@ -2525,7 +2525,7 @@ def jpeg_check(data, tick, budget):
 # the first), the tags of a size or a coding given once, strip tags or tile tags but not both (Pillow's own decoder takes the strips,
 # the walk would take the tiles), and one of: uncompressed (1) in photometric 0, 1, 2, 3 or 5, whose strips or tiles must hold the bytes
 # their rows need; JPEG (7) in photometric 0, 1, 2 or 6, of one plane, each strip or tile walked as a JPEG (the page's JPEGTables put
-# before its own data) whose frame is the strip's or tile's size with a component for each sample; or LZW, Deflate (either) or
+# before its own data) whose frame is the strip's or tile's size with a component for each sample; or LZW or
 # PackBits in photometric 0 to 3, which Pillow reads strip by strip through libtiff and which fail the read on data that does not
 # decode. Every other page is counted as not walked.
 TIFF_MAGICS = (b"II*\x00", b"MM\x00*", b"II+\x00", b"MM\x00+")
@@ -2664,10 +2664,13 @@ def _jpeg_frame(data):
 
 
 # The TIFF codecs whose decoder in Pillow's libtiff was shown to raise on a cut or damaged strip when Pillow reads the page strip by
-# strip (LZW, Adobe and zlib Deflate, PackBits): their pages need no walk of their own, in the photometric interpretations that keep
+# strip (LZW, PackBits): their pages need no walk of their own, in the photometric interpretations that keep
 # Pillow off libtiff's RGBA interface. Every other codec but none (1) and JPEG (7), which the walk takes, is counted as not walked:
 # CCITT (2, 3, 4) fills a damaged strip and says nothing.
-TIFF_CODECS_THAT_RAISE = (5, 8, 32773, 32946)
+TIFF_CODECS_THAT_RAISE = (5, 32773)
+# Deflate (8, 32946) is not on the list: libtiff stops when its output buffer is full, and the zero bits of a zeroed tail decode as symbols of a
+# dynamic Huffman block, so a page whose tail was overwritten is decoded as noise with nothing on stderr. It is counted as not walked.
+TIFF_SAMPLES_OF = {0: 1, 1: 1, 2: 3, 3: 1, 5: 4, 6: 3}      # the samples a photometric interpretation needs: no extra sample is walked
 TIFF_PHOTOMETRIC_STRIP_BY_STRIP = (0, 1, 2, 3)      # grey (either way), RGB, palette: not YCbCr (6), which Pillow reads through RGBA
 TIFF_PHOTOMETRIC_UNCOMPRESSED = (0, 1, 2, 3, 5)     # Pillow's own decoder, the bytes of whose rows the walk counts (5: CMYK)
 TIFF_PHOTOMETRIC_JPEG = (0, 1, 2, 6)                # libjpeg's frame of one plane, YCbCr given back as RGB by libjpeg itself
@@ -2695,6 +2698,17 @@ def tiff_check(data, pages, tick, budget):
             # a bit-reversed "L;R" gives "L"): a plane loses its width, its inversion or its bit order, with no error and nothing on stderr.
             raise JpegUnchecked("page %d is in separate planes (PlanarConfiguration %d); Pillow reads each plane without the page's "
                                 "inversion, bit order or sample width; the walk does not take it" % (page, planar))
+        depths, samples = tags.get(258) or [1], (tags.get(277) or [1])[0]
+        if len(depths) != samples or any(depth != depths[0] for depth in depths) or depths[0] not in (1, 2, 4, 8):
+            # Pillow's converters clip a 16-, 12- or 32-bit grey sample above 255 to 255 (a page of scanner values reads as white), take 16-bit
+            # WhiteIsZero without inverting it, and treat a count of depths that is not the count of samples in its own way.
+            raise JpegUnchecked("page %d has %d sample(s) of depths %s; the walk takes pages whose samples are all 1, 2, 4 or 8 bits" % (
+                page, samples, "/".join(str(depth) for depth in depths[:8])))
+        if samples != TIFF_SAMPLES_OF.get(photometric):
+            # More samples than the interpretation needs are extra samples: Pillow takes a fourth sample of an RGB page for alpha when ExtraSamples is
+            # missing (and flattens the picture on white), libtiff takes it as undefined and the picture as opaque.
+            raise JpegUnchecked("page %d has %d sample(s) in photometric interpretation %d, which needs %s; the walk does not take it" % (
+                page, samples, photometric, TIFF_SAMPLES_OF.get(photometric, "no number it takes")))
         if any(value != 1 for value in tags.get(339, [1])):
             # SampleFormat 2 (signed), 3 (floating point) or 4 (undefined): Pillow's mode table reads the bytes as unsigned integers.
             raise JpegUnchecked("page %d has a SampleFormat other than unsigned integer; Pillow reads those bytes as unsigned integers; the "

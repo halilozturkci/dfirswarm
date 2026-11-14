@@ -164,6 +164,12 @@ def planar_page(bits, kind284=3):
 files["planar 8"] = planar_page(8)
 files["planar 16"] = planar_page(16)
 files["planar tag of type byte"] = planar_page(8, 1) + bytes(3 * W * W)
+files["grey 16 bit"] = saved(im.convert("I;16"), compression="raw")      # Pillow clips a 16-bit sample above 255 to 255 when it makes an 8-bit picture
+rgba = saved(im.convert("RGBA"), compression="raw")
+files["rgb 4 samples no extrasamples"] = rewritten(rgba, [e for e in entries(rgba) if struct.unpack("<H", e[:2])[0] != 338])
+dfl = saved(im.convert("RGB"), compression="tiff_adobe_deflate")
+files["deflate whole"] = dfl
+files["deflate zeroed"] = zeroed(dfl)                                        # libtiff decodes the zero bits of a Huffman block as symbols, in silence
 files["strips whole"] = strips_page(W // 8)
 files["strips two of many"] = strips_page(2)
 files["strips half of many"] = strips_page(W // 16)
@@ -254,7 +260,7 @@ test("the Pillow gate passes a TIFF page only in a shape its walk takes: a tag n
           if (state === "zeroed" && report[name]!.printed) {
             assert.match(seen.row.picture_damaged, /it printed \d+ line\(s\) on its standard error while it decoded, the first: /, `${who}, ${name}`);
           } else {
-            assert.match(seen.row.jpeg_data_not_walked, /in photometric interpretation 6, which Pillow reads through libtiff's RGBA interface/, `${who}, ${name}`);
+            assert.match(seen.row.jpeg_data_not_walked, short === "deflate" ? /is coded with TIFF compression (8|32946)/ : /in photometric interpretation 6, which Pillow reads through libtiff's RGBA interface/, `${who}, ${name}`);
           }
         }
       }
@@ -305,6 +311,25 @@ test("the Pillow gate passes a TIFF page only in a shape its walk takes: a tag n
         assert.equal(seen.status, "partial", `${who}, ${name}: ${JSON.stringify(seen.row).slice(0, 600)}`);
         assert.match(seen.row.jpeg_data_not_walked, why, `${who}, ${name}`);
       }
+    }
+
+    // A 16-bit grey page (clipped to white), four samples of RGB with no ExtraSamples (taken for alpha by Pillow), and Deflate (a zeroed tail
+    // decodes as noise): none is walked.
+    for (const [name, why] of [["grey 16 bit", /has 1 sample\(s\) of depths 16; the walk takes pages whose samples are all 1, 2, 4 or 8 bits/],
+      ["rgb 4 samples no extrasamples", /has 4 sample\(s\) in photometric interpretation 2, which needs 3/],
+      ["deflate whole", /is coded with TIFF compression 8/]] as const) {
+      const { qr, glyph } = await both(run, out, file(name));
+      for (const [who, seen] of [["qr_read", qr], ["glyph_strip", glyph]] as const) {
+        assert.equal(seen.status, "partial", `${who}, ${name}: ${JSON.stringify(seen.row).slice(0, 600)}`);
+        assert.match(seen.row.jpeg_data_not_walked, why, `${who}, ${name}`);
+      }
+    }
+
+    // The zeroed Deflate page of this fixture is one Pillow refuses (the verifier's, with a tail that decodes as noise, it does not): never complete.
+    {
+      const { qr, glyph } = await both(run, out, file("deflate zeroed"));
+      assert.notEqual(qr.status, "complete", JSON.stringify(qr.row).slice(0, 600));
+      assert.notEqual(glyph.status, "complete", JSON.stringify(glyph.row).slice(0, 600));
     }
 
     // A PNG whose header chunk is 14 bytes (the built-in reader refuses it; Pillow takes it) and whose zlib stream ends after half
