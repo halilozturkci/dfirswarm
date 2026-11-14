@@ -10,7 +10,7 @@
  * Imager writes where the synthetic ones only mirror its assumptions. No case
  * evidence is read.
  */
-import test from "node:test";
+import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -59,9 +59,20 @@ function tree(): Ad1Node[] {
   }];
 }
 
+/** Every directory dir() made, removed when this file's tests end (left behind, they came to 18 GB on a host that ran the suite often). */
+const made: string[] = [];
 function dir(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), prefix));
+  const d = mkdtempSync(join(tmpdir(), prefix));
+  made.push(d);
+  return d;
 }
+after(() => {
+  for (const d of made) {
+    // A test may leave a directory read-only (a sealed tree, a refused write): make it writable first.
+    spawnSync("chmod", ["-R", "u+w", d]);
+    rmSync(d, { recursive: true, force: true });
+  }
+});
 
 function py(script: string, args: string[], env: Record<string, string> = {}): { code: number | null; out: string; err: string } {
   const r = spawnSync("python3", [script, ...args], { encoding: "utf8", env: { ...process.env, ...env } });
