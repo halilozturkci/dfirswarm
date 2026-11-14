@@ -3,6 +3,7 @@ id: persistence/mechanisms
 title: Where something arranges to run again
 when: Distinguish persistence configuration, registration, enabled state and execution.
 needs: []
+card: plist_read on a launch plist: configuration is not registration, enablement or execution. ProgramArguments and EnvironmentVariables can hold credentials it prints: sweep as a job with secret_output: true, cite file and key. Does not show: execution, intent or compromise.
 tools: [plist_read]
 requires_host: []
 ---

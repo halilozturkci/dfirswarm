@@ -3,6 +3,7 @@ id: artifacts/knowledgec-fields-time
 title: KnowledgeC row fields and time columns
 when: Read the values, metadata and dates of a KnowledgeC row from knowledgec_query.
 needs: []
+card: knowledgec_query dates are commonly seconds since 2001-01-01 UTC: keep the raw start, end and creation; creation time is not the activity time, and utc_offset_seconds is not to be applied again. since and until select by start. A partial read goes on with after_start_raw and after_z_pk from resume. Does not show: an epoch you did not confirm.
 tools: [knowledgec_query, timestamp_decode]
 requires_host: []
 ---

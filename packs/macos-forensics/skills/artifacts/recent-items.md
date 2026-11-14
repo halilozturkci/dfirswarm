@@ -3,6 +3,7 @@ id: artifacts/recent-items
 title: Recent items, shared file lists and bookmarks
 when: A question is which files, folders, applications or sites a user opened recently.
 needs: []
+card: macos_login_items resolves background-item archives only: a bookmark or alias by length and magic, never decoded; an unresolvable reference is a row with the reason. A file it could not resolve is named and the answer partial; an empty answer is not "no login items". A stored reference is not an open, by whom or when. Does not show: what was read, or that an absent item was never used.
 tools: [plist_read, macos_login_items, safari_history]
 requires_host: []
 ---

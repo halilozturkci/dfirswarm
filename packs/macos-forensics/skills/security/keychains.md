@@ -3,6 +3,7 @@ id: security/keychains
 title: macOS keychains, identification and opening
 when: A keychain file is in the evidence, or an answer needs what a Mac's keychain held.
 needs: []
+card: keychain_open opens a kych keychain only with the case's login password (password_file) or, for the System keychain, its system_key; every job is secret output. opened is the only complete outcome; partial means records not decrypted or a process left behind; wrong_secret is not proof the password is wrong; unsupported_format is the Local Items store. Never try passwords you were not given. Does not show: that an item was used, when or by whom.
 tools: [keychain_open, plist_read]
 requires_host: [chainbreaker]
 ---
