@@ -95,6 +95,12 @@ The job service takes a sensitive commit into the run's sensitive index right af
 background: after a 200,000-file sensitive commit the next job's decision takes under a millisecond (it took about 200 ms).
 A job's `job.json` is written to a temporary file and renamed into place, so a reader never finds it cut.
 
+### Fixed: two recipes given a pipe answer at once
+
+`first-stage-candidates` (computer-forensics-base 1.17.19) answers `unknown` for a target that is neither a directory nor a regular
+file, and `linux-target` (linux-forensics 1.12.12) does not hand a pipe or a socket to target-query, which waited on it for 240 s in
+the worker image.
+
 ### Changed: every image holds a disassembler of more than one architecture
 
 computer-forensics-base 1.17.18 declares radare2 6.2.2 (upstream's package per architecture, a pinned download), so each image
