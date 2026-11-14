@@ -447,7 +447,7 @@ sys.excepthook = _unexpected_tool
 install_signal_handlers(lambda signum: (kill_decoder(), interrupted_answer(signum)))
 
 
-TOOL = {"name": "qr_read", "version": 7}
+TOOL = {"name": "qr_read", "version": 8}
 PARSER = "qr_read/5"
 DEFAULT_SECONDS, MAX_SECONDS = 90, 100          # under the manifest's 120
 MAX_INPUTS = 64
@@ -1047,7 +1047,7 @@ def clock_deadline():
 # Every format, and every TIFF shape, is in one of three groups:
 #   walked by the tool:    PNG (every PNG Pillow decodes has its image data, and each animation frame's, inflated and measured against
 #                          what its rows need: png_check); JPEG, the first picture of the file (its coded data walked block by block:
-#                          jpeg_check); TIFF pages whose shape is on the allowlist in tiff_check: uncompressed (byte counts against
+#                          jpeg_check); TIFF pages whose shape is on the allowlist in tiff_check: uncompressed (as many pieces as its size needs, byte counts against
 #                          the rows, Pillow's own decoder) and JPEG (each strip or tile walked as a JPEG, its frame the strip's or
 #                          tile's size).
 #   shown to raise:        GIF and BMP (and BMP's RLE) data cut short; WebP cut short; TIFF pages coded with LZW, either Deflate or
@@ -1584,6 +1584,12 @@ def _tiff_needs(tags, tiled, pieces):
     per_row = -(-width // across)
     per_plane = per_row * -(-height // down)
     stride = -(-across * bits // 8)
+    expected = per_plane * (samples if planar else 1)
+    if pieces != expected:
+        # Pillow's decoder sets up one tile for each offset the directory names and writes nothing for the rest: the rows no piece holds stay
+        # black, with no error and nothing on stderr.
+        raise JpegUnchecked("an uncompressed page holds %d %s%s where its size needs %d; the walk does not take it" % (
+            pieces, "tile" if tiled else "strip", "" if pieces == 1 else "s", expected))
 
     def need(k):
         k %= per_plane

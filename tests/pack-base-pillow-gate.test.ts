@@ -128,6 +128,24 @@ def raw_page(tiles):
     at = len(out); struct.pack_into("<I", out, 4, at)
     out += struct.pack("<H", len(tags)) + b"".join(entry(*t) for t in tags) + b"\x00\x00\x00\x00"
     return bytes(out)
+def strips_page(named):
+    """An 8-bit grey page of strips of 8 rows, whose directory names only the first N of them (the rest of the rows are in no strip)."""
+    R = 8; pieces = [pix[y * W:(y + R) * W] for y in range(0, W, R)]
+    out = bytearray(b"II*\x00\x00\x00\x00\x00"); offs = []
+    for piece in pieces[:named]:
+        offs.append(len(out)); out += piece
+    if len(out) % 2: out += b"\x00"
+    where_offs = len(out); out += b"".join(struct.pack("<I", o) for o in offs)
+    where_counts = len(out); out += b"".join(struct.pack("<I", len(piece)) for piece in pieces[:named])
+    tags = [(256, 3, W), (257, 3, W), (258, 3, 8), (259, 3, 1), (262, 3, 1), (277, 3, 1), (278, 3, R)]
+    ents = [entry(*t) for t in tags] + [struct.pack("<HHII", 273, 4, named, where_offs), struct.pack("<HHII", 279, 4, named, where_counts)]
+    ents.sort(key=lambda e: struct.unpack("<H", e[:2])[0])
+    at = len(out); struct.pack_into("<I", out, 4, at)
+    out += struct.pack("<H", len(ents)) + b"".join(ents) + b"\x00\x00\x00\x00"
+    return bytes(out)
+files["strips whole"] = strips_page(W // 8)
+files["strips two of many"] = strips_page(2)
+files["strips half of many"] = strips_page(W // 16)
 files["raw strip whole"] = raw_page(False)
 files["raw strip and tiles"] = raw_page(True)
 rows = b"".join(b"\x00" + pix[y * W:(y + 1) * W] for y in range(W))
@@ -175,14 +193,14 @@ test("the Pillow gate passes a TIFF page only in a shape its walk takes: a tag n
   await withRun(async (run, out) => {
     const report = JSON.parse(withPillow(BUILD, [join(ROOT, "scripts", "lib"), join(run, "work/s1")], run)) as Record<string, { loads: boolean; printed: boolean }>;
     // Each damaged case is one Pillow takes without an error: that is the case.
-    for (const name of ["g4 twice zeroed", "ycc lzw zeroed", "ycc deflate zeroed", "ycc packbits zeroed", "jpeg strip short", "raw strip and tiles", "header 14 half.png"]) {
+    for (const name of ["g4 twice zeroed", "ycc lzw zeroed", "ycc deflate zeroed", "ycc packbits zeroed", "jpeg strip short", "raw strip and tiles", "header 14 half.png", "strips two of many", "strips half of many"]) {
       assert.ok(report[name]!.loads, `Pillow does not load ${name} here, so it is not the case this test holds`);
     }
     const file = (name: string): string => (name.endsWith(".png") ? name : name + ".tif");
 
     // The whole controls: the shapes the walk takes (LZW in RGB, one JPEG strip of the page's size, an uncompressed strip, a PNG
     // whose header chunk is 14 bytes) are complete in both tools, and Pillow's decoder printed nothing on them.
-    for (const name of ["rgb lzw whole", "jpeg strip whole", "raw strip whole", "header 14 whole.png"]) {
+    for (const name of ["rgb lzw whole", "jpeg strip whole", "raw strip whole", "strips whole", "header 14 whole.png"]) {
       assert.equal(report[name]!.printed, false, `${name}: libtiff printed on a whole file`);
       const { qr, glyph } = await both(run, out, file(name));
       assert.equal(qr.status, "complete", `qr_read, ${name}: ${JSON.stringify(qr.row).slice(0, 600)}`);
@@ -238,6 +256,16 @@ test("the Pillow gate passes a TIFF page only in a shape its walk takes: a tag n
       for (const [who, seen] of [["qr_read", qr], ["glyph_strip", glyph]] as const) {
         assert.equal(seen.status, "partial", `${who}: ${JSON.stringify(seen.row).slice(0, 600)}`);
         assert.match(seen.row.jpeg_data_not_walked, /^page 1 holds both strip and tile tags/, who);
+      }
+    }
+
+    // An uncompressed page whose directory names fewer strips than its size needs: Pillow's decoder sets up one tile for each strip named
+    // and leaves the rows no strip holds black, with no error and nothing printed.
+    for (const name of ["strips two of many", "strips half of many"]) {
+      const { qr, glyph } = await both(run, out, file(name));
+      for (const [who, seen] of [["qr_read", qr], ["glyph_strip", glyph]] as const) {
+        assert.equal(seen.status, "partial", `${who}, ${name}: ${JSON.stringify(seen.row).slice(0, 600)}`);
+        assert.match(seen.row.jpeg_data_not_walked, /^an uncompressed page holds \d+ strips where its size needs \d+; the walk does not take it/, `${who}, ${name}`);
       }
     }
 
