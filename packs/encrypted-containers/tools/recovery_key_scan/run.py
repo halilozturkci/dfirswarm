@@ -1834,6 +1834,7 @@ def scan_stream(fh, budget, stats):
 WALK_CHUNK = 10_000   # entries held and name-sorted at once; bounds memory on a huge flat directory
 
 
+UNREACHED_NAMED = 2000   # how many of the entries and directories a stop left unreached are named one by one; the rest are counted and said in one row
 WALK_CLOCK_EVERY = 256   # the walk reads the clock after this many directories and entries it looked at without yielding a file to read
 
 
@@ -2110,12 +2111,21 @@ def main():
             # read may hold more entries beyond that chunk, the directory itself (how many more is not known either,
             # without a read this stop is meant to avoid).
             rest, unentered, maybe_more = walker.unreached()
-            for item in rest:
-                counters["entries_not_started"] += 1
+            # The lists are as long as the input (300,000 directories waiting made this loop alone outlast the grace after the clock, and the
+            # hard stop then answered without the findings): the first UNREACHED_NAMED of each are named, the rest are counted in coverage and
+            # in one row that says how many were not named.
+            for item in rest[:UNREACHED_NAMED]:
                 exceptions.add({"path": shown(item), "status": "not started", "reason": "%s before this entry was looked at" % stopped_why})
-            for item in unentered:
-                counters["directories_not_entered"] += 1
+            counters["entries_not_started"] += len(rest)
+            if len(rest) > UNREACHED_NAMED:
+                exceptions.add({"path": "(%d more entries)" % (len(rest) - UNREACHED_NAMED), "status": "not started",
+                                "reason": "%s before these entries were looked at; they are counted in coverage.entries_not_started and not named (the first %d are)" % (stopped_why, UNREACHED_NAMED)})
+            for item in unentered[:UNREACHED_NAMED]:
                 exceptions.add({"path": shown(item), "status": "not started", "what": "directory", "reason": "%s before this directory was entered: nothing under it was read" % stopped_why})
+            counters["directories_not_entered"] += len(unentered)
+            if len(unentered) > UNREACHED_NAMED:
+                exceptions.add({"path": "(%d more directories)" % (len(unentered) - UNREACHED_NAMED), "status": "not started", "what": "directory",
+                                "reason": "%s before these directories were entered: nothing under them was read; they are counted in coverage.directories_not_entered and not named (the first %d are)" % (stopped_why, UNREACHED_NAMED)})
             if maybe_more is not None:
                 counters["directories_not_entered"] += 1
                 exceptions.add({"path": shown(maybe_more), "status": "not started", "what": "directory (partially read)",

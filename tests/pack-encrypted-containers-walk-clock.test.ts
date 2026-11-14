@@ -6,7 +6,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -43,4 +43,26 @@ test("the walk reads the clock among entries it does not yield, and leaves the r
   const whole = spawnSync("python3", ["-c", PROBE, TOOL, top, "60"], { encoding: "utf8" });
   const b = JSON.parse(whole.stdout);
   assert.deepEqual([b.stopped, b.yielded, b.skipped, b.rest, b.unentered], [false, 1, 3000, 0, 0], "with time left every entry is looked at");
+});
+
+test("a stop with many directories waiting names the first 2,000 and counts the rest, so the answer comes before the hard stop and keeps what was found", () => {
+  const top = join(mkdtempSync(join(tmpdir(), "rks-dirs-")), "top");
+  // 6,000 directories in the top one, and a file that sorts after them: the walk has found every directory when it reaches the file.
+  mkdirSync(top, { recursive: true });
+  for (let i = 0; i < 6000; i += 1) mkdirSync(join(top, `d${String(i).padStart(5, "0")}`));
+  writeFileSync(join(top, "zz.txt"), "note\n");
+  const out = mkdtempSync(join(tmpdir(), "rks-out-"));
+  // A clock that moves half a second every time the tool looks at it: the stop comes at once, with every directory still waiting.
+  const site = mkdtempSync(join(tmpdir(), "rks-site-"));
+  writeFileSync(join(site, "sitecustomize.py"), "import time\n_t = [0.0]\ndef monotonic():\n    _t[0] += 0.5\n    return _t[0]\ntime.monotonic = monotonic\n");
+  const r = spawnSync("python3", [TOOL], { input: JSON.stringify({ path: top, max_seconds: 1 }), encoding: "utf8", env: { ...process.env, OUT: out, JOB_ID: "j000001", AGENT_ID: "s1", PYTHONPATH: site }, maxBuffer: 64 << 20 });
+  assert.equal(r.status, 0, r.stderr);
+  const a = JSON.parse(r.stdout);
+  assert.equal(a.status, "partial");
+  assert.notEqual(a.hard_stopped, true);
+  // The clock is read every 256 entries, so the stop leaves thousands of entries of the chunk unreached: the first 2,000 are named, the rest counted.
+  assert.ok(a.coverage.entries_not_started > 2000, JSON.stringify(a.coverage));
+  const all = readFileSync(join(out, a.pages.exceptions.all_results.replace(/^.*\/out\//, "")), "utf8").trimEnd().split("\n").map((l) => JSON.parse(l) as { path: string; reason: string });
+  assert.ok(all.length <= 2 * 2000 + 4, `${all.length} rows written`);
+  assert.ok(all.some((r) => /^\(\d+ more entries\)$/.test(r.path)), "one row says how many entries were not named");
 });

@@ -1,7 +1,7 @@
 {
   "id": "encrypted-containers",
   "name": "Encrypted Containers Pack",
-  "version": "1.14.15",
+  "version": "1.14.16",
   "description": "Telling one kind of encryption from another: volume headers and their key protectors, LUKS key slots, the container that has no signature at all, password-protected archives and documents, and where key material the case supplies may already be.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -56,8 +56,8 @@
       "tools/materialise_decrypted/run.py": "e5cb7ec8c0bb6a6a3e82a56d9f8b35678c962616420a9db45e06601e638e12fa",
       "tools/password_recover/manifest.json": "b2c7f71cadb622ae824f5ec97c6ff847f3b7709d56ed6fc1cfed33a241da60ff",
       "tools/password_recover/run.py": "a65addf7c2c11bf1e1eb1064c32af21a6e7d9538312ebfc89e7982f46d684453",
-      "tools/recovery_key_scan/manifest.json": "08efff9a52055a0d5eeb032824903f43e7d67f854db4256563dc7dd6327d4301",
-      "tools/recovery_key_scan/run.py": "2c45228f9c1d5def5c71af199e5b51ef91c6fe2c8b251f73a44f3f79f245e823",
+      "tools/recovery_key_scan/manifest.json": "eba5071e682846baeb2aa58108437d6a8e8b44d734460e527925204eb742cea5",
+      "tools/recovery_key_scan/run.py": "664cbccd48d2acdc6471f46767cbc90625664b505393882e4666eaaa1e11e5a0",
       "tools/tcrypt_header/manifest.json": "434fa224d904a975453ab112ac751f7cc837d2ab07b17ea6960fc874b332adf4",
       "tools/tcrypt_header/run.py": "ef10fd424f6238e9f0038b5ad31622d1452d6d087cdaca9ee98144c00e98004e"
     }
