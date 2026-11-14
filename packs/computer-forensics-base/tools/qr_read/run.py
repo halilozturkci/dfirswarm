@@ -447,7 +447,7 @@ sys.excepthook = _unexpected_tool
 install_signal_handlers(lambda signum: (kill_decoder(), interrupted_answer(signum)))
 
 
-TOOL = {"name": "qr_read", "version": 12}
+TOOL = {"name": "qr_read", "version": 13}
 PARSER = "qr_read/5"
 DEFAULT_SECONDS, MAX_SECONDS = 90, 100          # under the manifest's 120
 MAX_INPUTS = 64
@@ -1722,6 +1722,17 @@ def tiff_check(data, pages, tick, budget):
         tables = tags.get(347)
         if tables is not None and (tables[:2] != b"\xff\xd8" or tables[-2:] != b"\xff\xd9"):
             raise JpegUnchecked("page %d: its JPEGTables are not a JPEG of tables (start and end markers)" % page)
+        if tables is not None:
+            # The tables are put before each strip's own data, so a restart interval (DRI) set in them would stand for the walk and be reset at the
+            # strip's own start of image by libjpeg: only quantization and Huffman tables, comments and application data are walked as tables.
+            at = 2
+            while at < len(tables) - 2:
+                marker = tables[at + 1] if tables[at] == 0xFF else None
+                length = int.from_bytes(tables[at + 2:at + 4], "big")
+                if marker is None or length < 2 or at + 2 + length > len(tables) - 2 or not (marker in (0xDB, 0xC4, 0xFE) or 0xE0 <= marker <= 0xEF):
+                    raise JpegUnchecked("page %d: its JPEGTables hold a segment (marker %s) other than quantization or Huffman tables, a comment or application data; "
+                                        "the walk does not take it" % (page, "0x%02X" % marker if marker is not None else "missing"))
+                at += 2 + length
         for k, (start, length) in enumerate(zip(offsets, counts)):
             tick()
             if budget() <= 0:
@@ -1906,8 +1917,8 @@ def _decode_frames(data, image_module, fd, frames):
         try:
             while True:
                 width, height = image.size
-                _send(fd, b"H", struct.pack(">II", width, height))
                 if width * height > MAX_PIXELS or height > MAX_ROWS:
+                    _send(fd, b"H", struct.pack(">II", width, height))
                     return                     # the tool refuses it by the size it was sent
                 image.load()
                 frame = image
@@ -1916,6 +1927,9 @@ def _decode_frames(data, image_module, fd, frames):
                     flat = image_module.new("RGB", frame.size, (255, 255, 255))
                     flat.paste(frame, mask=frame.split()[3])
                     frame = flat
+                # The size is sent after the load: Pillow 12.3 reads an orientation from a TIFF's XMP (tag 700) when there is no Orientation tag,
+                # and load() then transposes the picture, which swaps its size; rows cut at the size from before it would be scrambled.
+                _send(fd, b"H", struct.pack(">II", frame.size[0], frame.size[1]))
                 _send(fd, b"F", frame.convert("L").tobytes())
                 k += 1
                 try:

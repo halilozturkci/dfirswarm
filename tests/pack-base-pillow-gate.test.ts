@@ -185,6 +185,13 @@ def damaged_middle(data):
     t = Image.open(io.BytesIO(data)); o, c = t.tag_v2[273][0], t.tag_v2[279][0]; out = bytearray(data); mid = o + c // 2
     out[mid:mid + 4] = bytes(4); return bytes(out)
 files["lzw damaged in the middle"] = damaged_middle(lzw_pages)
+def with_tables(data, tables):
+    """The page with a JPEGTables entry (tag 347) pointing at the tables bytes, appended to the file."""
+    body = bytes(data) + (b"\x00" if len(data) % 2 else b"")
+    at = len(body)
+    ents = sorted(entries(data) + [struct.pack("<HHII", 347, 7, len(tables), at)], key=lambda e: struct.unpack("<H", e[:2])[0])
+    return rewritten(body + tables, ents)
+files["jpeg tables with a restart interval"] = with_tables(files["jpeg strip whole"], b"\xff\xd8\xff\xdd\x00\x04\x00\x01\xff\xd9")
 files["strips whole"] = strips_page(W // 8)
 files["strips two of many"] = strips_page(2)
 files["strips half of many"] = strips_page(W // 16)
@@ -371,6 +378,16 @@ test("the Pillow gate passes a TIFF page only in a shape its walk takes: a tag n
       assert.notEqual(glyph.status, "complete", JSON.stringify(glyph.row).slice(0, 600));
     }
 
+    // JPEGTables that hold a restart interval (DRI): the tables are put before each strip's data by the walk, libjpeg resets the interval at the
+    // strip's own start of image, so the two read different pictures.
+    {
+      const { qr, glyph } = await both(run, out, file("jpeg tables with a restart interval"));
+      for (const [who, seen] of [["qr_read", qr], ["glyph_strip", glyph]] as const) {
+        assert.equal(seen.status, "partial", `${who}: ${JSON.stringify(seen.row).slice(0, 600)}`);
+        assert.match(seen.row.jpeg_data_not_walked, /its JPEGTables hold a segment \(marker 0xDD\) other than quantization or Huffman tables/, who);
+      }
+    }
+
     // A PNG whose header chunk is 14 bytes (the built-in reader refuses it; Pillow takes it) and whose zlib stream ends after half
     // the rows: its image data is measured all the same.
     {
@@ -412,6 +429,41 @@ finally:
     stream.close()
 print(json.dumps({"damage": frame.damage, "by": frame.damage_by, "size": [frame.width, frame.height]}))
 `;
+
+/**
+ * The size the decoding child sends is the size after load(): Pillow 12.3 reads an orientation from a TIFF's XMP (tag 700) when there is no
+ * Orientation tag and load() then transposes the picture, which swaps its size. Rows cut at the size from before the load were scrambled.
+ * Held without Pillow 12.3: a stand-in picture whose size swaps in load().
+ */
+const SWAP = String.raw`
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("gate_under_test", sys.argv[1])
+tool = importlib.util.module_from_spec(spec); spec.loader.exec_module(tool)
+class Pic:
+    mode, info = "L", {}
+    def __init__(self): self.size = (4, 2)
+    def load(self): self.size = (2, 4)                      # the transposition made in load()
+    def convert(self, mode): return self
+    def seek(self, k): raise EOFError
+    def tobytes(self): return bytes(range(8))
+class StandIn:
+    def open(self, fp, formats=None): return Pic()
+    def new(self, *a, **k): raise AssertionError("not used")
+stream = tool.PillowFrames(b"not read by the stand-in", StandIn(), 1)
+try:
+    frame = stream.next_frame()
+finally:
+    stream.close()
+print(json.dumps({"size": [frame.width, frame.height], "first_row": list(frame.gray[0])}))
+`;
+
+test("the size the decoding child sends is the size after load(), so a picture the load transposes is cut into rows at its new width", { skip: pillowHere ? false : "Pillow does not import here" }, () => {
+  for (const tool of ["qr_read", "glyph_strip"]) {
+    const r = spawnSync(PYTHON3, ["-c", SWAP, join(ROOT, "packs", "computer-forensics-base", "tools", tool, "run.py")], { encoding: "utf8" });
+    assert.equal(r.status, 0, `${tool}: ${r.stderr.slice(-600)}`);
+    assert.deepEqual(JSON.parse(r.stdout), { size: [2, 4], first_row: [0, 1] }, tool);
+  }
+});
 
 test("the safety net: a line a decoder prints on the decoding child's standard error makes the frame damaged; a note on an unknown tag and silence do not", { skip: pillowHere ? false : "Pillow does not import here" }, () => {
   for (const name of ["qr_read", "glyph_strip"]) {
