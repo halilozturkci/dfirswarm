@@ -1207,6 +1207,8 @@ def cell(value):
 # the copies equal). A path is printed only through shown(): every component is judged, and no directory above a file is exempt.
 # Everything derived from a name that is withheld (an extension, a stem, a length, the place of the name among its siblings) is withheld
 # with it: a name that is withheld is replaced by one constant marker, and the order of a listing never follows the text that was withheld.
+import heapq
+
 WITHHELD = "<identifier-shaped name withheld>"
 WITHHELD_PATHS = [0]              # printed paths that had a component withheld (one per call of shown)
 _IDRUN = re.compile(r"[A-Za-z0-9]{8,}")
@@ -1344,38 +1346,87 @@ def shown(path, values=(), keep_last=False, count=True):
 
 
 _ORDER_SALT = os.urandom(16)
+# A directory is read through listing() and put in order through print_order(), both under the tool's clock (out_of_time of the STOP block, or
+# the clock a caller names): one directory of two million entries was held whole (900 MB) and had every name judged (a minute) past a clock
+# of two seconds, because a walk reads its clock between entries and the listing and the order came before the first.
+MAX_LISTED = 1 << 18              # entries of one directory held at once (an entry with its name and path is a few hundred bytes)
+NAMES_CUT = {"not_judged": 0}     # entries print_order put in order without judging their name, because the clock had run out
 
 
-def print_order(entries, judged, hidden=None):
+def _rank(path):
+    """A keyed hash of a whole path under the salt of this run: an order drawn afresh every run, unrelated to the name and to the listing."""
+    return hashlib.blake2b(path.encode("utf-8", "surrogatepass"), key=_ORDER_SALT, digest_size=8).digest()
+
+
+def listing(it, late=None):
+    """The entries of one directory (`it`, an os.scandir iterator) that a walk examines: read under the clock (`late`, the tool's out_of_time
+    unless given, read for every entry) and at most MAX_LISTED of them held. Past the bound the directory is read on only to be counted, and
+    the entries kept are the MAX_LISTED of the smallest keyed hash of their path (_rank): which entries the bound keeps follows neither a name
+    nor the order the directory lists them in. Returns (entries, not_kept, cut): not_kept is how many entries were read and not kept, and cut
+    is True when the clock ended the reading (the entries after it are not known, not even their number)."""
+    late = late or out_of_time
+    held, heap, read, cut = [], None, 0, False
+    for entry in it:
+        if late():
+            cut = True
+            break
+        read += 1
+        if heap is None:
+            held.append(entry)
+            if len(held) > MAX_LISTED:
+                heap = [(-int.from_bytes(_rank(e.path), "big"), n, e) for n, e in enumerate(held)]
+                held = None
+                heapq.heapify(heap)
+                heapq.heappop(heap)                   # the largest hash goes: the heap keeps the smallest, the largest of them on top
+        else:
+            key = -int.from_bytes(_rank(entry.path), "big")
+            if key > heap[0][0]:
+                heapq.heapreplace(heap, (key, read, entry))
+    if heap is not None:
+        held = [k[2] for k in heap]
+    return held, read - len(held), cut
+
+
+def print_order(entries, judged, hidden=None, late=None):
     """The directory entries in the order an answer prints them: by the text printed for each (the marker for a name that is judged
     and withheld, the name itself otherwise; `judged(entry)` says whether the answer prints the entry's name through the judge;
     `hidden(entry)`, when given, says that a name the first rule lets through is withheld all the same, because the note beneath it holds
     its value: it sorts as the marker does), and the entries that print alike in an order drawn afresh every run (a keyed hash of the whole
     path, the directory above included, under a salt of this run: the same name in two directories has two unrelated ranks). The rank of a
     withheld name among its siblings, the order a directory lists them in and the inode never show in what an answer lists, in the
-    order of its rows, in the numbers it hands out or in which entries a limit keeps."""
-    texts = []
-    for entry in entries:
+    order of its rows, in the numbers it hands out or in which entries a limit keeps. The judging runs under the clock (`late`, the tool's
+    out_of_time unless given), read for every entry: once it has run out, the entries not judged yet come after the judged ones in the order
+    of the keyed hash alone, each is counted in NAMES_CUT["not_judged"], and the caller says so and makes its answer partial (a walk on the
+    same clock examines none of them)."""
+    late = late or out_of_time
+    keyed, rest = [], []
+    for n, entry in enumerate(entries):
+        if rest or late():
+            rest.append((_rank(entry.path), n))
+            continue
         name = entry.name
         try:
             if hidden is not None and hidden(entry):
-                texts.append(WITHHELD)
+                text = WITHHELD
             else:
-                texts.append((_judge(name) or name) if judged(entry) else name)
+                text = (_judge(name) or name) if judged(entry) else name
         except OSError:
-            texts.append(_judge(name) or name)
-    order = sorted(range(len(entries)), key=texts.__getitem__)
+            text = _judge(name) or name
+        keyed.append((text, n))
+    NAMES_CUT["not_judged"] += len(rest)
+    keyed.sort()
     out, i = [], 0
-    while i < len(order):
+    while i < len(keyed):
         j = i + 1
-        while j < len(order) and texts[order[j]] == texts[order[i]]:
+        while j < len(keyed) and keyed[j][0] == keyed[i][0]:
             j += 1
-        group = order[i:j]
+        group = [n for _, n in keyed[i:j]]
         if len(group) > 1:
-            group.sort(key=lambda n: (hashlib.blake2b(entries[n].path.encode("utf-8", "surrogatepass"), key=_ORDER_SALT, digest_size=8).digest(), n))
+            group.sort(key=lambda n: (_rank(entries[n].path), n))
         out.extend(group)
         i = j
-    return [entries[n] for n in out]
+    rest.sort()
+    return [entries[n] for n in out] + [entries[n] for _, n in rest]
 # END SHARED NAMES
 
 
@@ -2261,7 +2312,8 @@ def decide(size, scanned, known, fmt_result):
 
 
 def walk_tree(root, counters, stopped):
-    """(relative path, full path) for each entry under `root`, directories listed in print order; nothing is followed."""
+    """(relative path, full path) for each entry under `root`, directories listed in print order; nothing is followed. A directory is read
+    through listing() (under the clock, at most MAX_LISTED of its entries held): the entries past the bound are counted, not examined."""
     stack = [""]
     seen = 0
     while stack:
@@ -2272,10 +2324,19 @@ def walk_tree(root, counters, stopped):
         directory = os.path.join(root, rel) if rel else root
         try:
             with os.scandir(directory) as it:
-                entries = print_order(list(it), judged_entry)
+                entries, not_kept, cut = listing(it)
+            entries = print_order(entries, judged_entry)
         except OSError:
             counters["directories_failed"] += 1
             continue
+        if cut:
+            stopped["directories_not_entered"] = len(stack) + 1
+            stopped["entries_not_examined"] = len(entries)
+            stopped["tree_not_fully_walked"] = True
+            return
+        if not_kept:
+            counters["directories_over_entry_bound"] += 1
+            counters["entries_not_listed"] += not_kept
         subdirs = []
         for e in entries:
             if out_of_time():
@@ -2521,7 +2582,7 @@ def main():
     counters = {"items_named": 0, "items_checked": 0, "items_partial": 0, "items_not_checked": 0, "bytes_read": 0,
                 "verdicts": collections.Counter({v: 0 for v in VERDICTS}), "partial_by_reason": collections.Counter(),
                 "directories_failed": 0, "not_checked_by_reason": collections.Counter(),
-                "ciphertexts_unread": 0, "ciphertext_reasons": collections.Counter()}
+                "ciphertexts_unread": 0, "ciphertext_reasons": collections.Counter(), "directories_over_entry_bound": 0, "entries_not_listed": 0}
     PROGRESS["coverage"] = counters
     scratch = output_place(TOOL + "-scratch", ["s"])[0].parent
     ctx = {"counters": counters, "granule": granule, "budget": budget, "profile": profile, "check_sqlite": check_sqlite_flag, "scratch": scratch}
@@ -2568,6 +2629,10 @@ def main():
         reasons.append("the time limit (max_seconds %d) was reached while the tree was walked: files after the last one checked are not in the answer" % max_seconds)
     if stopped.get("entry_bound"):
         reasons.append("the tree holds more than %d entries: the walk stopped there" % stopped["entry_bound"])
+    if c["entries_not_listed"]:
+        reasons.append("%d directories hold more than %d entries, the most this tool holds for one directory: %d of their entries were not "
+                       "examined (the entries kept are drawn by a keyed hash of their path, not by name or by the order the directory lists them in)"
+                       % (c["directories_over_entry_bound"], MAX_LISTED, c["entries_not_listed"]))
     if c["directories_failed"]:
         reasons.append("%d directories could not be listed" % c["directories_failed"])
     if c["ciphertexts_unread"]:

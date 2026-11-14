@@ -32,7 +32,7 @@
     },
     "max_seconds": {
       "type": "integer",
-      "description": "The tool's own time limit in seconds (default 780, at most 840; the manifest's timeout is 900). When it runs out the walk stops, what was counted is written, and the answer is partial and says how many entries and directories were not examined"
+      "description": "The tool's own time limit in seconds (default 780, at most 840; the manifest's timeout is 900). When it runs out the walk stops, what was counted is written, and the answer is partial and says how many entries and directories were not examined A directory is read under the clock too, and at most 262144 entries of one directory are held: the entries past that are counted (coverage.entries_not_listed) and not examined, and the answer is partial; the ones kept are drawn by a keyed hash of their path, not by name or by the order the directory lists them in"
     }
   },
   "runtime": "python3",
@@ -41,6 +41,6 @@
   "example": "{\"root\": \"work/extracted/Users\"}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 14,
-  "sha256": "15df34855d9136fd01e48bd32606498185ca1c8dac9c1f8529a1ae3de02ed374"
+  "version": 15,
+  "sha256": "579bda229561709af0b40784929fd913673fdda942a6d887e8cb16b9fd7d0bfe"
 }

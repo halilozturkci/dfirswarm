@@ -48,7 +48,7 @@
     },
     "max_seconds": {
       "type": "integer",
-      "description": "The tool's own time limit in seconds (default 780, at most 840; the manifest's timeout is 900). When it runs out no further row is read, what was read is reported, and the answer is partial"
+      "description": "The tool's own time limit in seconds (default 780, at most 840; the manifest's timeout is 900). When it runs out no further row is read, what was read is reported, and the answer is partial The hosts are put in order under the clock too (at most 20 seconds past it): a host name not judged in time comes last, in an order drawn by a keyed hash of the run, and the answer is partial (time_limit.hosts_ordered_unjudged)"
     }
   },
   "runtime": "python3",
@@ -57,6 +57,6 @@
   "example": "{\"events\": [{\"host\": \"fileserver1\", \"file\": \"work/s1/evtx-answer.json\", \"result_file\": \"work/s1/tool-output/evtx_query-security.jsonl\"}], \"vss_inventories\": [{\"host\": \"fileserver1\", \"file\": \"work/s1/vss-before.json\", \"collected_utc\": \"2026-10-01T09:00:00Z\"}, {\"host\": \"fileserver1\", \"file\": \"work/s1/vss-after.json\", \"collected_utc\": \"2026-10-01T11:00:00Z\"}]}",
   "by": "maintainer",
   "at": "2026-11-01T12:00:00.000Z",
-  "version": 8,
-  "sha256": "fa322bc655762f461808e42da09ddd5f62b493eea113558ca2ca2f3166b3b428"
+  "version": 9,
+  "sha256": "ee93584f76a3fcb0ba1bf53a5edcb9eedcbd1accf6fee54fa358939bebf53411"
 }

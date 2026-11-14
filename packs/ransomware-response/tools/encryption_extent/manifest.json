@@ -57,6 +57,6 @@
   "example": "{\"policy\": \"sampling\", \"files\": [\"work/extracted/report.docx.locked\"]}",
   "by": "maintainer",
   "at": "2026-11-01T12:00:00.000Z",
-  "version": 7,
-  "sha256": "614b2b95c639d43c36fb73bc876aa08375c06958a374a17feef8383b449331cb"
+  "version": 8,
+  "sha256": "5def196393449ca80643e6fee081ed63fd67e3d8ba17bb907687c940bb3c4a5d"
 }

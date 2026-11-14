@@ -37,6 +37,6 @@
   "example": "{\"hypotheses\": [{\"family\": \"akira\", \"variant\": \"akira-original\"}], \"have\": [\"original_and_encrypted_pair\"]}",
   "by": "maintainer",
   "at": "2026-11-04T13:00:00.000Z",
-  "version": 2,
-  "sha256": "07a3410a14bdf0c7a19f08aa7dd73313d428bb96527c2695c69356d41aa7c9a7"
+  "version": 3,
+  "sha256": "fd492df3d81719b8152d6ee57548427c52285f80f3fff490cf1adc8f41f3fb08"
 }
