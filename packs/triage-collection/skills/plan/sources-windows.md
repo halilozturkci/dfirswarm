@@ -3,6 +3,7 @@ id: plan/sources-windows
 title: Windows sources to request, by question
 when: You request more evidence from a Windows source.
 needs: []
+card: Check what you hold with collection_index {"root": "<collection dir>"} before requesting; find the real Windows root, volumes and profiles first (not C: and one user). Request each source with its companions: a hive's .LOG1/.LOG2, a database's journal or WAL, SRUDB's ESE recovery files. Ask for raw artefacts beside any parsed export that will have to be verified. SAM and SECURITY only where the question and the authority justify them, read in jobs with secret_output: true; never write a hash of a secret. Does not show: that a source exists, was retained or would hold a trace.
 tools: [collection_index]
 requires_host: []
 ---

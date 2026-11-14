@@ -3,6 +3,7 @@ id: artifacts/reconstruction
 title: From a signature hit to a record you can cite
 when: A carved hit must be readied for a parser, or its integrity judged.
 needs: []
+card: carve_handoff {"path": "<image>", "kind": "<kind as mem_carve names it>", "signature_offset": <offset>} readies one hit and calls no parser. Say whether you hold a signature hit, a slice or a validated record. Read validation and each check: unequal hive sequence numbers mean the hive changed while copied; a misplaced bin is fragmentation; "not checkable" is not intact. Slice bytes only with {"write_values": true} in a job with secret_output: true. No parser pack loaded: say the parse was not made. Does not show: that a plausible header is a whole structure.
 tools: [mem_carve, carve_handoff]
 mentions: [regkv, evtx_carve, mam_scan, prefetch_mam]
 requires_host: []

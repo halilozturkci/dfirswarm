@@ -3,11 +3,12 @@ id: m365/mailbox-persistence
 title: Mailbox persistence, from configuration to delivery
 when: Inbox rules, forwarding, delegates or permissions must be traced from change to mail.
 needs: [logs/what-exists]
+card: ual_parse {"path": "<audit export>", "notable_only": true}: recorded changes to rules, forwarding and permissions (read audit_data). Configuration, authorisation, execution and delivery are four claims: a record is a change, not that it holds or acted. No reader here for configuration snapshots or message trace. Does not show: that a rule acted or mail was delivered.
 tools: [ual_parse, cloud_normalise]
 requires_host: []
 ---
 
-Use when evidence concerns inbox rules, forwarding, delegates, recipient permissions, transport controls or application grants on mailboxes and you must say what was set, who set it and whether mail was affected. Not for sign-ins (`entra/signins`) or token revocation (`identity/tokens`). Offline: supplied exports only; never authenticate to the tenant.
+Use when evidence concerns inbox rules, forwarding, delegates, recipient permissions, transport controls or application grants on mailboxes and you must say what was set, who set it and whether mail was affected. Not for sign-ins (`entra/signins`) or token revocation (`identity/tokens`). Offline: never authenticate to the tenant.
 
 **Four steps, four claims.** Configuration is not effective authorisation, which is not execution, which is not delivery. Place each finding at the step its evidence reaches and say what the next step would need.
 
@@ -22,4 +23,4 @@ Use when evidence concerns inbox rules, forwarding, delegates, recipient permiss
 
 **Does not show:** that a rule acted or a message was delivered; a person; the state after the last supplied record; what the audit configuration did not capture.
 
-**Sensitive output:** parameters and properties can hold secrets and addresses are personal data. Run `ual_parse` as a job with `secret_output: true`; it withholds credential-named and credential-shaped values and writes originals to `ual-values.jsonl` only with `write_values`.
+**Sensitive output:** parameters and properties can hold secrets and addresses are personal data. Run `ual_parse` as a job with `secret_output: true` (credential-named and -shaped values withheld; originals to `ual-values.jsonl` only with `write_values`).

@@ -3,6 +3,7 @@ id: timeline/linux-normalise
 title: Normalising and correlating a Linux timeline
 when: Merging layers into UTC, ordering equal stamps and weighing a correlation or an absence.
 needs: []
+card: timestamp_decode {"value": "<raw number>"} lists every reading: choose the epoch from the source's format, never the plausible reading. Keep the original value, encoding, resolution, clock, zone and year basis beside the UTC value; normalise only after. Keep both readings of a local time made ambiguous by a daylight-saving change. Do not order inside a source's resolution: sort ties deterministically and say the rule. A journal message and its forwarded syslog copy are one observation. An empty parser result supports an absence only with its paths, range, scope and errors recorded. Does not show: that an event happened, or that two close records are linked.
 tools: [timestamp_decode]
 requires_host: []
 ---

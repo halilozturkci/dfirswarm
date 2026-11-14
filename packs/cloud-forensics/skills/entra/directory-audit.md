@@ -3,6 +3,7 @@ id: entra/directory-audit
 title: Entra directory audit changes
 when: Supplied Entra directory audit records must say who changed which identity, role, application or credential.
 needs: [logs/what-exists]
+card: cloud_normalise {"path": "<directory audit export>", "provider": "entra"}: read status, rejected.jsonl and pagination_markers first. principal (user or application) is the initiator, targets what changed. A success outcome is the directory accepting the operation, not a changed token or access. modified_properties are before and after, sensitive; change_topics are this tool's word hints. Does not show: that the initiator was the owner, that a change took effect or was used.
 tools: [cloud_normalise]
 mentions: [ual_parse]
 requires_host: []

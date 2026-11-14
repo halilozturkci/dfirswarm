@@ -3,6 +3,7 @@ id: accounts/sessions-histories
 title: Sessions and shell histories
 when: Reading wtmp, btmp, lastlog and shell histories as leads.
 needs: []
+card: utmp_parse {"path": "<wtmp>"}: read layout and byte_order; a user filter on btmp is refused outside a job. shell_history {"root": "<home or extracted root>"} gives locators and lengths only: the text needs {"write_commands": true} in a job with secret_output: true. user is unknown unless the evidence's etc/passwd gives that home to one account; a directory name is not an account. Both are leads: a missing record excludes no login, a session with no end record is not shown open, and suppression, unflushed or concurrent shells remove commands. Does not show: who was at the keyboard, that a command ran, or that a session ended.
 tools: [utmp_parse, shell_history]
 requires_host: []
 ---

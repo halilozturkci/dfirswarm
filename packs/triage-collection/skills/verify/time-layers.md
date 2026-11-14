@@ -3,6 +3,7 @@ id: verify/time-layers
 title: Four timestamp layers in a delivery
 when: File times matter, or many files share one date.
 needs: []
+card: Four clocks: source metadata the collector recorded, times inside the content, archive member times, delivered file times. collection_index {"root": "<collection dir>"} reports only the delivered mtime in UTC; a KAPE pairing's recorded_modified_utc_raw is the collector's unparsed text. collection_timestamps {"root": "<collection dir>", "archive": "<zip or tar>"} reads member times (a zip's DOS time has no zone unless you give local_zone) and compares same-named files only. mtime_distribution_anomaly and apparent_flattening are leads: a time-resetting copy, a bulk write and a real burst look alike. A copy's outer times do not void times inside the file. Does not show: that a time is original.
 tools: [collection_index, collection_timestamps]
 requires_host: []
 mentions: [KAPE]

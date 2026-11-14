@@ -3,6 +3,7 @@ id: filesystem/ext
 title: ext metadata and timestamps
 when: Interpreting ext inode times and their relationships, with explicit limits.
 needs: []
+card: timestamp_decode {"value": "<raw field>"} lists candidates under every epoch: the inode's format decides the clock, not the plausible reading. Read the inode size first: crtime and nanoseconds exist only in inodes large enough. Read the inode directly (debugfs read-only, never -w; istat) and keep raw field, precision and mount options (relatime, noatime, lazytime). crtime later than mtime fits a copy, extraction, restore, clock error or edit alike; ctime later than mtime is a lead, not timestomping. ext keeps no second kernel copy of the times. Does not show: who set a time, why, or that it was changed.
 tools: [timestamp_decode]
 requires_host: [debugfs, istat]
 ---

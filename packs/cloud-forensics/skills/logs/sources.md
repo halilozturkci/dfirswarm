@@ -3,6 +3,7 @@ id: logs/sources
 title: Cloud source families to inventory
 when: You must list which logs to expect or ask for in a cloud case.
 needs: [logs/what-exists]
+card: Inventory each family on its own line: supplied, not supplied, disabled or unknown, with the evidence. Readers: cloudtrail_parse, signin_analyse (Entra sign-ins, Workspace logins), ual_parse, cloud_normalise (GCP and Kubernetes audit, Entra directory audit, Azure Activity, S3 access, VPC flow); any other family has no reader: read it in a recorded job and say so. cloud_timeline_export {"path": "<normalised.jsonl>"} orders those rows in UTC: a row with no usable time goes to timeline-unknown-time.jsonl, never sorted; nothing is deduplicated. A source not supplied is an acquisition ask, never fetched. Does not show: that a listed family existed in this tenant, or that an unlisted one did not.
 tools: [cloudtrail_parse, signin_analyse, ual_parse, cloud_normalise, cloud_timeline_export]
 requires_host: []
 ---

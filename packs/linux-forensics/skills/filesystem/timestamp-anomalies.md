@@ -3,6 +3,7 @@ id: filesystem/timestamp-anomalies
 title: ext4, XFS and Btrfs time fields
 when: A file time looks wrong, or you must say what produced it.
 needs: [timeline/clocks]
+card: Name the file system, its feature flags and the reading tool before a time. timestamp_decode {"value": "<raw>"} gives candidates: choose by the format, not plausibility. Nanoseconds are precision, not accuracy; mount options decide whether an atime was written. A time that looks forged has competing explanations, each needing its own evidence: a copy or extraction (target-fs and icat copies carry the extraction time), an install, archive, restore, snapshot or copy-up, a clock error, a tool that sets times. mtime later than ctime, or ctime before crtime, is a lead. Compare inode, directory, journal and logs, and say which fields. Does not show: which program wrote a time, intent, or truth.
 tools: [timestamp_decode]
 requires_host: [debugfs, istat, xfs_db, btrfs, target-fs, icat]
 ---

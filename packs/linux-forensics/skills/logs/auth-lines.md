@@ -3,6 +3,7 @@ id: logs/auth-lines
 title: What each auth log line shows
 when: Interpreting ssh, sudo, su, PAM and account lines, and names typed at a prompt.
 needs: []
+card: Read each auth_log record by kind: ssh_accepted is a method, account and address, never a person; session_opened is not a login; sudo is not its children or success. Typed names are withheld (user_bytes); utmp_parse does the same for btmp. Does not show: a person.
 tools: [auth_log, utmp_parse, audit_events]
 requires_host: []
 ---

@@ -3,6 +3,7 @@ id: apps/databases
 title: App databases, transaction state, deleted fragments
 when: An answer rests on an app's SQLite records or on deleted content.
 needs: [extractions/what-you-have]
+card: Identify the format with file_type first: a missing SQLite header is not proof of encryption. Keep the database with its -wal, -shm and -journal; work on a copy, never checkpoint, vacuum or repair. sqlite_query {"db_path": "<copy>", "sql": "SELECT sql FROM sqlite_master"} does not apply a -wal: a row only in the WAL is missing (snapshot_status says so). sqlite_freespace reads the main file only and rebuilds no row; run it as a secret_output job. Does not show: a fragment's table, time or sender, or that the user deleted it; a negative covers only what scanned lists.
 tools: [sqlite_query, sqlite_freespace, file_type]
 requires_host: []
 ---

@@ -3,6 +3,7 @@ id: normalise/container-members
 title: Container identity when members become files
 when: A delivery is an archive, or a tree extracted from one.
 needs: [evidence/archives]
+card: Number members first (collection-intake or archive-members recipe); archive_extract {"path": "<archive>", "out_dir": "{OUT}/<name>", "from_index": <n>} uses that n, and a stopped run names next_index. A member over max_member_bytes is kept as .partial: a limit, not a missing file. A nested archive stays unopened: extract it separately. Cite container hash, member n and extracted path. Does not show: that the archive is complete or authentic.
 tools: [archive_extract, collection_manifest_verify]
 requires_host: []
 ---

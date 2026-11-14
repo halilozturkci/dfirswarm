@@ -3,6 +3,7 @@ id: plan/sources-linux
 title: Linux sources to request, by question
 when: You request more evidence from a Linux source.
 needs: []
+card: Check what you hold with collection_index {"root": "<collection dir>"} before naming a Linux source to request; choose by the question and by how fast the source is lost (/run/log/journal is gone at reboot; root's home is /root, outside /home). Find mount points, namespaces, users and retention boundaries first. A list of Docker paths is not coverage of every container runtime. Ask for key and verifier stores only where the question and the authority justify it, and never write a value or a hash of one. Does not show: that a source exists, was retained or would hold a trace; an absent log is not an absent event.
 tools: [collection_index]
 requires_host: []
 ---

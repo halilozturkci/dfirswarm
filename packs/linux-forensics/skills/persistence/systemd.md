@@ -3,6 +3,7 @@ id: persistence/systemd
 title: systemd units, links and what is in effect
 when: Deciding which systemd units were configured, enabled and eligible, and which ran.
 needs: []
+card: linux_persistence {"root": "<extracted root>", "execution_rows": ["<journal_export records file>"]}: keep configured, enabled, eligible, triggered and observed running apart; the effective state is never resolved. A target-fs copy keeps no links: enablement, masks and aliases need the image. A user unit runs without a login only with lingering. A unit execution_rows do not name is not claimed idle. Does not show: the effective state, or who made a unit.
 tools: [linux_persistence, journal_export]
 requires_host: [target-fs, target-query]
 ---

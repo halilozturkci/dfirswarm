@@ -3,6 +3,7 @@ id: logs/auth-time
 title: Auth log years, rollovers and parse status
 when: Dating, ordering or counting auth log lines whose stamps have no year or zone.
 needs: []
+card: A traditional stamp has no year and no zone: auth_log takes the year from the file's mtime (on a copy, the copy's time) unless you pass {"path": "<log>", "year": <year>} or years per file and line. Read year_basis, year_assumed, forward_steps and mtime_may_be_copy_time before a date matters, and fix the year from a source with full dates first (utmp_parse on wtmp, the journal, package logs, inode times). time_utc exists only where the stamp carries a zone; time_zone stays unknown until the profile sets it. A step back of more than six months is reordered, not a year end. complete only says every line parsed and every file was read. Does not show: the true year, or coverage.
 tools: [auth_log, utmp_parse]
 requires_host: [fls, istat]
 ---

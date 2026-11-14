@@ -3,6 +3,7 @@ id: containers/layers-times
 title: Container layers, runtime metadata and times
 when: Reading overlay layers, whiteouts, config timestamps, commands and environments.
 needs: []
+card: container_layers {"overlay2_root": "<overlay2 directory>", "start": "<layer directory>"}: map the container to its real upper layer and lower chain first. A missing lower layer cuts the chain (partial); opaque_directories_not_told_in_layers names layers whose lost xattrs hide an opaque directory, so lower contents may show as visible. A copy-up moves host inode metadata without showing when anything ran. Created, StartedAt, FinishedAt, Path and Args are runtime metadata: keep each original string with its offset; timestamp_decode is for a raw number. Config.Env: names and that values exist, never values. Does not show: an execution history, or when anything ran inside.
 tools: [container_layers, timestamp_decode]
 requires_host: []
 ---

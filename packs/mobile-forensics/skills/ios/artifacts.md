@@ -3,19 +3,20 @@ id: ios/artifacts
 title: iOS artefacts by build and source
 when: The evidence holds iPhone or iPad application or system data.
 needs: [extractions/what-you-have]
+card: manifest_db {"path": "<backup>"} resolves paths: never assume them. Does not show: a person's actions.
 tools: [manifest_db, sqlite_query, sqlite_freespace, plist_read]
 requires_host: [ileapp, exiftool]
 ---
 
 Use when the evidence holds iPhone or iPad application or system data. Not for one stream's detail (`ios/biome-segb`, `ios/unified-logs`) or for where the device was (`location/sources`).
 
-**Record** the model, exact OS build, acquisition method, protection state and app versions. Name the build the evidence carries (iOS 17, 18, 26 ...); do not assume a schema for a version you have not seen. Check each path and table in the acquisition.
+**Record** the model, exact OS build, acquisition method, protection state and app versions. Name the build the evidence carries (iOS 17, 18, 26 ...); do not assume a schema for a version you have not seen. Check each path and table.
 
 **Discovery candidates** in a file-system extraction (a backup is resolved through `manifest_db`, never assumed to hold paths): `mobile/Library/SMS/sms.db` (messages), `CallHistoryDB/`, `AddressBook/`, `Safari/`, `Caches/com.apple.routined/` (cache tables: not every row is a significant location), `CoreDuet/Knowledge/` and `Biome/` (activity), `private/var/db/diagnostics/` with `uuidtext/` (logs), `private/var/Keychains/` (protected), `PhotoData/Photos.sqlite`, `Containers/Data/Application/` and `Containers/Shared/AppGroup/` (app data).
 
-**Broad pass.** Start from the `ios-filesystem` catalogue and the `ios-ileapp` generation (`modules.tsv`: `completed` is not "everything parsed"; `no_record` is not "absent"; `errors_logged`, `errored` and `unknown` are gaps). Without a generation, in a job: `mkdir -p "$OUT/ileapp" && ileapp -t tar -i <extraction.tar> -o "$OUT/ileapp"` (the program refuses an output directory that does not exist; `-t fs` for a directory, after `ileapp -h`). Keep stdout, stderr and the report tree. Check any material row against the underlying record.
+**Broad pass.** Start from the `ios-filesystem` catalogue and the `ios-ileapp` generation (`modules.tsv`: `completed` is not "everything parsed"; `no_record` is not "absent"; `errors_logged`, `errored` and `unknown` are gaps). Without a generation, in a job: `mkdir -p "$OUT/ileapp" && ileapp -t tar -i <extraction.tar> -o "$OUT/ileapp"` (the output directory must exist; `-t fs` for a directory, after `ileapp -h`). Keep stdout, stderr and the report tree; check a material row against its source record.
 
-**Messages.** Query a working copy with `sqlite_query`. Check the schema and joins before assigning participants, direction, thread, transport, edit, deletion or delivery. Synced or local storage does not give authorship. Where the build carries more than one transport (SMS, iMessage, RCS), name which; check the version.
+**Messages.** Query a working copy with `sqlite_query`. Check the schema and joins before assigning participants, direction, thread, transport, edit, deletion or delivery. Synced or local storage does not give authorship. Where the build carries several transports (SMS, iMessage, RCS), name which.
 
 **Deleted messages**: follow `apps/databases` first (`sqlite_freespace`); nothing here promises them.
 

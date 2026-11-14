@@ -3,6 +3,7 @@ id: triage/no-framework
 title: A memory image no framework can read
 when: The job image lacks a usable framework, symbols or dependencies, or you want an answer first.
 needs: []
+card: Name the missing capability (framework, layer, symbols, plugin dependency). mem_carve {"path": "<image>"} first; parse a slice only with a tool in the run, else say it was not done; then ioc_scan or chunk_needles. Never present pattern matches as a process list. Slices and context: {"write_values": true} in a secret_output job. Does not show: a whole file from a hit.
 tools: [ioc_scan, chunk_needles, mem_carve]
 requires_host: [strings, yara]
 mentions: [regkv, evtx_carve, mam_scan, prefetch_mam]
@@ -10,13 +11,11 @@ mentions: [regkv, evtx_carve, mam_scan, prefetch_mam]
 
 Use when the framework, its translation layer, its symbols or a plugin dependency is missing and you must examine the bytes that can be read without it. Not for an image Volatility reads (`triage/volatility`).
 
-When the framework, its translation layer, its symbols or a plugin dependency is
-missing, examine the bytes that can be read without it, and record the specific
-capability that is missing. Volatility 3 uses symbol tables in ISF form: do not call
-every missing dependency a "profile". A raw-byte search stays useful, and its
-conclusions are limited to the representation actually searched.
+Record the specific capability that is missing. Volatility 3 uses symbol tables in ISF form: do not call
+every missing dependency a "profile". A raw-byte search stays useful,
+within the representation it searched.
 
-Start here, in this order:
+In this order:
 
 1. **`mem_carve`** finds configured byte signatures in the file and can save a
    slice at each (`write_values: true`, in a secret job). Only if you run it: `triage/carve-signatures` says what
@@ -37,9 +36,8 @@ Start here, in this order:
    and offset; a match with no process or region attribution is a lead, not behaviour.
 
 What this cannot give you: a process list, a parent-child tree, handle tables, or
-anything that needs the page tables walked. Do not approximate those by pattern
-matching and present the result as a process list: say that no framework was
-available, and name what you did instead.
+anything that needs the page tables walked. Do not approximate those by pattern matching and present the result as a
+process list: say that no framework was available, and name what you did instead.
 
 Only if the evidence includes `pagefile.sys`, swap or `hiberfil.sys`: `triage/paging-files`.
 
