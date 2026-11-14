@@ -25,7 +25,7 @@ const PINS: Record<string, string> = {
   // round 10 (the shared ENDS block): every answer writer holds the stop signals first, and a handler whose last word printed nothing answers
   windows: "68a09df01fed909c0689dbb85e096dd5e0e146fc8e7ae0885d62f58333327a79",
   macos: "ea30ad89bcd4dc20f7aa23ed91ab7767f37eef7b1c23fc17b4b4d8279a617dd7",
-  encrypted: "5f46dfe0c70c729612a7e9ee4f20e0b39c6725076377cd833c560595b47e031c",
+  encrypted: "54e0ba0bb762bdcb08dc0baca263f5a79e0b8dffcf227ee7d26cb2a66bafe2bc",    // the hard stop no longer claims a read was pending
   page: "b339c021341a2ad88f8cfca6a799888108a7bf64f93bd49f989a4d98a1012145",
 };
 

@@ -360,12 +360,12 @@ def install_stop(last_word=None, cooperative=False):
 
 
 def interrupted_answer(signum, **extra):
-    if signum is None:       # the clock ran out, and then GRACE_SECONDS more, with a read that had not returned
+    if signum is None:       # the clock ran out, and then GRACE_SECONDS more, before the tool answered
         print(json.dumps({"status": "partial", "partial": True, "interrupted": True, "hard_stopped": True,
                           "stopped_by": "the tool's time limit (%s seconds) was reached" % STOP["limit"],
-                          "status_basis": "the tool's time limit (%s seconds) and %d seconds more passed while a read had not returned (a file on a "
-                                          "volume or share that is not available, or a pipe); the tool was ended there, and nothing it had read is "
-                                          "an answer" % (STOP["limit"], GRACE_SECONDS), **extra}), flush=True)
+                          "status_basis": "the tool's time limit (%s seconds) and %d seconds more passed before the tool could answer (a read that "
+                                          "had not returned, from a volume or share that is not available or a pipe, or work between two reads of "
+                                          "its clock); the tool was ended there, and nothing it had read is an answer" % (STOP["limit"], GRACE_SECONDS), **extra}), flush=True)
         return
     print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "failed", "interrupted": True,
                       "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
@@ -1834,6 +1834,9 @@ def scan_stream(fh, budget, stats):
 WALK_CHUNK = 10_000   # entries held and name-sorted at once; bounds memory on a huge flat directory
 
 
+WALK_CLOCK_EVERY = 256   # the walk reads the clock after this many directories and entries it looked at without yielding a file to read
+
+
 class Walk:
     """The regular files under `top`, following no link; what it has not reached is known at any moment.
 
@@ -1851,13 +1854,24 @@ class Walk:
         self.stack = [(top, True)]
         self.entries, self.next, self.found_dirs = [], 0, []
         self._current_dir, self._more = None, False
+        self.stopped = False                   # the walk itself ended at the clock or a stop signal (see _generate)
         self._files = self._generate(exceptions, counters)
 
     def __iter__(self):
         return self._files
 
     def _generate(self, exceptions, counters):
+        # The clock is read here too, not only by the caller between the files this yields: a run of links, directories or special
+        # files yields nothing, and 300,000 of them held the walk past the hard stop. A stop leaves the entry in hand and everything
+        # after it to unreached().
+        looked = 0                             # directories and entries looked at since the clock was last read
         while self.stack:
+            looked += 1
+            if looked >= WALK_CLOCK_EVERY:
+                looked = 0
+                if stop_wanted():
+                    self.stopped = True
+                    return
             directory, is_top = self.stack.pop()
             self._current_dir, self._more = directory, False
             try:
@@ -1876,6 +1890,12 @@ class Walk:
                     self.entries, self.next = chunk, 0
                     self._more = len(chunk) == WALK_CHUNK   # might be more: unknown until the next chunk is tried
                     while self.next < len(self.entries):
+                        looked += 1
+                        if looked >= WALK_CLOCK_EVERY:
+                            looked = 0
+                            if stop_wanted():
+                                self.stopped = True
+                                return
                         entry = self.entries[self.next]
                         self.next += 1
                         try:
@@ -2082,6 +2102,8 @@ def main():
                 totals["bytes_unread_in_partial_files"] += size - stats.bytes_read
                 exceptions.add({"path": shown(target), "status": "partial", "reason": "read up to max_bytes_per_file; the rest was not read",
                                 "bytes": size, "bytes_read": stats.bytes_read, "bytes_unread": size - stats.bytes_read})
+        if stopped_why is None and walker is not None and walker.stopped:
+            stopped_why = stop_cause()
         if stopped_why and walker is not None:
             # What the walk had not reached, named: the rest of the chunk being read, the directories not yet entered
             # (everything under those is unread, and how many files that is is not known), and, when the directory being

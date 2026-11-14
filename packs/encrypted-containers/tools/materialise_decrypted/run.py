@@ -329,12 +329,12 @@ def install_stop(last_word=None, cooperative=False):
 
 
 def interrupted_answer(signum, **extra):
-    if signum is None:       # the clock ran out, and then GRACE_SECONDS more, with a read that had not returned
+    if signum is None:       # the clock ran out, and then GRACE_SECONDS more, before the tool answered
         print(json.dumps({"status": "partial", "partial": True, "interrupted": True, "hard_stopped": True,
                           "stopped_by": "the tool's time limit (%s seconds) was reached" % STOP["limit"],
-                          "status_basis": "the tool's time limit (%s seconds) and %d seconds more passed while a read had not returned (a file on a "
-                                          "volume or share that is not available, or a pipe); the tool was ended there, and nothing it had read is "
-                                          "an answer" % (STOP["limit"], GRACE_SECONDS), **extra}), flush=True)
+                          "status_basis": "the tool's time limit (%s seconds) and %d seconds more passed before the tool could answer (a read that "
+                                          "had not returned, from a volume or share that is not available or a pipe, or work between two reads of "
+                                          "its clock); the tool was ended there, and nothing it had read is an answer" % (STOP["limit"], GRACE_SECONDS), **extra}), flush=True)
         return
     print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "failed", "interrupted": True,
                       "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,

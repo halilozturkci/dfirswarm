@@ -25,8 +25,8 @@
   "example": "{}",
   "by": "maintainer",
   "at": "2026-11-01T12:00:00.000Z",
-  "version": 8,
-  "sha256": "26cf0a1d799e7240e1ff1253b17e19362560a13c255a857186c65448c8514c13",
+  "version": 9,
+  "sha256": "324b6c6ddd56ed081016ddaf163122c703ccdf49430a4c5d1da48bbd1dad79be",
   "use": {
     "extensions": []
   }

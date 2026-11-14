@@ -37,8 +37,8 @@
   "example": "{\"source\": \"work/extracted/secret.zip\", \"format\": \"zip\", \"candidates\": \"work/candidates.txt\"}",
   "by": "maintainer",
   "at": "2026-10-31T12:00:00.000Z",
-  "version": 13,
-  "sha256": "a1d834981f822a6fa1bd0fa92f711fbdf480576a89a07879df292b3a9179530d",
+  "version": 14,
+  "sha256": "a65addf7c2c11bf1e1eb1064c32af21a6e7d9538312ebfc89e7982f46d684453",
   "use": {
     "extensions": []
   }
