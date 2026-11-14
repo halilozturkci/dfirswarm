@@ -878,7 +878,7 @@ def list_members(args, max_files, suffix=None):
 # FAMILY: end
 
 TOOL = "stream_kpa_check"
-VERSION = 7
+VERSION = 8
 PARSER = "stream_kpa_check/6"
 DEFAULT_SECONDS, MAX_SECONDS = 480, 540
 HEAD = 64                         # bytes of a member that are ever decrypted here

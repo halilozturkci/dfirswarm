@@ -3127,11 +3127,16 @@ def find_yara():
 
 
 def yara_version(binary):
+    """(the version yara printed or None, the sentence that says its output was cut or None). A `yara --version` that printed past its
+    64 KiB cap was ended there: yara is installed and is still run, and only its version is unknown."""
     code, out, err, timed_out = preflight([binary, "--version"], YARA_PREFLIGHT_SECONDS, caps=(1 << 16, 1 << 16))
-    if code != 0 or timed_out or output_cut(out, err):
-        return None
+    cut = output_cut(out, err)
+    if cut:
+        return None, cut
+    if code != 0 or timed_out:
+        return None, None
     text = out.decode("ascii", "replace").strip().splitlines()
-    return text[0][:40] if text and re.fullmatch(r"[0-9][0-9A-Za-z.+-]{0,39}", text[0].strip()) else None
+    return (text[0][:40] if text and re.fullmatch(r"[0-9][0-9A-Za-z.+-]{0,39}", text[0].strip()) else None), None
 
 
 def run_yara(binary, rules_path, notes, max_note_bytes, counters, hits):
@@ -3480,7 +3485,10 @@ def main():
             reasons.append("yara is not installed: the %d note files were not matched against the text rules (extension and note-name matching ran)" % len(notes))
         else:
             engine["available"] = True
-            engine["version"] = yara_version(binary)
+            engine["version"], version_cut = yara_version(binary)
+            if version_cut:
+                reasons.append("yara is installed, but `yara --version` printed past its 64 KiB cap and was ended (%s): its version is not known, "
+                               "and the note files were still given to it" % version_cut)
             rules_path = str(REFERENCE_DIR / "rules.yar")
             run_yara(binary, rules_path, notes, max_note_bytes, counters, yara_hits)
             engine["ran"] = True

@@ -37,6 +37,16 @@
   "example": "{\"hypotheses\": [{\"family\": \"akira\", \"variant\": \"akira-original\"}], \"have\": [\"original_and_encrypted_pair\"]}",
   "by": "maintainer",
   "at": "2026-11-04T13:00:00.000Z",
-  "version": 3,
+  "not_for": [
+    {
+      "what": "naming the family from extensions, note names or note text",
+      "use": "ransomware_family_match"
+    },
+    {
+      "what": "decrypting files with a key rule recovered from the case",
+      "use": "family_decrypt"
+    }
+  ],
+  "version": 4,
   "sha256": "fd492df3d81719b8152d6ee57548427c52285f80f3fff490cf1adc8f41f3fb08"
 }

@@ -49,6 +49,16 @@
   },
   "by": "maintainer",
   "at": "2026-11-13T12:00:00.000Z",
-  "version": 3,
-  "sha256": "94140cef8c313066b978c2e7540e5cf586f003d9817eba37515b953680d0342e"
+  "not_for": [
+    {
+      "what": "checking whether a candidate key or nonce opens the encrypted files",
+      "use": "stream_kpa_check"
+    },
+    {
+      "what": "decrypting the files once a recipe is confirmed",
+      "use": "family_decrypt"
+    }
+  ],
+  "version": 4,
+  "sha256": "390d8e746964c5c33ddea0f0b7620130380ab29fa4ff5907910903e40c9942b8"
 }

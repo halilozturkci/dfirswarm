@@ -874,7 +874,7 @@ def list_members(args, max_files, suffix=None):
 # FAMILY: end
 
 TOOL = "family_decrypt"
-VERSION = 5
+VERSION = 6
 PARSER = "family_decrypt/2"
 DEFAULT_SECONDS, MAX_SECONDS = 1500, 1740
 PIECE = 1 << 20

@@ -1920,8 +1920,9 @@ def normal_time(value):
     return m.group(1) + "." + ((m.group(2) or "") + "000000")[:6] + "Z"
 
 
-def stream_rows(path, kind, host, input_no, ctx):
-    """Stream one input into the aggregates; returns its facts. A stop at the clock is recorded, not raised."""
+def stream_rows(path, kind, host, input_no, ctx, host_name=None):
+    """Stream one input into the aggregates; returns its facts. A stop at the clock is recorded, not raised. `host_name` is the host the
+    entry names (None when it names none): a timeline event that carries no host of its own is that host's."""
     index, buffer = ctx["index"], ctx["buffer"]
     facts = {"rows": 0, "skipped": 0, "receipt": None, "parser": None, "receipt_status": None, "stopped_by_clock": False}
     fd, st = open_regular(path)
@@ -1959,7 +1960,9 @@ def stream_rows(path, kind, host, input_no, ctx):
                     continue
                 rec = row.get("record")
                 if kind == "timelines":
-                    h, t, k = row.get("host", host), normal_time(row.get("time")), row.get("kind")
+                    h, t, k = row.get("host"), normal_time(row.get("time")), row.get("kind")
+                    if h is None:
+                        h = host_name
                     # A host named in a row is held to the 255 characters the host of a spec and expected_hosts are: a longer name is a row skipped
                     # (counted, and the answer is partial), never judged and written for every host the page loop reaches.
                     if not isinstance(h, str) or not h or len(h) > MAX_HOST_NAME or t is None or not isinstance(k, str) or not k or len(k) > MAX_KIND:
@@ -2123,7 +2126,7 @@ def main():
                         problems["coverage_unreadable"] += 1
                     declared[hid]["coverage"] += 1
                     continue
-                facts = stream_rows(path, kind, hid, input_no, ctx)
+                facts = stream_rows(path, kind, hid, input_no, ctx, host)
             except (OSError, ValueError) as exc:
                 code, text = why_not_opened(exc)
                 problems["input_not_read:" + code] += 1
@@ -2172,10 +2175,19 @@ def main():
         inputs = {k: db.execute("SELECT input, parser, receipt, receipt_status, rows, skipped FROM inputs WHERE kind=? AND host=? ORDER BY input", (k, hid)).fetchall()
                   for k in ("censuses", "extents", "recovery_checks")}
         n_census = len(inputs["censuses"])
-        if n_census == 0:
+        # A census that could not be opened (a named pipe, a missing file) was named but not read: a host whose only census is that one
+        # has no census to count, and is unknown like a host that has none (its not_read entry is shown, and the answer is partial).
+        unread_only = n_census == 1 and inputs["censuses"][0][2] == "not_read"
+        if n_census == 0 or unread_only:
             row["scope"] = "unknown"
-            row["scope_basis"] = "this host has no census: nothing is said about its files, and nothing is extrapolated to it from another host"
+            row["scope_basis"] = ("the census named for this host could not be read (not_read): nothing is said about its files, and nothing is "
+                                  "extrapolated to it from another host" if unread_only else
+                                  "this host has no census: nothing is said about its files, and nothing is extrapolated to it from another host")
             total["hosts_unknown"] += 1
+            if unread_only:
+                inp, parser, receipt, rstatus, rows, skipped = inputs["censuses"][0]
+                row["censuses"] = [{"parser": parser, "receipt": receipt, "receipt_status": rstatus, "rows": rows, "rows_skipped": skipped,
+                                    "files": None, "bytes": None, "by_status": {}}]
         else:
             by_input = {}
             for (inp, status, files, size) in db.execute("SELECT input, key, a, b FROM agg WHERE kind='census' AND host=? ORDER BY input, key", (hid,)):
@@ -2183,8 +2195,10 @@ def main():
             censuses = []
             for (inp, parser, receipt, rstatus, rows, skipped) in inputs["censuses"]:
                 st = by_input.get(inp, {})
+                unread = receipt == "not_read"
                 censuses.append({"parser": parser, "receipt": receipt, "receipt_status": rstatus, "rows": rows, "rows_skipped": skipped,
-                                 "files": sum(v["files"] for v in st.values()), "bytes": sum(v["bytes"] for v in st.values()), "by_status": st})
+                                 "files": None if unread else sum(v["files"] for v in st.values()),
+                                 "bytes": None if unread else sum(v["bytes"] for v in st.values()), "by_status": st})
             row["censuses"] = censuses
             if n_census > 1:
                 row["scope"] = "conflict"
@@ -2256,7 +2270,7 @@ def main():
     OWN_NAMES.update(p["all_results"] for p in pages.values() if p.get("all_results"))
     reasons = []
     if total["hosts_unknown"]:
-        reasons.append("%d hosts have no census and are unknown" % total["hosts_unknown"])
+        reasons.append("%d hosts have no census that was read and are unknown" % total["hosts_unknown"])
     if total["hosts_conflict"]:
         reasons.append("%d hosts have more than one census and are not added to the totals" % total["hosts_conflict"])
     if total["hosts_census_partial"]:

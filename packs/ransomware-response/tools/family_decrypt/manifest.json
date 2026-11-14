@@ -50,6 +50,20 @@
   "secret_output": "required",
   "by": "maintainer",
   "at": "2026-11-13T12:00:00.000Z",
-  "version": 5,
-  "sha256": "6b4ce17a61e20fed714eb0d8e19db404640d136c60559f6c31e06c0b7412a178"
+  "not_for": [
+    {
+      "what": "finding or testing a key rule: it only applies a recipe that stream_kpa_check wrote",
+      "use": "stream_kpa_check"
+    },
+    {
+      "what": "finding key and nonce candidates in a process dump",
+      "use": "cipher_state_scan"
+    },
+    {
+      "what": "looking up a public decryptor for a family",
+      "use": "decryptor_catalog"
+    }
+  ],
+  "version": 6,
+  "sha256": "acdd8ebe30fda497c0eb6ae51f4c46c48bd2dda8d1203b6ea40bde15f9b392d8"
 }

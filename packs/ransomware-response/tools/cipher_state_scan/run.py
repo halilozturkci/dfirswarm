@@ -407,7 +407,7 @@ def answered(main, cleanup=None):
         fail("unexpected failure: %s" % (describe(exc) if isinstance(exc, OSError) else "%s at %s" % (type(exc).__name__, where_it_failed(exc))))
 
 TOOL = "cipher_state_scan"
-VERSION = 3
+VERSION = 4
 PARSER = "cipher_state_scan/2"
 CHUNK = 16 << 20
 OVERLAP = 4096

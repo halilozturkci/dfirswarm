@@ -75,6 +75,20 @@
   "secret_output": "required",
   "by": "maintainer",
   "at": "2026-11-13T12:00:00.000Z",
-  "version": 7,
-  "sha256": "c5e47c47e58ad5d42dacbc727cc2838fa53b63e82f75a59e8b4d6602f2479a38"
+  "not_for": [
+    {
+      "what": "finding key and nonce candidates in a process dump or memory image",
+      "use": "cipher_state_scan"
+    },
+    {
+      "what": "decrypting every member once a recipe is confirmed",
+      "use": "family_decrypt"
+    },
+    {
+      "what": "naming the ransomware family from extensions, note names or note text",
+      "use": "ransomware_family_match"
+    }
+  ],
+  "version": 8,
+  "sha256": "9136f50eb98dfc04ce0b67a7cc43de2d6c1afd9513715e5381562a4e49773c65"
 }

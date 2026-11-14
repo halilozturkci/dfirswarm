@@ -5,6 +5,7 @@ when: Writing conclusions by phase, a negative exfiltration finding or insurance
 needs: []
 tools: [ransomware_scope_report]
 requires_host: []
+card: Write each conclusion as established, partial, bounded negative or not determinable, with sources, method, scope and contrary evidence. ransomware_scope_report gives scope per host with denominators: a host with no census is unknown and no estate-wide percentage is stated; do not write one. A negative exfiltration finding names the sources, interval, gaps and whether the transfer would have appeared there. Does not show: the start of the compromise, or that a control was missing everywhere.
 ---
 
 Use only if you write the report's conclusions by question and phase, a negative exfiltration finding or the insurance and control findings. Not for the notification clocks (`reporting/notification-register`).
