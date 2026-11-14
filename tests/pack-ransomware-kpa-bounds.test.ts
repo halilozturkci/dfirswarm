@@ -242,7 +242,9 @@ test("more places than the hypothesis lists: 65,536 are listed, the others count
   assert.equal(t.status, "partial");
   assert.deepEqual([t.tried.derivation.pairs, t.tried.derivation.places, t.tried.derivation.places_not_listed, t.tried.derivation.stopped_by],
     [1280, 65_536, 83_200 - 65_536, "max_trials"]);
-  assert.equal(t.trials, 140_000);
+  // The sources' trials are 40,000; each place is 19 trials (one variant on the 19 other members), and a place is begun only when they
+  // fit in what is left (1.14.5: whole or not at all), so 5263 places are tried and the 5264th is not begun.
+  assert.equal(t.trials, 40_000 + 19 * Math.floor(100_000 / 19));
   assert.ok(t.partial_reasons.some((r: string) => /^max_trials \(140000\) was reached while the footer hypothesis was being tried: [\s\S]* 17664 more places \(past the first 65536 listed/.test(r)), t.status_basis);
   assert.ok(t.files.every((r: Doc) => r.matches_not_kept === 36));
   assert.ok(tight.peak < 300e6, `peak resident memory ${tight.peak} bytes`);
@@ -297,7 +299,7 @@ test("the recipe is written under a temporary name and given a free one; a stop 
   assert.deepEqual(await readdir(plain.out), ["stream-recipe.json"]);
   const recipe = JSON.parse(await readFile(join(plain.out, "stream-recipe.json"), "utf8")) as Doc;
   assert.equal(recipe.key.hex, key.toString("hex"));
-  assert.equal(recipe.made_by, "stream_kpa_check/4");
+  assert.equal(recipe.made_by, "stream_kpa_check/5");
   // A recipe already there is not replaced.
   const second = join(cwd, "store", "jobs", "j000002", "out");
   await mkdir(second, { recursive: true });

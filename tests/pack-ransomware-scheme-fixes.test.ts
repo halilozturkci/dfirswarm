@@ -172,9 +172,12 @@ test("the derived trials count against max_trials and the clock: a bound that st
   // The sources' trials: 5 members x 400 nonces x 4 counters = 8000. The hypothesis needs 65 places x 4 members x 1600 more.
   const tight = answer(await job(KPA, cwd, "j000001", { ...args, max_trials: 20_000 }));
   assert.equal(tight.status, "partial");
-  assert.equal(tight.trials, 20_000, "not one trial past max_trials");
+  // A place is begun only when the trials it takes fit in what max_trials leaves (1.14.5: a place is tried whole or not at all): the
+  // first pass is 65 places x 4 members (260), one place of the second pass is 4 members x 1599 other variants (6396), and the next
+  // one's 6396 would pass the 20,000.
+  assert.equal(tight.trials, 8000 + 260 + 6396, "not one trial past max_trials, and no place begun that would pass it");
   assert.equal(tight.tried.derivation.stopped_by, "max_trials");
-  assert.equal(tight.tried.derivation.trials, 12_000);
+  assert.equal(tight.tried.derivation.trials, 260 + 6396);
   assert.ok(tight.tried.derivation.places_tried_on_every_member < tight.tried.derivation.places);
   assert.match(tight.status_basis, /max_trials \(20000\) was reached while the footer hypothesis was being tried: \d+ of its 65 places/);
   assert.ok(tight.not_tried.some((l: string) => /^the footer hypothesis, in part: max_trials \(20000\) was reached/.test(l)), "not_tried says so");

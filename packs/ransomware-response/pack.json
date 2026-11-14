@@ -1,7 +1,7 @@
 {
   "id": "ransomware-response",
   "name": "Ransomware Response Pack",
-  "version": "1.14.4",
+  "version": "1.14.5",
   "description": "Evidence-led ransomware examination: preserve and scope the incident, reconstruct its phases, assess possible exfiltration and recovery impairment, identify supported family candidates, validate recovery options, and prepare qualified findings for notification and response decisions.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -116,8 +116,8 @@
       "tools/ransomware_scope_report/run.py": "5fcb65899277734c83f23cf79e22de52dc4c60de33adf5d8b9b142bef4ffa2de",
       "tools/recovery_validate/manifest.json": "93dff1d6c64b4cfe2fd96c13a06a04088c770c098e1ae4f8691a8353643924f7",
       "tools/recovery_validate/run.py": "dc1e0b2f56995f859f9d5068044ceb47daceeaf6eb5f1a37197691d80b22ef6a",
-      "tools/stream_kpa_check/manifest.json": "9d37f9612cb441afb88ff60cfc6855f31995e017decdc9a809079afca4633ad8",
-      "tools/stream_kpa_check/run.py": "04a9112c3a14008d702675cda522ad342ee11081454150d0c7bf0f5031f286bf"
+      "tools/stream_kpa_check/manifest.json": "4cfb93c782bc716853b288621d8a954725b4e67e5fa992c66bc9c672cc91c1a9",
+      "tools/stream_kpa_check/run.py": "e62ea3032f1b0aceb1e1b28733f2a284281c44e6b4712dc9f2abbbec9352f4c8"
     }
   },
   "tools": [

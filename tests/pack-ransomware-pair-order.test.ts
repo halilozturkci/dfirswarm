@@ -135,7 +135,7 @@ test("a dump key that opens its own member and, by chance, another of the same c
     assert.ok(kpa.recipe_file, label);
     const recipe = JSON.parse(await readFile(join(cwd, kpa.recipe_file), "utf8")) as Doc;
     assert.equal(recipe.key.xor_hex, fam.mask.toString("hex"), `${label}: the mask is the family's, not the one the chance opening gives`);
-    assert.equal(recipe.made_by, "stream_kpa_check/4");
+    assert.equal(recipe.made_by, "stream_kpa_check/5");
     seen.push({ explains: kpa.recipe.explains, key: kpa.recipe.key, rules: kpa.derived_rules.map(({ from_file: _f, ...rest }: Doc) => rest),
                 derivation: kpa.tried.derivation, trials: kpa.trials });
   }
@@ -149,12 +149,13 @@ test("a bound that stops the hypothesis before the pair that holds the rule: par
     const cwd = await sandbox();
     await writeFamily(cwd, fam, naming);
     // The sources' trials: 8. The pair (K, A) comes first by its bytes (A is the smaller file): its 65 places on 7 members are 455
-    // trials, so 100 more stop the hypothesis before the pair (K, B) is reached.
+    // trials, so 100 more stop the hypothesis before the pair (K, B) is reached. A place is begun only when its 7 trials fit in what
+    // is left (1.14.5): 14 places, 98 trials, and the 15th is not begun.
     const kpa = answer(await job(KPA, cwd, "j000001", { dir: "work/share", glob: "*.locked", key_sources: [{ file: "work/dumpkey.bin", offset: 0, length: 32 }],
       nonce_sources: [{ hex: fam.nonce.toString("hex") }], ciphers: ["chacha20-ietf"], counters: [0], trailer_bytes: 32, max_trials: 108 }));
     assert.equal(kpa.status, "partial", label);
     assert.equal(kpa.complete, false);
-    assert.equal(kpa.trials, 108);
+    assert.equal(kpa.trials, 106);
     assert.equal(kpa.tried.derivation.pairs, 2);
     assert.equal(kpa.tried.derivation.stopped_by, "max_trials");
     assert.ok(kpa.partial_reasons.some((r: string) => /^max_trials \(108\) was reached while the footer hypothesis was being tried/.test(r)), kpa.status_basis);
