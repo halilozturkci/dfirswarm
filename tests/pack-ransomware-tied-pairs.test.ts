@@ -164,7 +164,7 @@ test("N1: two members equal in every byte the pairs are ordered by and opened at
     const recipe = JSON.parse(await readFile(join(out, "stream-recipe.json"), "utf8")) as Doc;
     // The two rules tie on five members each; the one at the earlier place wins: the pairs of K (the first key of the dump) come first.
     assert.equal(recipe.key.xor_hex, fam.mask1.toString("hex"), `${label}: the mask of X, Y and the Zs`);
-    assert.equal(recipe.made_by, "stream_kpa_check/5");
+    assert.equal(recipe.made_by, "stream_kpa_check/6");
     assert.deepEqual(Object.keys(recipe.assignments).map(tagFrom).sort(), ["X", "Y", "Z0", "Z1", "Z2"]);
     assert.deepEqual(Object.keys(recipe.assignments), [...Object.keys(recipe.assignments)].sort(), "the assignments are written in the order of the paths");
     // X and Y are one group of two pairs; the rule at the tail with no skip is made from both.
@@ -268,7 +268,7 @@ test("derived_rules is paged by limit, and the result file holds every rule and 
   assert.equal(paged.status, "complete", paged.status_basis);
   assert.equal(paged.result_file, "store/jobs/j000002/out/stream-kpa-check.json");
   const kept = JSON.parse(await readFile(join(out, "stream-kpa-check.json"), "utf8")) as Doc;
-  assert.equal(kept.parser, "stream_kpa_check/5");
+  assert.equal(kept.parser, "stream_kpa_check/6");
   assert.deepEqual(kept.derived_rules, whole.derived_rules);
   assert.deepEqual(kept.files, whole.files);
   const text = await readFile(join(out, "stream-kpa-check.json"), "utf8");

@@ -254,7 +254,7 @@ test("more places than the hypothesis lists: 65,536 are listed, the others count
   assert.equal(w.status, "partial");
   assert.deepEqual([w.tried.derivation.places, w.tried.derivation.places_not_listed, w.tried.derivation.places_tried_on_every_member, w.tried.derivation.stopped_by],
     [65_536, 17_664, 65_536, "max_places"]);
-  assert.ok(w.partial_reasons.some((r: string) => /^the footer hypothesis has more places [\s\S]* than the 65536 it lists: the 65536 listed were tried on every member no rule explains[\s\S]* 17664 more places/.test(r)), w.status_basis);
+  assert.ok(w.partial_reasons.some((r: string) => /^the footer hypothesis has more places [\s\S]* than the 65536 it lists: the 65536 listed were tried on every member that has a crib[\s\S]* 17664 more places/.test(r)), w.status_basis);
   assert.ok(w.files.every((r: Doc) => r.verdict === "match"));
   assert.ok(whole.seconds < 400, `${whole.seconds} s`);
   assert.ok(whole.peak < 300e6, `peak resident memory ${whole.peak} bytes`);
@@ -299,7 +299,7 @@ test("the recipe is written under a temporary name and given a free one; a stop 
   assert.deepEqual(await readdir(plain.out), ["stream-recipe.json"]);
   const recipe = JSON.parse(await readFile(join(plain.out, "stream-recipe.json"), "utf8")) as Doc;
   assert.equal(recipe.key.hex, key.toString("hex"));
-  assert.equal(recipe.made_by, "stream_kpa_check/5");
+  assert.equal(recipe.made_by, "stream_kpa_check/6");
   // A recipe already there is not replaced.
   const second = join(cwd, "store", "jobs", "j000002", "out");
   await mkdir(second, { recursive: true });

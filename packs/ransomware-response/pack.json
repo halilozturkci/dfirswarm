@@ -1,7 +1,7 @@
 {
   "id": "ransomware-response",
   "name": "Ransomware Response Pack",
-  "version": "1.14.5",
+  "version": "1.14.6",
   "description": "Evidence-led ransomware examination: preserve and scope the incident, reconstruct its phases, assess possible exfiltration and recovery impairment, identify supported family candidates, validate recovery options, and prepare qualified findings for notification and response decisions.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -107,17 +107,17 @@
       "tools/family_decrypt/run.py": "6b4ce17a61e20fed714eb0d8e19db404640d136c60559f6c31e06c0b7412a178",
       "tools/ransom_note_scan/manifest.json": "dfe687c4d612cf47d83a21d98e994ca2599f72a04f0e2ba84acfcca667b57ee9",
       "tools/ransom_note_scan/run.py": "3e9d195e2b9682ec83c33904180e996212727779bcd320cc7485134ada39ce36",
-      "tools/ransomware_family_match/manifest.json": "6636a557185fec6753ef879d972a30f160ad4bc40e18a59132702fbe85351816",
+      "tools/ransomware_family_match/manifest.json": "e552cc2b863fbf7c1e11a7024cb463a713deeefdbefd3e5632d514dd0ef8e1c3",
       "tools/ransomware_family_match/reference/entries.json": "6b04bc8cf58dd4ab8999a76c3043c67cebba51dea9cff9cfd4c05de72beb6467",
       "tools/ransomware_family_match/reference/reference-manifest.json": "fe4268252acae595880630e832a938a77bb1577f7905e505fb106a6bdd08f4cf",
       "tools/ransomware_family_match/reference/rules.yar": "678bc6c9076d580975bd4713112c133e9e14783d73e244023b0cd389b8d38909",
-      "tools/ransomware_family_match/run.py": "5291ba94c4f47e82624a1427386f42deffe1cfc29bfbdb9103b47f4e2c401ec4",
+      "tools/ransomware_family_match/run.py": "a22cce647f11fcda329d5d2c4181de5398f8a9de354260ab16207a4295f12d8e",
       "tools/ransomware_scope_report/manifest.json": "887f715fab792a8304fec4b79ff92db5cfab7cac629c90e83105c5aed2a37085",
       "tools/ransomware_scope_report/run.py": "5fcb65899277734c83f23cf79e22de52dc4c60de33adf5d8b9b142bef4ffa2de",
-      "tools/recovery_validate/manifest.json": "93dff1d6c64b4cfe2fd96c13a06a04088c770c098e1ae4f8691a8353643924f7",
-      "tools/recovery_validate/run.py": "dc1e0b2f56995f859f9d5068044ceb47daceeaf6eb5f1a37197691d80b22ef6a",
-      "tools/stream_kpa_check/manifest.json": "4cfb93c782bc716853b288621d8a954725b4e67e5fa992c66bc9c672cc91c1a9",
-      "tools/stream_kpa_check/run.py": "e62ea3032f1b0aceb1e1b28733f2a284281c44e6b4712dc9f2abbbec9352f4c8"
+      "tools/recovery_validate/manifest.json": "eea140ae8fc83862c5389b1ec25d33c2fdada651ba0603fcf524b2ae5d19aea8",
+      "tools/recovery_validate/run.py": "6c0694c5aa4632b23b4baa144e54c6765b82d4d3c8ed7f2d99d4391171a23e29",
+      "tools/stream_kpa_check/manifest.json": "8930d72b027bd18f322eb240e73038b912cf473765c1d45842950b2bca85bb3c",
+      "tools/stream_kpa_check/run.py": "c5e47c47e58ad5d42dacbc727cc2838fa53b63e82f75a59e8b4d6602f2479a38"
     }
   },
   "tools": [

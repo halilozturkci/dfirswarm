@@ -135,7 +135,7 @@ test("a dump key that opens its own member and, by chance, another of the same c
     assert.ok(kpa.recipe_file, label);
     const recipe = JSON.parse(await readFile(join(cwd, kpa.recipe_file), "utf8")) as Doc;
     assert.equal(recipe.key.xor_hex, fam.mask.toString("hex"), `${label}: the mask is the family's, not the one the chance opening gives`);
-    assert.equal(recipe.made_by, "stream_kpa_check/5");
+    assert.equal(recipe.made_by, "stream_kpa_check/6");
     seen.push({ explains: kpa.recipe.explains, key: kpa.recipe.key, rules: kpa.derived_rules.map(({ from_file: _f, ...rest }: Doc) => rest),
                 derivation: kpa.tried.derivation, trials: kpa.trials });
   }
