@@ -3,6 +3,7 @@ id: volumes/layered-reading
 title: Reading an encrypted volume through its layers
 when: An encrypted volume sits inside a disk image or virtual disk and you open it in user space.
 needs: [filesystem/layers]
+card: An offset means something only inside one layer: say which layer each number belongs to (wrapper, virtual disk, partition table, encryption layer, file system). Name the encryption layer at its own byte offset: crypto_id, then crypto_metadata ({"path": "<image>", "offset": <bytes>}). Write the unlocked layer out with materialise_decrypted ({"operation": "luks_image", "source": "<image>", "offset": <bytes>, "key_ref": "<sealed 0600 file>"}; bitlocker_image for BitLocker) in a job with secret_output: true; a mount is not a sealed output. Validate the result: size, first sector, then a read-only file system reader. Does not show: that a layer nobody opened holds nothing.
 tools: [crypto_id, crypto_metadata, materialise_decrypted]
 requires_host: []
 ---

@@ -200,8 +200,11 @@ for (const holder of HOLDERS) {
         assert.ok(Date.now() - began < 25000, `took ${Date.now() - began} ms`);
         // a writer on the pipe adds its bytes to the name target-query printed: the name is then not one the recipe recognises, and it says "unknown" (exit 2), which closes no route
         const said = JSON.parse(run.stdout.trim().split("\n").pop() ?? "{}");
-        assert.equal(run.code, ["slow", "fast", "yes"].includes(holder) ? 2 : 0, run.stderr + run.stdout);
-        assert.equal(said.applies, ["slow", "fast", "yes"].includes(holder) ? "unknown" : true);
+        // (an errflood fills standard error past the block's running cap while target-query still runs: it is ended there, and the OS is then not identified either)
+        const unknown = ["slow", "fast", "yes", "errflood"].includes(holder);
+        assert.equal(run.code, unknown ? 2 : 0, run.stderr + run.stdout);
+        assert.equal(said.applies, unknown ? "unknown" : true);
+        if (holder === "errflood") assert.match(said.why, /target-query's output was not read whole \(the program printed more than \d+ bytes on its standard error/);
         if (!NO_ADOPTION) for (const pid of await pids(cwd)) assert.equal(alive(pid), false, `holder ${pid} is gone`);
       } finally {
         await reap(cwd);
@@ -278,7 +281,8 @@ for (const holder of HOLDERS) {
           assert.equal(run.code, 0, run.stderr + run.stdout);
           const answer = JSON.parse(run.stdout);
           assert.equal(answer.status, "partial", JSON.stringify(answer.status_basis));
-          assert.ok(answer.program_group.left_behind >= 1, JSON.stringify(answer.program_group));
+          // a holder that floods while --version still runs passes the block's running output cap: it is ended with the program (kill_tree), not counted as left behind, and the cut is said
+          assert.ok(answer.program_group.left_behind >= 1 || OUTPUT_CUT_SAYS.test(cutText(answer)), JSON.stringify([answer.program_group, cutText(answer)]));
           for (const pid of await pids(cwd)) assert.equal(alive(pid), false, `holder ${pid} is gone`);
         } finally {
           await reap(cwd);
@@ -296,6 +300,8 @@ for (const holder of HOLDERS) {
 
 const CUT_SAYS = /a process that held (a program's|target-query's|the wrapper's) pipe after (the program|it) ended went on writing: the (tool|recipe) read no more than 1048576 bytes of it/;
 const cutText = (a: Record<string, unknown>): string => JSON.stringify([a.status_basis, a.problems, a.errors]);
+/** A flooder that starts while the program still runs passes the block's running output cap (OUTPUT_CUT): the program is ended there with what it started, the flooder with it. */
+const OUTPUT_CUT_SAYS = /a program's output was not read whole: the program printed more than \d+ bytes on its standard (output|error)/;
 
 async function stagePipeTool(cwd: string, bin: string, which: "package_verify" | "audit_events", holder: string | undefined): Promise<{ script: string; args: Record<string, unknown>; env: Record<string, string> }> {
   const dir = await stubDir(cwd);
@@ -328,13 +334,18 @@ for (const which of ["package_verify", "audit_events"] as const) {
             const answer = JSON.parse(run.stdout);
             assert.equal(answer.status, "partial", JSON.stringify(answer.status_basis));
             if ("ok" in answer) assert.equal(answer.ok, false);
-            assert.match(cutText(answer), CUT_SAYS);
-            assert.match(cutText(answer), /may contain bytes the program did not write/);
-            assert.match(JSON.stringify(answer.program_group.notes), /went on writing/);
+            // the flooder starts before the program has ended: the running output cap ends the program and it (OUTPUT_CUT), or, where the program ended first, the cut at
+            // POST_EXIT_BYTES ends the flooder (PIPE_CUT). Either is said, and either is partial.
+            const running = OUTPUT_CUT_SAYS.test(cutText(answer));
+            if (!running) {
+              assert.match(cutText(answer), CUT_SAYS);
+              assert.match(cutText(answer), /may contain bytes the program did not write/);
+              assert.match(JSON.stringify(answer.program_group.notes), /went on writing/);
+            } else assert.match(JSON.stringify(answer.program_group.notes), /the program printed more than \d+ bytes/);
             // (the host "linux" is this machine: a machine that cannot adopt orphans, macOS, finds nothing here, and the cut alone makes it partial, as on the other hosts)
             // (on a real macOS the tool also looks at the processes it saw below the program, and may find and end the flooder: then it counts it; the cut makes the answer partial either way)
             if (NO_ADOPTION) assert.ok(answer.program_group.left_behind >= 0, "the flooder is counted if it was found");
-            else if (host !== "linux") assert.equal(answer.program_group.left_behind, 0, "nothing was found: the cut alone makes it partial");
+            else if (host !== "linux" || running) assert.equal(answer.program_group.left_behind, 0, "nothing was left (the cap ended it with the program) or found: the cut alone makes it partial");
             else assert.ok(answer.program_group.left_behind >= 1);
             if (host === "linux" && !NO_ADOPTION) for (const pid of await pids(cwd)) assert.equal(alive(pid), false, `flooder ${pid} is gone`);
           } finally {
@@ -367,10 +378,17 @@ for (const host of ["linux", "refused", "darwin"] as const) {
       try {
         const run = await exec(RECIPE, ["detect", "--target", join(cwd, "target.json")], undefined, cwd, bin, { STUB_DIR: dir, STUB_LEFT: "setsiderr" }, host);
         const said = JSON.parse(run.stdout.trim().split("\n").pop() ?? "{}");
-        assert.equal(run.code, 0, run.stderr + run.stdout);
-        assert.equal(said.applies, true);
-        assert.equal(said.status, "partial", said.status_basis);
-        assert.match(said.status_basis, /target-query's pipe after it ended went on writing: the recipe read no more than 1048576 bytes/);
+        if (said.applies === "unknown") {
+          // the flood began while target-query still ran: its standard error passed the block's running cap, the program was ended there (with the flooder), and an answer from a
+          // program ended at a cap is not taken: the OS is not identified, no route is closed, and the cut is said
+          assert.equal(run.code, 2, run.stderr + run.stdout);
+          assert.match(said.why, /target-query's output was not read whole \(the program printed more than \d+ bytes on its standard error/);
+        } else {
+          assert.equal(run.code, 0, run.stderr + run.stdout);
+          assert.equal(said.applies, true);
+          assert.equal(said.status, "partial", said.status_basis);
+          assert.match(said.status_basis, /target-query's pipe after it ended went on writing: the recipe read no more than 1048576 bytes/);
+        }
       } finally {
         await reap(cwd);
       }
@@ -416,11 +434,16 @@ for (const host of ["linux", "refused", "darwin"] as const) {
         const run = await exec(join(recipeCopy, "run.py"), ["run", "--target", join(cwd, "target.json"), "--out", join(cwd, "recipe-out")], undefined, cwd, bin, {}, host);
         const line = JSON.parse(run.stdout.trim().split("\n").pop() ?? "{}");
         const coverage = JSON.parse(await readFile(join(cwd, "recipe-out", "coverage.json"), "utf8"));
+        // the flooder starts before the wrapper has ended: where its flood passes the block's running output cap first, the wrapper is ended there with it (OUTPUT_CUT);
+        // where the wrapper ends first, the cut at POST_EXIT_BYTES ends the flooder (PIPE_CUT). Either is the recipe's own verdict, partial, with its sentence.
+        const running = /a program's output was not read whole/.test(JSON.stringify(coverage.errors));
         for (const said of [coverage, line]) {
           assert.equal(said.status, "partial", JSON.stringify(said.status_basis));
-          assert.match(JSON.stringify([said.status_basis, said.errors]), /a process that held the wrapper's pipe after it ended went on writing: the recipe read no more than 1048576 bytes of it/);
+          assert.match(JSON.stringify([said.status_basis, said.errors]), running ? /a program's output was not read whole \(the program printed more than \d+ bytes on its standard output/ :
+            /a process that held the wrapper's pipe after it ended went on writing: the recipe read no more than 1048576 bytes of it/);
         }
-        assert.match(JSON.stringify(coverage.errors), /summary\.json and runner\.stderr in the output directory may contain bytes the wrapper did not write/);
+        assert.match(JSON.stringify(coverage.errors), running ? /summary\.json and runner\.stderr in the output directory hold only what was kept/ :
+          /summary\.json and runner\.stderr in the output directory may contain bytes the wrapper did not write/);
       } finally {
         await reap(cwd);
       }

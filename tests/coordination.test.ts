@@ -10,6 +10,7 @@
  * once, a restart in the middle of an offer, and a compacting seat.
  */
 import assert from "node:assert/strict";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -507,4 +508,20 @@ test("compaction: a compacting seat is offered nothing: a reopen after the opera
   await traceRow(S, "a1", "compact_done");
   assert.equal((await L.seatAvailable(S, "a1")).available, true);
   void ctx;
+});
+
+test("the header says how many seats work now, and what each of the others is", async () => {
+  const { S } = await run();
+  const now = new Date();
+  await traceRow(S, "a1", "bash", new Date(now.getTime() - 40 * 60_000));
+  await traceRow(S, "a0", "bash", now);
+  await traceRow(S, "a2", "wait", now); // waiting is not work
+  mkdirSync(join(S, "done", "agents"), { recursive: true });
+  writeFileSync(join(S, "done", "agents", "a3.done"), "");
+  const line = await L.seatsWorkingLine(S, await L.leadsSnapshot(S), now.getTime());
+  assert.match(line ?? "", /^Seats working: 1 of 4 \(/);
+  assert.match(line!, /a1 silent \d+\+? min/);
+  assert.match(line!, /a2 silent/);
+  assert.match(line!, /a3 done/);
+  assert.ok(line!.length < 300);
 });

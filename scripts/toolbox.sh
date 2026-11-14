@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
 # toolbox: what the forensic tools on this host are, before any money is spent.
 #
-#   scripts/toolbox.sh <sandbox> dfir[,crypto,linux] [--required] [--image FILE]
+#   scripts/toolbox.sh <sandbox> dfir[,crypto,linux] [--required] [--image FILE] [--requires CAPS]
+#
+# --requires CAPS: what the case's questions need done (video-decode,
+# qr-decode, …, from the goal's metadata block `requires:` or the kickoff's
+# --requires). Each capability is met when one of its programs is present and,
+# where it has one, passes a probe that does the work (zbarimg reads a PNG).
+# toolbox.json gains "requires": [{capability, met, by, wanted, use}]; one not
+# met is a WARN line before anything starts, a BLOCKER with --required. On
+# one case three questions closed not determinable for want of a video
+# decoder and a QR reader nobody had asked the image for.
 #
 # Writes <sandbox>/toolbox.json: {"preset", "checked_at", "present": [{name,
 # version, use}], "missing": [{name, use, install}]}. Missing tools are a WARN
@@ -23,11 +32,13 @@ sandbox="${1:-}"
 preset="${2:-dfir}"
 required=0
 image_file=""
+requires=""
 shift 2 2>/dev/null || true
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --required) required=1; shift ;;
     --image) image_file="$2"; shift 2 ;;
+    --requires) requires="$2"; shift 2 ;;
     *) echo "toolbox: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -108,6 +119,54 @@ for one in "${PRESETS[@]}"; do
   esac
 done
 
+# What a question may need done, and the programs that do it (any one
+# serves): name | programs | what for. A probe, where one is given, runs the
+# program on a small input, because a program that is there may still not do
+# the work (a zbarimg built without ImageMagick's PNG coder reads no PNG).
+CAPABILITIES=(
+  "video-decode|ffmpeg ffprobe|decode a video's frames and streams"
+  "audio-decode|ffmpeg sox|decode audio streams"
+  "qr-decode|zbarimg|decode QR codes and barcodes in images (zbar)"
+  "ocr|tesseract|read the text in an image"
+  "image-convert|magick convert|convert and inspect images (ImageMagick)"
+  "pdf-text|pdftotext mutool|the text of a PDF"
+  "office-macros|olevba|macros in Office documents (oletools)"
+  "archive-7z|7z 7zz|7-Zip archives and the formats 7-Zip opens"
+  "pcap|tshark tcpdump|network captures"
+  "stego|steghide zsteg stegseek|common steganography in images and audio"
+  "memory|vol|memory images (Volatility 3)"
+)
+# An 8x8 white PNG: a zbarimg that can read PNG finds no symbol in it (exit 4).
+PROBE_PNG="iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAAAAADhZOFXAAAAEElEQVR42mP8zwABTAwUMQBJQQEPkWFcdwAAAABJRU5ErkJggg=="
+capability_probe() { # <program>: 0 when it does the work, 1 when it does not; no probe is 0
+  case "$1" in
+    zbarimg)
+      local d rc=0
+      d="$(mktemp -d)"
+      if printf '%s' "$PROBE_PNG" | base64 -d > "$d/probe.png" 2>/dev/null || printf '%s' "$PROBE_PNG" | base64 -D > "$d/probe.png" 2>/dev/null; then
+        zbarimg -q "$d/probe.png" >/dev/null 2>&1 || rc=$?
+      else
+        rc=0
+      fi
+      rm -rf "$d"
+      # 0: a symbol, 4: none found; anything else (2: ImageMagick could not read it) is a reader that cannot read.
+      [[ "$rc" -eq 0 || "$rc" -eq 4 ]] ;;
+    *) return 0 ;;
+  esac
+}
+wanted_caps=()
+if [[ -n "$requires" ]]; then
+  IFS="," read -r -a wanted_caps <<< "$requires"
+  for cap in "${wanted_caps[@]}"; do
+    known=0
+    for spec in "${CAPABILITIES[@]}"; do [[ "${spec%%|*}" == "$cap" ]] && known=1; done
+    if [[ "$known" -eq 0 ]]; then
+      echo "toolbox: unknown capability $cap ($(for spec in "${CAPABILITIES[@]}"; do printf '%s ' "${spec%%|*}"; done | sed 's/ $//'))" >&2
+      exit 2
+    fi
+  done
+fi
+
 # In an image: the packs' own programs, and the VM's install hint.
 image_ref=""
 pack_required=" "
@@ -152,6 +211,34 @@ for spec in "${TOOLS[@]}"; do
   fi
 done
 
+# The capabilities the case requires: met by a program present that passes its probe.
+cap_rows=()
+cap_unmet=()
+for cap in ${wanted_caps[@]+"${wanted_caps[@]}"}; do
+  for spec in "${CAPABILITIES[@]}"; do
+    [[ "${spec%%|*}" == "$cap" ]] || continue
+    rest="${spec#*|}"; progs="${rest%%|*}"; use="${rest#*|}"
+    by=()
+    unusable=()
+    for prog in $progs; do
+      command -v "$prog" >/dev/null 2>&1 || continue
+      if capability_probe "$prog"; then by+=("$prog"); else unusable+=("$prog"); fi
+    done
+    met=false
+    [[ "${#by[@]}" -gt 0 ]] && met=true
+    cap_rows+=("$(jq -cn --arg c "$cap" --argjson met "$met" --arg by "${by[*]-}" --arg wanted "$progs" --arg u "$use" --arg bad "${unusable[*]-}" \
+      '{capability: $c, met: $met, by: ($by | split(" ") | map(select(. != ""))), wanted: ($wanted | split(" ")), use: $u}
+       + (if $bad == "" then {} else {present_but_failed_probe: ($bad | split(" "))} end)')")
+    if [[ "$met" == false ]]; then
+      if [[ "${#unusable[@]}" -gt 0 ]]; then
+        cap_unmet+=("$cap (${unusable[*]} is there and could not do it on a test input)")
+      else
+        cap_unmet+=("$cap (none of: $progs)")
+      fi
+    fi
+  done
+done
+
 # An image that describes itself (images/install.py writes tools.md) is named
 # to the swarm by that file: the contract points at it and lists no program.
 tools_md=""
@@ -160,7 +247,9 @@ tools_md=""
 printf '%s\n' "${present[@]+"${present[@]}"}" | jq -s --arg preset "$preset" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   --arg image "$image_ref" --argjson missing "$(printf '%s\n' "${missing[@]+"${missing[@]}"}" | jq -s '.')" \
   --argjson na "$not_applicable" --arg tools_md "$tools_md" \
+  --argjson requires "$(printf '%s\n' "${cap_rows[@]+"${cap_rows[@]}"}" | jq -s '.')" \
   '{preset: $preset, checked_at: $at, present: ., missing: $missing}
+   + (if ($requires | length) > 0 then {requires: $requires} else {} end)
    + (if $image == "" then {context: "host"} else {context: "image", image: $image} end)
    + (if ($na | length) > 0 then {not_applicable: $na} else {} end)
    + (if $tools_md != "" then {tools_md: $tools_md} else {} end)' > "$sandbox/toolbox.json"
@@ -179,4 +268,15 @@ if [[ "${#warn[@]}" -gt 0 ]]; then
   fi
   echo "WARN: toolbox: missing ${warn[*]} (install commands in toolbox.json)" >&2
 fi
-echo "toolbox: $(( ${#present[@]} )) present, ${#missing[@]} missing -> $sandbox/toolbox.json"
+if [[ "${#cap_unmet[@]}" -gt 0 ]]; then
+  where="this host"
+  [[ -n "$image_file" ]] && where="the image"
+  if [[ "$required" -eq 1 ]]; then
+    echo "BLOCKER: --toolbox-required and the case requires what $where cannot do: ${cap_unmet[*]}. The questions that need it would close not determinable; supply a program right after the start with `swarm.sh tool-supply <id> add PATH --provides <capability>`, which tests it against a known answer in a worker job before the seats rely on it (they run it with job_run programs) or use an image that has it." >&2
+    exit 3
+  fi
+  for u in "${cap_unmet[@]}"; do
+    echo "WARN: the case requires ${u%% *} and $where cannot do it ${u#* }. The questions that need it may close not determinable; supply a program right after the start with `swarm.sh tool-supply <id> add PATH --provides <capability>`, which tests it against a known answer in a worker job before the seats rely on it (they run it with job_run programs), use an image that has it, or stop now." >&2
+  done
+fi
+echo "toolbox: $(( ${#present[@]} )) present, ${#missing[@]} missing$( [[ "${#cap_rows[@]}" -gt 0 ]] && echo ", $(( ${#cap_rows[@]} - ${#cap_unmet[@]} ))/${#cap_rows[@]} required capabilities met") -> $sandbox/toolbox.json"

@@ -3,6 +3,7 @@ id: containers/removed-logs
 title: Removed containers and the daemon log
 when: A container is gone and you ask what else records it, including the daemon's journal.
 needs: []
+card: journal_export {"path": "<the evidence's journal>", "unit": "docker.service"} reads the daemon's log from the evidence, never this machine's journal; keep it in a secret_output job (command lines) and cite file and entry. Removing a container removes its metadata and writable layer; volumes, bind mounts, rotated or remote logs, snapshots, orchestration records and deleted remnants can survive. Check the logging driver: json-file paths do not cover other drivers or CRI logs. A missing Docker directory clears no other runtime; name retention and the missing sources before a bounded negative. Does not show: that a container never existed, or what ran in it.
 tools: [journal_export]
 requires_host: []
 ---

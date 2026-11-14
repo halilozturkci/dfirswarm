@@ -329,12 +329,12 @@ def install_stop(last_word=None, cooperative=False):
 
 
 def interrupted_answer(signum, **extra):
-    if signum is None:       # the clock ran out, and then GRACE_SECONDS more, with a read that had not returned
+    if signum is None:       # the clock ran out, and then GRACE_SECONDS more, before the tool answered
         print(json.dumps({"status": "partial", "partial": True, "interrupted": True, "hard_stopped": True,
                           "stopped_by": "the tool's time limit (%s seconds) was reached" % STOP["limit"],
-                          "status_basis": "the tool's time limit (%s seconds) and %d seconds more passed while a read had not returned (a file on a "
-                                          "volume or share that is not available, or a pipe); the tool was ended there, and nothing it had read is "
-                                          "an answer" % (STOP["limit"], GRACE_SECONDS), **extra}), flush=True)
+                          "status_basis": "the tool's time limit (%s seconds) and %d seconds more passed before the tool could answer (a read that "
+                                          "had not returned, from a volume or share that is not available or a pipe, or work between two reads of "
+                                          "its clock); the tool was ended there, and nothing it had read is an answer" % (STOP["limit"], GRACE_SECONDS), **extra}), flush=True)
         return
     print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "failed", "interrupted": True,
                       "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
@@ -1584,7 +1584,10 @@ def seal(value, key=None):
 # pipe wrote can be cut. At the cap the tool stops reading, ends the holder (reap_orphans, settle) and lets the pipes go: PIPE_CUT["cut"]
 # counts the calls cut that way, process_notes() says so, and process_apply turns a complete answer partial. The bytes kept are the ones
 # read, not a whole stream: a caller that parses the output sees the program's output and at most 1 MiB of what a leftover wrote. While the
-# program is still alive nothing is capped here (a program's own output is its caller's to bound); the timing is unchanged.
+# program runs each stream has a running cap too (STDOUT_CAP 64 MiB, STDERR_CAP 8 MiB with its head and last STDERR_TAIL 1 MiB kept, or the
+# caller's `caps`): past it the program is ended on the deadline's own path (kill_tree, its tree only), the stream comes back cut
+# (Output.cut, output_cut()), OUTPUT_CUT counts the call and process_apply turns a complete answer partial; a caller that parses a cut
+# output says so and never takes it for a whole one.
 import select as _select
 import selectors as _selectors
 import time
@@ -2404,11 +2407,12 @@ def process_verdict():
 def process_apply(answer):
     """Put process_verdict() into `answer` as answer["program_group"] and, when a program left a process behind or that cannot be ruled out,
     turn a complete answer into a partial one (status "partial", the ok and complete flags that are there false, a sentence in status_basis;
-    a call of communicate_bounded that was cut at POST_EXIT_BYTES counts, PIPE_CUT):
-    what a program wrote while the tool read it is not a complete result. A carrier calls it once where it prints its answer. Returns `answer`."""
+    a call of communicate_bounded that was cut at POST_EXIT_BYTES counts, PIPE_CUT, and so does one that ended a program whose output passed
+    its running cap, OUTPUT_CUT): what a program wrote while the tool read it, or what it printed past a cap, is not a complete result. A
+    carrier calls it once where it prints its answer. Returns `answer`."""
     verdict = process_verdict()
     answer["program_group"] = verdict
-    if (verdict["left_behind"] > 0 or verdict["unproven"] or PIPE_CUT["cut"]) and answer.get("status") == "complete":
+    if (verdict["left_behind"] > 0 or verdict["unproven"] or PIPE_CUT["cut"] or OUTPUT_CUT["cut"]) and answer.get("status") == "complete":
         answer["status"] = "partial"
         for flag in ("ok", "complete"):
             if flag in answer:
@@ -2416,6 +2420,8 @@ def process_apply(answer):
         if verdict["left_behind"] > 0:
             sentence = "a program left %d process%s running after it ended; the tool ended them, and what they wrote before that is in the files named here" % (
                 verdict["left_behind"], "" if verdict["left_behind"] == 1 else "es")
+        elif OUTPUT_CUT["cut"]:
+            sentence = "a program's output was not read whole: %s" % OUTPUT_CUT["last"]
         elif PIPE_CUT["cut"]:
             sentence = "a process that held a program's pipe after it ended went on writing; the tool read no more than %d bytes of it and let the pipe go" % POST_EXIT_BYTES
         else:
@@ -2424,22 +2430,57 @@ def process_apply(answer):
         answer["status_basis"] = "%s; %s" % (basis, sentence) if isinstance(basis, str) and basis else sentence
     return answer
 
-
 PIPE_GRACE = 1.0    # seconds the pipes of a program that has ended are given to reach end of file
 POST_EXIT_BYTES = 1 << 20    # the most bytes (both pipes together) read from the pipes of a program that has ended
 PIPE_CUT = {"cut": 0}        # how many calls stopped reading at POST_EXIT_BYTES because a process still held the pipes and went on writing
+STDOUT_CAP = 64 << 20        # the most bytes of standard output one call of communicate_bounded keeps; past it the program is ended and the output is cut
+STDERR_CAP = 8 << 20         # the most bytes of standard error one call reads before it ends the program; it keeps the head and the last STDERR_TAIL bytes
+STDERR_TAIL = 1 << 20        # the tail of standard error kept once it passes STDERR_CAP (a program's last words are at its end)
+OUTPUT_CUT = {"cut": 0, "last": None}    # how many calls cut a stream at its running cap, and the sentence of the last one
 
 
-def communicate_bounded(proc, seconds, input=None):
-    """(stdout bytes, stderr bytes, timed out) for a program started with pipes, in bytes. At `seconds` the program and what it started
-    are killed (timed out). A program that has ended while something it started still holds its pipes (a daemon, a helper that
-    inherited them) does not hold the tool: from the moment the program has ended (or was killed) the pipes are given PIPE_GRACE seconds
-    and POST_EXIT_BYTES bytes, whichever is used up first; what the program wrote is kept, what the tool lost is killed (reap_orphans,
-    settle), and the pipes are let go. A cut at the byte cap is counted in PIPE_CUT and noted (process_notes()); the return shape is the
-    same. The pipes are read here and by nothing else (not by Popen.communicate), so letting them go is safe. `input` is written while
-    the program runs and is dropped once it has ended."""
+class Output(bytes):
+    """What communicate_bounded kept of one stream: the bytes, and `cut`, None when the stream was read whole, or a sentence saying it was
+    not (the program printed past the stream's cap and was ended there). A caller that parses the output reads `cut` first: a cut output
+    is never a whole one."""
+    cut = None
+
+
+def output_cut(*outputs):
+    """The sentence of the first of `outputs` (values communicate_bounded or preflight returned) that was cut at its cap; None when each was
+    read whole."""
+    for out in outputs:
+        text = getattr(out, "cut", None)
+        if text:
+            return text
+    return None
+
+
+def _output(data, cut):
+    out = Output(data)
+    out.cut = cut
+    return out
+
+
+def communicate_bounded(proc, seconds, input=None, caps=None):
+    """(stdout bytes, stderr bytes, timed out) for a program started with pipes, in bytes (Output: bytes with a `cut` sentence or None). At
+    `seconds` the program and what it started are killed (timed out). What the tool holds is capped while the program runs: `caps` is
+    (stdout cap, stderr cap), STDOUT_CAP and STDERR_CAP when it is None. Standard output is kept to its cap; standard error keeps its head and
+    its last STDERR_TAIL bytes (at most half its cap). When either stream passes its cap the program and what it started are ended (kill_tree,
+    the deadline's own path: its tree, nothing else), what was kept is returned with `cut` set on that stream, the call is counted in
+    OUTPUT_CUT and said in process_notes(), and process_apply turns a complete answer partial. A program that has ended while something it
+    started still holds its pipes (a daemon, a helper that inherited them) does not hold the tool: from the moment the program has ended (or
+    was killed) the pipes are given PIPE_GRACE seconds and POST_EXIT_BYTES bytes, whichever is used up first; what the program wrote is kept,
+    what the tool lost is killed (reap_orphans, settle), and the pipes are let go. A cut at the byte cap is counted in PIPE_CUT and noted
+    (process_notes()); the return shape is the same. The pipes are read here and by nothing else (not by Popen.communicate), so letting them
+    go is safe. `input` is written while the program runs and is dropped once it has ended."""
     deadline = time.monotonic() + max(0.1, seconds)
-    bufs = (bytearray(), bytearray())
+    out_cap, err_cap = (STDOUT_CAP, STDERR_CAP) if caps is None else (max(0, int(caps[0])), max(0, int(caps[1])))
+    tail_keep = min(STDERR_TAIL, err_cap // 2)
+    bufs = (bytearray(), bytearray())       # standard output; the head of standard error
+    tail = bytearray()                      # the last tail_keep bytes of standard error read past its head
+    seen, over = [0, 0], [False, False]     # bytes read from each stream; the stream passed its cap while the program ran
+    late = [False, False]                   # the stream passed its cap after the program had ended (by itself, or at the deadline)
     sel = _selectors.DefaultSelector()
     pending = memoryview(input) if input and proc.stdin is not None else None
     for index, stream in enumerate((proc.stdout, proc.stderr)):
@@ -2450,13 +2491,17 @@ def communicate_bounded(proc, seconds, input=None):
             sel.register(proc.stdin, _selectors.EVENT_WRITE, 2)
         else:
             _close_pipe(proc.stdin)
-    timed_out, note, ended, extra, cut, sampled = False, None, None, 0, False, 0.0
+    timed_out, note, ended, extra, cut, sampled, ended_at_cap = False, None, None, 0, False, 0.0, False
     try:
         while True:
             now = time.monotonic()
             if ended is None:
                 if proc.poll() is not None:
                     ended = now
+                elif over[0] or over[1]:
+                    ended_at_cap = True
+                    note = kill_tree(proc)
+                    ended = time.monotonic()
                 elif now >= deadline:
                     timed_out = True
                     note = kill_tree(proc)
@@ -2499,9 +2544,29 @@ def communicate_bounded(proc, seconds, input=None):
                 if not data:
                     sel.unregister(key.fileobj)
                     continue
-                bufs[key.data].extend(data)
+                index = key.data
+                seen[index] += len(data)
                 if ended is not None:
                     extra += len(data)
+                if index == 0:
+                    room = out_cap - len(bufs[0])
+                    if room > 0:
+                        bufs[0].extend(data[:room])
+                    if seen[0] > out_cap:
+                        over[0], late[0] = (over[0], True) if ended is not None else (True, late[0])
+                else:
+                    room = err_cap - tail_keep - len(bufs[1])
+                    if room > 0:
+                        bufs[1].extend(data[:room])
+                        data = data[room:]
+                    if data:
+                        tail.extend(data)
+                        if len(tail) > tail_keep:
+                            del tail[:len(tail) - tail_keep]
+                    if seen[1] > err_cap:
+                        over[1], late[1] = (over[1], True) if ended is not None else (True, late[1])
+                if (over[0] or over[1]) and ended is None:
+                    break           # the loop's head ends the program at once
         if any(key.data != 2 for key in sel.get_map().values()):
             reap_orphans(_pipe_inodes(proc))
             settle()
@@ -2517,10 +2582,27 @@ def communicate_bounded(proc, seconds, input=None):
     except subprocess.TimeoutExpired:
         pass
     settle()
+    # A stream that passed its cap only after the program had ended is cut too, unless the pipes were cut at POST_EXIT_BYTES: then what passed
+    # it is a process that held the pipe and went on writing, PIPE_CUT says so, and the program's own output was read whole.
+    for index in (0, 1):
+        over[index] = over[index] or (late[index] and not cut)
+    ending = "; the tool ended the program there" if ended_at_cap else ""
+    out_cut = ("the program printed more than %d bytes on its standard output; the tool kept the first %d and did not read the rest%s" % (
+        out_cap, len(bufs[0]), ending)) if over[0] else None
+    err_cut = ("the program printed more than %d bytes on its standard error; the tool kept the first %d and the last %d%s" % (
+        err_cap, len(bufs[1]), len(tail), ending)) if over[1] else None
+    for sentence in (out_cut, err_cut):
+        if sentence:
+            OUTPUT_CUT["cut"] += 1
+            OUTPUT_CUT["last"] = sentence
+            _note(sentence)
     err = bytes(bufs[1])
+    if over[1]:
+        err += b"\n[... %d bytes of standard error not kept ...]\n" % (seen[1] - len(bufs[1]) - len(tail))
+    err += bytes(tail)
     if note:
         err = err + (b"\n" if err else b"") + note.encode("utf-8", "replace")
-    return bytes(bufs[0]), err, timed_out
+    return _output(bufs[0], out_cut), _output(err, err_cut), timed_out     # (one copy of standard output, not two)
 
 
 def _close_pipe(pipe):
@@ -2567,19 +2649,19 @@ def _on_signal(signum, _frame):
     os._exit(128 + signum)
 
 
-def preflight(argv, seconds):
-    """Run a short program, bounded; (exit code or None, stdout bytes, stderr bytes, timed out)."""
+def preflight(argv, seconds, caps=None):
+    """Run a short program, bounded; (exit code or None, stdout bytes, stderr bytes, timed out). The outputs are communicate_bounded's (Output,
+    held to `caps`): a program ended because a stream passed its cap has that stream's `cut` set (output_cut()) and its own exit code."""
     try:
         proc = spawn(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except OSError as exc:
-        return None, b"", describe(exc).encode("utf-8", "replace"), False
+        return None, _output(b"", None), _output(describe(exc).encode("utf-8", "replace"), None), False
     ACTIVE.append(proc)
     try:
-        out, err, timed_out = communicate_bounded(proc, max(1.0, seconds))
+        out, err, timed_out = communicate_bounded(proc, max(1.0, seconds), caps=caps)
         return (None if timed_out else proc.returncode), out, err, timed_out
     finally:
         ACTIVE.remove(proc)
-
 
 def run_to_files(argv, stdout_path, stderr_path, seconds, cwd=None):
     """One program with its output in files, killed with what it started at `seconds`. (exit code, timed out)."""
@@ -2891,10 +2973,9 @@ def main():
 
     # The reader is looked for before the key is touched. The native modules are never imported in this process: a library that dies
     # (a signal in its code) must not take the tool down with it, so every import and every call of a reader is made by a child of this file.
-    found = probe_reader(spec["module"], operation, seconds)
-    if found is None:
+    available, version = probe_reader(spec["module"], operation, seconds)
+    if not available:
         return
-    version = found
     if kind != "clear_key":
         kfd, ksize = open_regular(key_ref, "key_ref", secret=True)       # the key file is checked here, its bytes are read by the child only
         os.close(kfd)
@@ -3155,19 +3236,20 @@ def reader_child(mode):
 
 def _run_child(mode, job, seconds, pass_fds=()):
     """Run the reader child with `job` on its standard input (a short JSON object: no key, only where the key file is), bounded: at `seconds`
-    it is ended with everything it started. (exit code or None, its answer or None, timed out)."""
+    it is ended with everything it started. (exit code or None, its answer or None, timed out, why it could not be started or None, the
+    sentence of an output that passed READER_RESULT_MAX or None: such an output is never parsed, and the child was ended there)."""
     argv = [sys.executable, os.path.abspath(__file__), "--reader-child", mode]
     try:
         proc = spawn(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, pass_fds=tuple(pass_fds))
     except OSError as exc:
-        return None, None, False, describe(exc)
+        return None, None, False, describe(exc), None
     ACTIVE.append(proc)
     try:
-        out, _err, timed_out = communicate_bounded(proc, max(1.0, seconds), input=json.dumps(job).encode("utf-8"))
+        out, _err, timed_out = communicate_bounded(proc, max(1.0, seconds), input=json.dumps(job).encode("utf-8"), caps=(READER_RESULT_MAX, 1 << 16))
     finally:
         ACTIVE.remove(proc)
     doc = None
-    if len(out) <= READER_RESULT_MAX:
+    if len(out) <= READER_RESULT_MAX and not output_cut(out):
         lines = [ln for ln in out.split(b"\n") if ln.strip()]
         if lines:
             try:
@@ -3176,7 +3258,7 @@ def _run_child(mode, job, seconds, pass_fds=()):
                 doc = None
     if not isinstance(doc, dict) or doc.get("child") != 1:
         doc = None
-    return proc.returncode, doc, timed_out, None
+    return proc.returncode, doc, timed_out, None, output_cut(out)
 
 
 def _death(code):
@@ -3189,21 +3271,23 @@ def _death(code):
 
 
 def probe_reader(name, operation, seconds):
-    """The reader's version, or None after the 'unavailable' answer has been given. The import is made by a child: a library that cannot be
-    imported, or dies on import, never takes the tool with it."""
+    """(True, the reader's version or None when the module names none), or (False, None) after the 'unavailable' answer has been given. The
+    import is made by a child: a library that cannot be imported, or dies on import, never takes the tool with it. A module that is importable
+    and names no version (pyAesCrypt 6.1.1 has neither get_version nor __version__) is available: its version is null, and it is read."""
     left = max(1.0, STOP["deadline"] - time.monotonic())
-    code, doc, timed_out, why = _run_child("probe", {"module": name}, min(PROBE_SECONDS, left))
+    code, doc, timed_out, why, cut = _run_child("probe", {"module": name}, min(PROBE_SECONDS, left))
     if doc is not None and doc.get("ok") is True:
         v = doc.get("version")
-        return withhold(v) if isinstance(v, str) and len(v) <= 40 else None
-    if doc is None and (timed_out or why or (code is not None and code != 0)):
+        return True, (withhold(v) if isinstance(v, str) and len(v) <= 40 else None)
+    if doc is None and (timed_out or why or cut or (code is not None and code != 0)):
         fail("the reader module %s could not be probed: its import child %s; nothing was read" % (
-            name, "did not return in %d seconds and was ended" % min(PROBE_SECONDS, left) if timed_out else ("could not be started" if why else "ended with " + _death(code))))
+            name, "did not return in %d seconds and was ended" % min(PROBE_SECONDS, left) if timed_out else ("could not be started" if why else
+                  "printed past its cap and was ended (%s)" % cut if cut else "ended with " + _death(code))))
     claim_answer()
     print(json.dumps({"status": "unavailable", "parser": PARSER, "operation": operation,
                       "status_basis": "the Python module %s (package %s) is not importable, so nothing was read: the key file's bytes were not read" % (
                           name, {"pybde": "libbde-python", "pyluksde": "libluksde-python", "pyAesCrypt": "pyAesCrypt"}[name])}))
-    return None
+    return False, None
 
 
 def run_reader(operation, kind, key_ref, offset, size, budget, sfd, pfd, seconds):
@@ -3214,9 +3298,11 @@ def run_reader(operation, kind, key_ref, offset, size, budget, sfd, pfd, seconds
     left = STOP["deadline"] - time.monotonic()
     job = {"operation": operation, "kind": kind, "key_ref": key_ref, "offset": offset, "size": size, "budget": budget, "source_fd": sfd,
            "partial_fd": pfd, "seconds": seconds, "child_seconds": max(1.0, left - 4.0)}
-    code, doc, timed_out, why = _run_child("work", job, max(1.0, left), (sfd, pfd))
+    code, doc, timed_out, why, cut = _run_child("work", job, max(1.0, left), (sfd, pfd))
     if why:
         return {"how": "died", "status": "failed", "basis": "the reader child could not be started (%s); nothing was read" % why}
+    if cut:
+        return {"how": "died", "status": "failed", "basis": "the reader child's report was not read whole (%s); whatever it had written is not verified" % cut}
     if doc is not None and "refusal" in doc:
         extra = doc.get("extra")
         return {"how": "refusal", "message": str(doc["refusal"])[:600], "extra": extra if isinstance(extra, dict) else {}}

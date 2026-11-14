@@ -693,7 +693,7 @@ test("the inline rows are held to a byte budget as well as to limit: a row past 
 test("the manifest and the docs say what the tool is: the programs it runs are declared, and the unverified shapes are said", async () => {
   const manifest = JSON.parse(await readFile(join(WIN, "srum_reader", "manifest.json"), "utf8")) as { requires: string[]; description: string; version: number; timeout_seconds: number; params: Record<string, unknown> };
   assert.deepEqual(manifest.requires, ["SrumECmd", "dotnet", "target-query"]);
-  assert.equal(manifest.version, 6);
+  assert.equal(manifest.version, 9);
   assert.deepEqual(Object.keys(manifest.params), ["path", "software", "backend", "limit", "max_seconds"]);
   assert.match(manifest.description, /EXPECTED NOT TO RUN ON A NON-WINDOWS HOST/);
   assert.match(manifest.description, /FROM HELP STRINGS AND METADATA, NOT FROM A REAL RUN/);

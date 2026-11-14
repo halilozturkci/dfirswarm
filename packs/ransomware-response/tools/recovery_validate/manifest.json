@@ -40,7 +40,7 @@
     },
     "max_seconds": {
       "type": "integer",
-      "description": "The tool's own time limit in seconds (default 780, at most 840; the manifest's timeout is 900). When it runs out no further chunk is read, what was checked is written, and the answer is partial"
+      "description": "The tool's own time limit in seconds (default 780, at most 840; the manifest's timeout is 900). When it runs out no further chunk is read, what was checked is written, and the answer is partial A directory is read under the clock too, and at most 262144 entries of one directory are held: the entries past that are counted (coverage.entries_not_listed) and not examined, and the answer is partial; the ones kept are drawn by a keyed hash of their path, not by name or by the order the directory lists them in"
     }
   },
   "runtime": "python3",
@@ -49,6 +49,6 @@
   "example": "{\"items\": [{\"recovered\": \"work/recovered/report.docx\", \"ciphertext\": \"work/extracted/report.docx.locked\"}], \"provenance\": {\"name\": \"a public decryptor\", \"version\": \"1.0\", \"obtained\": true, \"verified\": true}}",
   "by": "maintainer",
   "at": "2026-11-01T12:00:00.000Z",
-  "version": 4,
-  "sha256": "dc1e0b2f56995f859f9d5068044ceb47daceeaf6eb5f1a37197691d80b22ef6a"
+  "version": 6,
+  "sha256": "f42e87b50608d018bc3e4b422b29d36ffbf22ff74f87b9503af1b7f2bfa4b75d"
 }

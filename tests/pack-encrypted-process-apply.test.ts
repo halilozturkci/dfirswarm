@@ -357,7 +357,7 @@ function aesContainer(plain: Buffer): Buffer {
 }
 const PYAES = `
 import glob
-def get_version(): return "6.1.1"
+# pyAesCrypt 6.1.1, the release the pack pins, names no version (no get_version, no __version__), and neither does this stand-in
 def decryptStream(fin, fout, passw, bufferSize, inputLength):
     if passw != open(os.environ["STANDIN_EXPECT_FILE"]).read().strip(): raise ValueError("Wrong password")
     data = fin.read()
@@ -506,10 +506,23 @@ const tcrypt: Case = {
   watched: async () => [],
 };
 
+/**
+ * A flood that starts while the program still runs (the leftover is forked before the program exits) passes the shared block's running output cap: the program is ended there with
+ * what it started, the flooder with it (so it is not counted as left behind), and the answer says the output was not read whole. Either way the leftover is gone.
+ */
+const cutOrLeft = (a: Answer): boolean => a.program_group.left_behind >= 1 || /the program printed more than \d+ bytes/.test(JSON.stringify(a.program_group.notes));
+
 for (const variant of ["setsid", "double", "inherit", "hold", "chatty", "stdin", "flood"]) {
   test(`tcrypt_header: cryptsetup leaves a process (${variant}): the answer comes within seconds, the process is gone, and a status that rests on a pipe a process held is partial`, { skip: !LINUX }, async () => {
     await inCase(tcrypt, variant, "linux", async (o) => {
       assert.ok(o.run.ms < 15_000, `answered in ${o.run.ms} ms`);
+      if (variant === "flood" && o.answer.status === "failed") {
+        // cryptsetup was ended at the running cap with the flooder: nothing is said about the password
+        assert.match(o.answer.status_basis, /cryptsetup's output was not read whole \(the program printed more than \d+ bytes/);
+        assert.equal(o.answer.decrypted, null);
+        assert.deepEqual(await allGone(o.pids), [], "the leftover is gone");
+        return;
+      }
       assert.equal(o.answer.decrypted, true);
       assert.equal(o.answer.status, "partial", o.run.stdout.slice(0, 800));
       assert.ok(o.answer.program_group.left_behind >= 1);
@@ -611,16 +624,17 @@ for (const variant of ["hold", "chatty", "stdin", "inherit", "flood"]) {
     await inCase(slow(selftest("bdeinfo-version")), variant, "linux", async (o) => {
       assert.ok(o.run.ms < 60_000, `answered in ${o.run.ms} ms`);
       assert.equal(o.answer.status, "partial", o.run.stdout.slice(0, 800));
-      assert.ok(o.answer.program_group.left_behind >= 1);
+      assert.ok(variant === "flood" ? cutOrLeft(o.answer) : o.answer.program_group.left_behind >= 1, JSON.stringify(o.answer.program_group));
       assert.deepEqual(await allGone(o.pids), [], "the leftover is gone");
     });
   });
   test(`materialise_decrypted: a process the reader child leaves behind (${variant}; inherit keeps the result pipe) does not hold the tool: partial, the file kept unverified, the process gone`, { skip: !LINUX }, async () => {
     await inCase(slow(materialise), variant, "linux", async (o) => {
       assert.ok(o.run.ms < 20_000, `answered in ${o.run.ms} ms`);
-      assert.equal(o.answer.status, "partial", o.run.stdout.slice(0, 800));
-      assert.ok(o.answer.program_group.left_behind >= 1);
-      assert.equal(o.answer.output.verified, false);
+      // (a flood on the result pipe while the child runs passes the running cap: the child is ended there and its report is not taken, which is failed)
+      assert.ok(o.answer.status === "partial" || (variant === "flood" && o.answer.status === "failed"), o.run.stdout.slice(0, 800));
+      assert.ok(variant === "flood" ? cutOrLeft(o.answer) : o.answer.program_group.left_behind >= 1, JSON.stringify(o.answer.program_group));
+      if (o.answer.status === "partial") assert.equal(o.answer.output.verified, false);
       assert.deepEqual(await allGone(o.pids), [], "the leftover is gone");
     });
   });
@@ -634,7 +648,7 @@ for (const [c, name] of [[recover("john-version"), "john --version"], [metadataF
       await inCase(slow(c), variant, "linux", async (o) => {
         assert.ok(o.run.ms < 12_000, `answered in ${o.run.ms} ms`);
         assert.equal(o.answer.status, "partial", o.run.stdout.slice(0, 800));
-        assert.ok(o.answer.program_group.left_behind >= 1);
+        assert.ok(variant === "flood" ? cutOrLeft(o.answer) : o.answer.program_group.left_behind >= 1, JSON.stringify(o.answer.program_group));
         assert.deepEqual(await allGone(o.pids), [], "the leftover is gone");
       });
     });

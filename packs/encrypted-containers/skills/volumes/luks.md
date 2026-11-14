@@ -3,6 +3,7 @@ id: volumes/luks
 title: LUKS volumes, headers and keyslots
 when: A volume, image or detached header may be LUKS.
 needs: []
+card: Read in order: crypto_id ({"path": "<image>", "offset": <bytes>}) gives the signature and the version; crypto_metadata (the same arguments) runs cryptsetup luksDump on a copy of the header and returns keyslots, segments, digests and tokens as records. unavailable is not an empty slot list. A slot is one unlock path: not a count of passwords or people, not proof that it opens the data. LUKS2 keeps two metadata copies: compare them. With a detached header the data device carries no signature. Never repair, restore, convert or change slots on the evidence. Does not show: who added a slot or when, or that no usable key exists.
 tools: [crypto_id, crypto_metadata]
 requires_host: [cryptsetup]
 ---

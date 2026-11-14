@@ -4,6 +4,8 @@ Fetch a body with `skill("<id>")`. A body may name others; fetch those the same 
 
 Router: `encrypted/router`
 
+Core: `identify/headers`
+
 - `archives/formats` ZIP, 7-Zip, RAR, Office and PDF protection: You read a member's protection, a ZIP time, an Office or a PDF encryption structure.
 - `archives/protected` Examining encrypted archives and protected documents: An archive or document may require a password.
 - `encrypted/router` Encrypted-container notes by question: Pick an encrypted-container note when none is listed, or you cannot choose.

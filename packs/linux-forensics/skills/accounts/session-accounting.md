@@ -3,6 +3,7 @@ id: accounts/session-accounting
 title: utmp, wtmp, btmp, lastlog and the SQLite successors
 when: Choosing a session-accounting source and judging what its records cover.
 needs: []
+card: utmp_parse {"path": "<wtmp, btmp or lastlog>"}: read layout, its basis and byte_order first; name layout where lastlog is ambiguous. wtmpdb and lastlog2 are read only in a job, from a copy in $OUT; an unknown schema is refused; then sqlite_query {"db_path": "<that copy>"} reads it. A start and end paired by line and pid is a lead, not one session. lastlog keeps only the latest per uid. btmp's typed user is a length. A missing record excludes no login. Does not show: who was at the keyboard, or that a session ended.
 tools: [utmp_parse, sqlite_query]
 requires_host: []
 ---

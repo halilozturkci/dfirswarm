@@ -3,6 +3,7 @@ id: antiforensics/traces
 title: Absence before intent
 when: Missing or inconsistent artefacts.
 needs: []
+card: evtx_query {"path": "<log>.evtx"}, mft_records {"path": "<$MFT>"}: a partial or failed run is a coverage condition, not a negative. Never write "cannot be recovered" from one failed route.
 tools: [evtx_query, mft_records]
 requires_host: []
 ---

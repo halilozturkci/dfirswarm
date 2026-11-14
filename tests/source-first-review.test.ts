@@ -217,7 +217,7 @@ test("what a cap costs is measured: an answer that claimed established, recorded
 test("the review offer leads with the question, its scope and its original sources, the answer linked by its seq and never quoted; it goes first to a seat of another model family, a preference only", async () => {
   const c = await run();
   await planned(c.a0, "2");
-  const abs = ok(await rec(c.a0, { kind: "absence", value: "a remote tool", source: "inputs/disk.E01", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
+  const abs = ok(await rec(c.a0, { kind: "absence", value: "a remote tool", source: "inputs/disk.E01", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["2"] })).entry;
   const cov = ok(await rec(c.a0, coverage("2", ["job:j000001"], [`E-${abs.seq}`, "job:j000001/hits.txt"]))).entry;
   const ans = ok(await rec(c.a1, { kind: "answer", section: "question:2", value: "No evidence of a remote tool was found on the disk", reasoning: `E-${cov.seq}`, ...A, result: "bounded_negative" })).entry;
   // a2 has worked the question (the most relevant by the old order); a3 is of another model family than a0 and a1.
@@ -243,7 +243,7 @@ test("the review offer leads with the question, its scope and its original sourc
   // One family: offered as before, by relevance.
   const d = await run();
   await planned(d.a0, "2");
-  const abs2 = ok(await rec(d.a0, { kind: "absence", value: "a remote tool", source: "inputs/disk.E01", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
+  const abs2 = ok(await rec(d.a0, { kind: "absence", value: "a remote tool", source: "inputs/disk.E01", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["2"] })).entry;
   const cov2 = ok(await rec(d.a0, coverage("2", ["input:disk.E01"], [`E-${abs2.seq}`, "job:j000001/hits.txt"]))).entry;
   const ans2 = ok(await rec(d.a1, { kind: "answer", section: "question:2", value: "No evidence of a remote tool was found on the disk", reasoning: `E-${cov2.seq}`, ...A, result: "bounded_negative" })).entry;
   ok(await rec(d.a3, { kind: "finding", ...F, value: "the disk holds a user profile", source: "the disk", evidence: "a listing", refs: ["job:j000001/hits.txt"], answers: ["2"] }));

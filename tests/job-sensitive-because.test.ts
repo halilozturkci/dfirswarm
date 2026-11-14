@@ -18,7 +18,7 @@ import { after, test } from "node:test";
 import * as P from "../extensions/protocol.ts";
 import { storePaths } from "../scripts/evidence-store.ts";
 import { JobService, type JobRecord } from "../scripts/job-service.ts";
-import { derivedBecause, derivedFrom, jobSensitivity } from "../scripts/output-hygiene.ts";
+import { derivedBecause, derivedFrom, jobSensitivity, sensitiveIndexStats } from "../scripts/output-hygiene.ts";
 import { listInputs, localWorker } from "./job-service-worker.ts";
 
 const ROOT = join(import.meta.dirname, "..");
@@ -221,4 +221,22 @@ test("a similar job's entry says when its outputs are sensitive; the sizes and n
   assert.ok(plain, "the plain job is similar");
   assert.equal(plain.sensitive, undefined);
   await svc.stop("test over");
+});
+
+test("a sensitive commit is taken into the run's sensitive index at its commit, before any later job asks", async () => {
+  const { S, svc } = await run();
+  try {
+    const before = sensitiveIndexStats.manifests;
+    const { job } = await submitted(svc, "a1", { command: `printf '%s' '${VALUE}' > "$OUT/value.txt"`, inputs: [], secret_output: true });
+    await line(S, "job_committed", job.id);
+    // No decision is asked here: the job service brings the index up to date itself, reading the new job's manifest once.
+    for (let i = 0; i < 200 && sensitiveIndexStats.manifests === before; i += 1) await new Promise((r) => setTimeout(r, 10));
+    assert.equal(sensitiveIndexStats.manifests, before + 1);
+    const again = sensitiveIndexStats.manifests;
+    const { job: other } = await submitted(svc, "a2", { command: `printf 'x' > "$OUT/x.txt"`, inputs: [] });
+    assert.equal(other.state, "committed");
+    assert.equal(sensitiveIndexStats.manifests, again, "the next job's decision read no manifest again");
+  } finally {
+    await svc.stop("test over");
+  }
 });

@@ -1,8 +1,9 @@
 ---
 id: triage/coverage
 title: What a memory search covered
-when: Before writing "not in memory", or when a plugin or scan returned nothing, stopped early or counted.
+when: Before writing "not in memory", or a plugin or scan returned nothing, stopped early or counted.
 needs: [evidence/coverage]
+card: Before "not in memory", name the reading: unavailable, failed, partial (mem_carve status partial: only what came before coverage.resume_start was read) or completed-negative, the one that supports "not found", for those ranges, patterns and encodings only. mem_profile {"path": "<image>"} sampled_ranges are the bytes sampled; file_pages_4k_estimate is length over 4096, not captured pages. A list plugin cannot show unlinked or freed objects. Does not show: that a clean exit is a complete scan.
 tools: [mem_carve, mem_profile]
 requires_host: [vol]
 ---

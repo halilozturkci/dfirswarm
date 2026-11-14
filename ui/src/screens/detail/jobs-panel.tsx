@@ -267,7 +267,7 @@ function JobsTable({ rows, colour, onOpen }: { rows: StoreJobRow[]; colour: (id:
                 {r.outputs?.rejected ? <div className="text-ink-3">{r.outputs.rejected} left out</div> : null}
                 {r.generation ? <div className="text-ink-3">catalogued {r.generation}</div> : null}
                 {r.similar.length ? <div className="text-ink-3">similar to {plural(r.similar.length, "job")} of other seats</div> : null}
-                {r.same_as.length ? <div className="text-ink-3">{plural(r.same_as.length, "file")} an earlier job's bytes</div> : null}
+                {r.same_as.length ? <div className="text-ink-3">{plural(r.same_as_total?.files ?? r.same_as.length, "file")} an earlier job's bytes</div> : null}
                 {r.independent ? <div className="text-ink-3">an independent reproduction</div> : null}
               </td>
             </tr>
@@ -593,7 +593,11 @@ function JobDetail({ view, jobId, version, onBack, onOpen }: { view: SwarmView; 
           ) : null}
           {r.same_as.length ? (
             <Fact label="Same bytes as">
-              <span className="text-ink-3">files it wrote that an earlier job had written byte for byte (its job_same_as line, whole); they are its own either way</span>
+              <span className="text-ink-3">
+                {r.same_as_total && r.same_as_total.files > r.same_as.length
+                  ? `${r.same_as_total.files} files it wrote that an earlier job had written byte for byte; these are the first ${r.same_as.length}${r.same_as_total.list ? `, and ${r.same_as_total.list} names every one` : ""}; they are its own either way`
+                  : "files it wrote that an earlier job had written byte for byte (its job_same_as line, whole); they are its own either way"}
+              </span>
               <ShownWhole items={r.same_as} first={10} unit="file" render={(x) => <SameAsLine x={x} onOpen={onOpen} />} />
             </Fact>
           ) : null}

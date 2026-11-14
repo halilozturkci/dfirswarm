@@ -3,6 +3,7 @@ id: filesystem/indx
 title: Index slack
 when: Names a directory index still holds.
 needs: [filesystem/mft]
+card: indx_carve {"path": "<extracted $I30>", "slack_only": true} returns the entries the directory no longer lists: name, parent and four cached times, no record number, so tie one to a record by name, parent and times and say so. Extract the $INDEX_ALLOCATION first: extract_stream {"image": "<image>", "inode": "<entry>-160-<id>", "offset": 2048, "output": "work/<your id>/<name>"}. Entries of a salvaged block are left out unless {"include_unreliable": true}: report blocks_salvaged and entries_excluded_unreliable. A slack entry is not a deletion or a wipe: a rename, a move or an index rebalance leaves the same trace. Does not show: the file's current state.
 tools: [indx_carve, extract_stream, usn_journal]
 requires_host: [istat]
 ---

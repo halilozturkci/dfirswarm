@@ -360,12 +360,12 @@ def install_stop(last_word=None, cooperative=False):
 
 
 def interrupted_answer(signum, **extra):
-    if signum is None:       # the clock ran out, and then GRACE_SECONDS more, with a read that had not returned
+    if signum is None:       # the clock ran out, and then GRACE_SECONDS more, before the tool answered
         print(json.dumps({"status": "partial", "partial": True, "interrupted": True, "hard_stopped": True,
                           "stopped_by": "the tool's time limit (%s seconds) was reached" % STOP["limit"],
-                          "status_basis": "the tool's time limit (%s seconds) and %d seconds more passed while a read had not returned (a file on a "
-                                          "volume or share that is not available, or a pipe); the tool was ended there, and nothing it had read is "
-                                          "an answer" % (STOP["limit"], GRACE_SECONDS), **extra}), flush=True)
+                          "status_basis": "the tool's time limit (%s seconds) and %d seconds more passed before the tool could answer (a read that "
+                                          "had not returned, from a volume or share that is not available or a pipe, or work between two reads of "
+                                          "its clock); the tool was ended there, and nothing it had read is an answer" % (STOP["limit"], GRACE_SECONDS), **extra}), flush=True)
         return
     print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "failed", "interrupted": True,
                       "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
@@ -1834,6 +1834,10 @@ def scan_stream(fh, budget, stats):
 WALK_CHUNK = 10_000   # entries held and name-sorted at once; bounds memory on a huge flat directory
 
 
+UNREACHED_NAMED = 2000   # how many of the entries and directories a stop left unreached are named one by one; the rest are counted and said in one row
+WALK_CLOCK_EVERY = 256   # the walk reads the clock after this many directories and entries it looked at without yielding a file to read
+
+
 class Walk:
     """The regular files under `top`, following no link; what it has not reached is known at any moment.
 
@@ -1851,13 +1855,24 @@ class Walk:
         self.stack = [(top, True)]
         self.entries, self.next, self.found_dirs = [], 0, []
         self._current_dir, self._more = None, False
+        self.stopped = False                   # the walk itself ended at the clock or a stop signal (see _generate)
         self._files = self._generate(exceptions, counters)
 
     def __iter__(self):
         return self._files
 
     def _generate(self, exceptions, counters):
+        # The clock is read here too, not only by the caller between the files this yields: a run of links, directories or special
+        # files yields nothing, and 300,000 of them held the walk past the hard stop. A stop leaves the entry in hand and everything
+        # after it to unreached().
+        looked = 0                             # directories and entries looked at since the clock was last read
         while self.stack:
+            looked += 1
+            if looked >= WALK_CLOCK_EVERY:
+                looked = 0
+                if stop_wanted():
+                    self.stopped = True
+                    return
             directory, is_top = self.stack.pop()
             self._current_dir, self._more = directory, False
             try:
@@ -1876,6 +1891,12 @@ class Walk:
                     self.entries, self.next = chunk, 0
                     self._more = len(chunk) == WALK_CHUNK   # might be more: unknown until the next chunk is tried
                     while self.next < len(self.entries):
+                        looked += 1
+                        if looked >= WALK_CLOCK_EVERY:
+                            looked = 0
+                            if stop_wanted():
+                                self.stopped = True
+                                return
                         entry = self.entries[self.next]
                         self.next += 1
                         try:
@@ -2082,18 +2103,29 @@ def main():
                 totals["bytes_unread_in_partial_files"] += size - stats.bytes_read
                 exceptions.add({"path": shown(target), "status": "partial", "reason": "read up to max_bytes_per_file; the rest was not read",
                                 "bytes": size, "bytes_read": stats.bytes_read, "bytes_unread": size - stats.bytes_read})
+        if stopped_why is None and walker is not None and walker.stopped:
+            stopped_why = stop_cause()
         if stopped_why and walker is not None:
             # What the walk had not reached, named: the rest of the chunk being read, the directories not yet entered
             # (everything under those is unread, and how many files that is is not known), and, when the directory being
             # read may hold more entries beyond that chunk, the directory itself (how many more is not known either,
             # without a read this stop is meant to avoid).
             rest, unentered, maybe_more = walker.unreached()
-            for item in rest:
-                counters["entries_not_started"] += 1
+            # The lists are as long as the input (300,000 directories waiting made this loop alone outlast the grace after the clock, and the
+            # hard stop then answered without the findings): the first UNREACHED_NAMED of each are named, the rest are counted in coverage and
+            # in one row that says how many were not named.
+            for item in rest[:UNREACHED_NAMED]:
                 exceptions.add({"path": shown(item), "status": "not started", "reason": "%s before this entry was looked at" % stopped_why})
-            for item in unentered:
-                counters["directories_not_entered"] += 1
+            counters["entries_not_started"] += len(rest)
+            if len(rest) > UNREACHED_NAMED:
+                exceptions.add({"path": "(%d more entries)" % (len(rest) - UNREACHED_NAMED), "status": "not started",
+                                "reason": "%s before these entries were looked at; they are counted in coverage.entries_not_started and not named (the first %d are)" % (stopped_why, UNREACHED_NAMED)})
+            for item in unentered[:UNREACHED_NAMED]:
                 exceptions.add({"path": shown(item), "status": "not started", "what": "directory", "reason": "%s before this directory was entered: nothing under it was read" % stopped_why})
+            counters["directories_not_entered"] += len(unentered)
+            if len(unentered) > UNREACHED_NAMED:
+                exceptions.add({"path": "(%d more directories)" % (len(unentered) - UNREACHED_NAMED), "status": "not started", "what": "directory",
+                                "reason": "%s before these directories were entered: nothing under them was read; they are counted in coverage.directories_not_entered and not named (the first %d are)" % (stopped_why, UNREACHED_NAMED)})
             if maybe_more is not None:
                 counters["directories_not_entered"] += 1
                 exceptions.add({"path": shown(maybe_more), "status": "not started", "what": "directory (partially read)",

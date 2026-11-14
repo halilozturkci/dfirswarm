@@ -110,7 +110,7 @@ async function olderRun() {
   const dump = await kept(S, "a1", "20260930090100000-bash-bbbb.out.log", "12 bob was looked for\n13 none found\n", { tool: "bash", args: { command: "python3 - <<'PY'\nfor l in open('ledger/entries.jsonl'):\n    print(l)\nPY" } });
   const summary = await kept(S, "a2", "20260930090200000-compact_summary-cccc.text.log", "## Where I am\nsearching the disk for carol; nothing yet\n", { tool: "compact_failed", args: { stage: "summary", attempt: 1 } });
   for (const q of ["2", "5", "6"]) await planned(a0, q);
-  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["2", "5", "6"] })).entry;
+  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["2", "5", "6"] })).entry;
   // Question 2: a record that did not name the kept output, then one revised to name its sealed import, with what it showed.
   const cov1 = ok(await rec(a0, coverage("2", ["input:disk.E01"], [`E-${abs.seq}`, "job:j000001/hits.txt"], { looked_for: ["alice"] }))).entry;
   await SW.awaitSweeps(S);
@@ -266,7 +266,7 @@ test("a line already under the current rules is left alone, holding or not: the 
   const { S, a0, a1, a2 } = await run();
   await kept(S, "a1", "20260930091000000-bash-dddd.out.log", "b.log:alice logged on at 09:58\n", { tool: "bash", args: { command: "grep -i alice inputs/logs/b.log" } });
   await planned(a0, "2");
-  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
+  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["2"] })).entry;
   const cov = ok(await rec(a0, coverage("2", ["input:disk.E01"], [`E-${abs.seq}`, "job:j000001/hits.txt"], { looked_for: ["alice"] }))).entry;
   ok(await rec(a1, { kind: "answer", section: "question:2", value: "No evidence of a remote tool was found on the disk", reasoning: `E-${cov.seq}`, ...A, result: "bounded_negative" }));
   await SW.awaitSweeps(S);

@@ -63,6 +63,20 @@ So a pack's skills are small files, and an agent loads one when it needs it:
   the whole index in the prompt, in which case it points there.
 - A body may name other skills under `needs`. The result lists them with what
   each costs in tokens, and loads none: the agent loads the ones the case needs.
+- **Cards** (`--skill-cards on|off`, `SWARM_SKILL_CARDS`; on by default). A call
+  to a tool a skill lists under `tools` (`job_run tool=X`, or the tool itself), by
+  a seat that does not hold that skill, comes back with the skill's card after
+  the result: its own `card:` line when its front matter has one, else the
+  paragraph that says when to use it, its first example call (an indented block,
+  three lines at most) and its "Does not show" paragraph, cut at 700 characters.
+  The most specific skill (fewest tools) is the one shown, once per skill and
+  seat in a context: a compaction shows it again at the next call, and the
+  hand-off header carries the cards of up to three skills it took out. A tool
+  more than three skills list (`regkv`, `pe_info`) has no one method: its first
+  call in a context lists the skills that name it instead. Pull alone did not
+  reach the open models of the Batman III runs (2026-11-13): 5 of 8 seats of one
+  run never loaded a skill, and 9 % of its pack-tool calls came from a seat that
+  held the tool's skill, against 74 % on a Codex run. `skill_card` on the trace.
 - `skill_done(id, note)` says the agent is finished with a body: the event is on
   the trace, and the body is marked releasable (a seat that holds three bodies
   it has not finished is reminded to finish one before it loads a fourth). What
@@ -235,6 +249,11 @@ Front matter, then a short imperative body.
 The `id` is the path under the pack's `skills/` without `.md`, as the index lists
 it; it carries no pack name (`pack:id` is how a caller names one pack's copy).
 
+`card:` (optional, one line) is what a seat is shown with the result of a call to
+one of the skill's tools when it does not hold the skill (section 1, "Cards"):
+the two or three rules a call goes wrong without. Without it the card is taken
+from the body.
+
 `needs` names skills this one assumes. `tools` lists the tools the body names,
 and `requires_host` the host programs it names (the binaries its commands call):
 a name the body uses is in the list, and a name in the list is in the body.
@@ -256,8 +275,13 @@ matter, optional and at most one a pack:
 
     router: true
 
-A router names no program, tool or rule, only which note answers which
-question. Its id is the pack's own (`base/router` and `windows/router`, but
+A router names no program or tool, only which note answers which question,
+save an `Always` block under its first line: at most a few one-line rules
+that every note of the pack holds, each naming the note it comes from (the
+base pack's "a negative says No evidence of X was found in A", the Windows
+pack's "keep the raw value beside every converted time"). A weak model that
+loads the router and no note under it still has those; such a router has
+100 tokens more (`scripts/skill-budgets.json`). Its id is the pack's own (`base/router` and `windows/router`, but
 `router/start` in `virtualization-backup-forensics`), and the `Router:` line of a
 pack's `skills/INDEX.md` says which pack has one and under what id. A pack that
 names none is shown whole whatever the budget.
@@ -272,6 +296,13 @@ packs have routers, and how long a router may be, are the pack standard's and
 the pack lint's to say. A run of the base pack with `windows-forensics` and
 `linux-forensics` has index entries whole over the run's 2,500 tokens; with
 each pack shown by its router the prompt carries three router lines and fits.
+
+A skill may also say `core: <rank>` (1 to 9; at most six a pack, never the
+router): a note the pack's cases reach for most. The generated index carries
+``Core: `<id>`, …`` under the `Router:` line, in rank order, and a run whose
+index collapses shows beside each router its core notes, one pack's at a time
+in turn, while the run's budget and the pack's have room (the report's
+`core_shown`). A pack that names none shows its router only.
 
 ### Tool help stays out of the context window
 
@@ -531,27 +562,62 @@ toolbox check and, where the agents boot the packs' image, to the VM's probe (§
 its version and its checksum, so a reader knows which method produced the
 result.
 
+### A dump among the inputs adds the memory pack
+
+When the top level of an `--inputs` directory holds a process or memory dump,
+a run that has packs gains `memory-forensics` (and what it depends on). A dump
+is known by its name (`*.dmp`, `*.mdmp`, `*.hdmp`, `MEMORY.DMP`, `hiberfil.sys`,
+`pagefile.sys`, `swapfile.sys`, `*.vmem`, `*.vmsn`, `*.vmss`, `*.lime`,
+`*.core`, `*.mem`) or by its first bytes (a minidump's `MDMP`, a kernel crash
+dump's `PAGEDUMP` or `PAGEDU64`, a hibernation file's `hibr`, `wake` or
+`rstr`, a LiME image, an ELF core). The kickoff says it on the console
+(`Packs: memory-forensics added: ...`), the run record names the pack like any
+other, and `SWARM.md` gains a "Dumps among the inputs" section that lists each
+dump with its size and kind, what the kickoff did about the pack and why, and
+which tools of the run's packs read one. The pack's skills enter the index
+under the same budget as every pack's: above it, its router alone.
+
+It is done this way, and not from the catalogue, because a run's packs choose
+the images its census and its seats run in: they are fixed before the
+catalogue exists, and the catalogue cannot change them. So the kickoff looks at
+the top level of each input directory itself, before it resolves the packs,
+and opens nothing but the first 32 bytes of each regular file (never through a
+link, never a FIFO). A dump one folder down, inside a disk image or an archive,
+or in an `--inputs-image`, is not seen here; the kickoff catalogue says every
+member it lists by a dump's name to everyone once (`scripts/dump-members.ts`,
+`dumpsPost`), with the tools of the run's packs that read one.
+
+The pack is not added, and the console and `SWARM.md` say why, when:
+
+- the operator excluded it: `--no-pack memory-forensics` (a pack named in both
+  `--pack` and `--no-pack` is refused);
+- the run has no `--pack`: a run without packs stays without;
+- it is not installed on this host.
+
+A resume keeps the packs its run started with: a pack its kickoff added is
+added again, and a run that did not gain it does not gain it on a resume.
+
 ---
 
 ## 7. The packs in this repository
 
 Thirteen, all under the same AGPL-3.0-or-later as the harness, in `packs/`:
-328 skills, 142 tools and 15 goal templates. Every one of them is sealed,
+335 skills, 153 tools and 15 goal templates. Every one of them is sealed,
 checksummed, and installs and verifies in the test suite.
 
 | Pack | Skills | Tools | Goals | What it is for |
 | --- | --- | --- | --- | --- |
-| `computer-forensics-base` | 30 | 20 | — | the method true of any platform; everything else depends on it |
-| `windows-forensics` | 53 | 27 | 3 | ten artefact families, from `$MFT` to what anti-forensics leaves behind |
+| `computer-forensics-base` | 35 | 24 | — | the method true of any platform; everything else depends on it |
+| `windows-forensics` | 53 | 30 | 3 | ten artefact families, from `$MFT` to what anti-forensics leaves behind |
 | `linux-forensics` | 35 | 11 | 2 | auth logs, the journal, accounts, systemd and cron, ext4, containers |
 | `macos-forensics` | 25 | 11 | 1 | property lists, the unified log, FSEvents, KnowledgeC, TCC, quarantine, Biome, APFS |
 | `mobile-forensics` | 18 | 7 | 1 | iOS and Android extractions, app databases, protobuf |
-| `memory-forensics` | 28 | 8 | 1 | containers, what works with no framework, injection, credentials |
+| `memory-forensics` | 29 | 9 | 1 | containers, what works with no framework, injection, credentials |
 | `network-forensics` | 19 | 11 | 1 | captures, sessions, DNS and TLS metadata, beacons, exfiltration |
 | `reverse-engineering` | 25 | 13 | 1 | static triage of a binary or a document, under quarantine |
 | `encrypted-containers` | 18 | 9 | 1 | which scheme, which protectors, and where the key already is |
 | `cloud-forensics` | 20 | 6 | 1 | Microsoft 365, Entra, AWS, Workspace, and the tokens behind them |
-| `ransomware-response` | 25 | 8 | 1 | scoping, recovery impairment, family candidates and recovery validation, each with its limits |
+| `ransomware-response` | 26 | 11 | 1 | scoping, recovery impairment, family candidates and recovery validation, each with its limits |
 | `triage-collection` | 20 | 8 | 1 | a collector's output, which is how most cases arrive |
 | `virtualization-backup-forensics` | 12 | 3 | 1 | the control plane of virtualization and backup: hypervisor records, disk and snapshot chains, backup catalogues, and which recovery points survive |
 
@@ -686,11 +752,28 @@ of this itself:
   cut at the byte cap is counted in `PIPE_CUT["cut"]`, said in
   `process_notes()` and, through `process_apply`, makes a complete answer
   partial; the return value is the same three-tuple, and the bytes kept are the
-  program's output plus at most 1 MiB of the leftover's. While the program is
-  still alive the block caps nothing (its output is its caller's to bound; no
-  output cap is known that every carrier could take), so a holder that floods a
-  pipe while the program still runs is read until the program has ended. A
-  reader that decodes or parses the output still bounds it itself.
+  program's output plus at most 1 MiB of the leftover's.
+- What a running program prints is capped too (the output caps). Each stream
+  `communicate_bounded` (and `preflight`, which calls it) reads has a running
+  byte cap: `STDOUT_CAP`, 64 MiB of standard output kept; `STDERR_CAP`, 8 MiB of
+  standard error read, of which the head and the last `STDERR_TAIL` (1 MiB) are
+  kept; a call can name smaller caps (`caps=(stdout, stderr)`; a version probe
+  takes 64 KiB). When a stream passes its cap the program is ended on the
+  deadline's own path (`kill_tree`: the program and what it started, nothing
+  else), and the call returns what it kept. A stream that passes its cap only
+  after the program has ended is cut as well, unless the pipes were then cut
+  at `POST_EXIT_BYTES`: what passed it is a holder's flood, which `PIPE_CUT`
+  says, and the program's own output was read whole. The two byte strings it returns are
+  `Output`s: bytes with a `cut` attribute, `None` for a stream read whole and a
+  sentence for one that was cut (`output_cut(out, err)` gives the first). The
+  call is counted in `OUTPUT_CUT` and said in `process_notes()`, and
+  `process_apply` turns a complete answer partial. A carrier never takes a cut
+  output for a whole one: one that parses it (ffprobe's JSON, a child's answer,
+  a listing) does not parse it and answers partial or failed with the cut said;
+  one that reads a version line from it does not record the version. A
+  call at the default caps holds at most about 3.5 times the standard output
+  cap at its peak (the buffer as it grows and the bytes it returns), about
+  230 MB; what a carrier parses from it comes on top.
 - Where nothing is adopted (the kernel or a seccomp rule refuses the call, or
   the host is not Linux) `settle()` ends only what the tool saw below a program
   whose parent is gone, and `unproven` says so; on a host that is not Linux
@@ -717,12 +800,13 @@ of this itself:
 - **Not covered.** A writer that is not a descendant of a program (a service
   manager, a socket, another PID namespace). The tool itself being killed (the
   harness ends its group; a process in a session of its own survives, as it
-  always did). A flood that starts while the program is still alive: the byte
-  cap starts at the program's exit. The start of the interpreter, before a
+  always did). The pipe readers of a carrier's own (not `communicate_bounded`)
+  keep their own caps; the registry's `local-mechanism` entries and the
+  carriers' own code say which. The start of the interpreter, before a
   handler is in, is a window a stop signal can land in. A tool that reads a
   pipe through the block and neither calls `process_apply` nor reads
-  `PIPE_CUT` does not turn a cut pipe into `partial`; the cut is
-  in `program_group.notes`. The registry lists no such tool now (it fails for
+  `PIPE_CUT` (or `OUTPUT_CUT`, or the `cut` of what it read) does not turn a
+  cut pipe into `partial`; the cut is in `program_group.notes`. The registry lists no such tool now (it fails for
   one); the pipe-only tools that read `PIPE_CUT` themselves count one cut for
   the whole run, so a cut while a version was read makes the answer `partial`
   too. And the mechanisms that are not the block: the
@@ -734,7 +818,7 @@ of this itself:
   end only their direct child and have no abandoned-child test.
 - **The registry is the arbiter, not this text.**
   `tests/process-sweep-coverage.json` lists every file under `packs/` and
-  `tool-library/` (outside `tests/`) that starts a program: the 62 copies of
+  `tool-library/` (outside `tests/`) that starts a program: the 64 copies of
   the block, the files with a mechanism of their own, the library twins and the
   shell recipes. Each entry has its class (`held`, `pipe-only`, `no-program`,
   `local-mechanism`, `twin`), where the class is stated, and the test files
@@ -1231,11 +1315,42 @@ are written to the budget; a finding is not added to the list to get a change in
 A tool or a recipe that starts a program carries the shared PROCESS block,
 starts every program through its `spawn()`, and calls `process_apply` (or says
 in `tests/process-sweep-coverage.json` what it does instead) where it prints
-its answer. What the block does and does not do is in section 7, "What a
+its answer. What it reads of a program's output through the block is held to
+the block's output caps: 64 MiB of standard output and 8 MiB of standard error
+(its head and last 1 MiB kept) by default, smaller where the call names them.
+A stream past its cap ends the program, and the tool treats that output as not
+read whole (`output_cut()`, `OUTPUT_CUT`): partial or failed, with the cut said,
+never complete. `tests/process-sweep-coverage.test.ts` fails a held or
+pipe-only tool that reads output through the block and never looks at a cut;
+`tests/pack-shared-process-output-cap.test.ts` floods the block of every pack
+and a carrier of each pack that reads output through it. What the block does and does not do is in section 7, "What a
 program leaves behind". Which tools are covered, and how, is decided by the
 registry `tests/process-sweep-coverage.json` and its test, not by a pack's
 changelog: a tool that starts a program and is not listed there, or is listed
 with a claim its code does not keep, fails `tests/process-sweep-coverage.test.ts`.
+
+### A tool that reads SQLite evidence
+
+A tool that opens evidence with `sqlite3` (a database the caller names or one
+found in the evidence, or a copy of it) carries the shared SQLITE WATCH block
+(`# BEGIN SHARED SQLITE WATCH`) and runs every statement on that database under
+it. A step of SQLite runs in C: a progress handler is called only between the
+steps of SQLite's own program, and one `count(*)` over a b-tree whose pages are
+reached from many parents (a DAG), or one page of `PRAGMA integrity_check`, is
+a single step that walks without end; a Python signal handler cannot run in it
+either. `SqliteWatch(deadline, on_interrupt=None)` is a thread that waits on
+the deadline (a callable it reads every quarter second, so a deadline that
+moves is followed) and on the signal wake-up pipe, and calls `interrupt()` on
+every connection it watches at the deadline, every quarter second after it,
+and when SIGTERM, SIGINT or SIGHUP arrives; SQLite honours it inside the walk,
+and the tool's stop handler then answers. The tool watches each connection
+before its first statement (`watch.watch(conn)`, a second connection for blob
+handles included) and closes the watch before it prints its answer. A tool
+whose only database is its own scratch file, filled from what it parsed (the
+cloud pack's working tables, `pcap_summary`'s spill, `registry_recover`'s
+comparison, `ransomware_scope_report`'s index, the ios-filesystem recipe), does
+not carry it. `tests/pack-sqlite-watch.test.ts` runs every carrier against a
+DAG b-tree with a short clock and with a SIGTERM.
 
 ### Closing a pack's review
 

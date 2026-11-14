@@ -37,6 +37,9 @@
  * on each side. Neither run's conclusions are shown to the other: this is
  * read after both ended.
  */
+import { skillMetrics, skillMetricsWords, type SkillMetrics } from "./skill-metrics.ts";
+import { firstSightings, frictionMetrics, frictionWords, LARGE_FILES, type FirstSightings, type FrictionMetrics, type ModelCall, type SightingAnswer } from "./friction-metrics.ts";
+import { answerKey, answerPieces } from "../extensions/sighting.ts";
 import { existsSync, statSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
@@ -48,7 +51,7 @@ import * as R from "../extensions/requests.ts";
 import * as NB from "../extensions/negative-bar.ts";
 import * as SW from "../extensions/store-sweep.ts";
 import { readNetState, grantStatus } from "./net-grants.ts";
-import { storePaths } from "./evidence-store.ts";
+import { manifestOf, storePaths } from "./evidence-store.ts";
 import { questionCost, roundParts, runCalls } from "./question-cost.ts";
 
 type Rec = Record<string, unknown>;
@@ -356,7 +359,10 @@ export type RunMetrics = {
     independent: string[];
     independent_with_similar: string[];
     same_as: { jobs: string[]; files: number; bytes: number; whole: string[] };
+    /** Requests for a recipe answered with the job that ran it (job_deduplicated without `kind`, or `kind: "recipe"`). */
     recipe_merged: number;
+    /** Identical whole-object tool calls answered with the job under way or committed (job_deduplicated with `kind: "tool"`). */
+    tool_joined: number;
     shadow_would_merge: number;
   };
   network: {
@@ -375,8 +381,21 @@ export type RunMetrics = {
     fetch_refusals: number;
     contamination: number;
   };
+  /** What the run made of its packs' skills (skill-metrics.ts): loads, cards, tool jobs a seat ran holding the note on that tool, reloads after a compaction. */
+  skills?: SkillMetrics;
+  /** What the harness cost the seats: refusals, waits, compactions, the hub's health (friction-metrics.ts). */
+  harness?: FrictionMetrics;
+  /**
+   * When each standing answer's value in scope was first in front of a seat (friction-metrics.ts firstSightings): the
+   * minutes to its first record and the kind of row that held it. Never the value. Absent without a readable trace.
+   */
+  first_sighting?: FirstSightings;
+  /** The harness measures, one a line, each with its figure or why the run cannot give it (metricsText's second table). */
+  measures: Measure[];
   notes: string[];
 };
+
+export type Measure = { measure: string; measured: boolean; value: string };
 
 type OfferCounts = { made: number; accepted: number; declined: number; taken_by_another: number; lapsed: number; open: number };
 export type NegativeRow = { section: string; id: string | null; answer: string; result: string };
@@ -500,7 +519,7 @@ function sweepsOf(c: Context, scope: RunMetrics["questions"]): RunMetrics["sweep
   const held: RunMetrics["sweeps"]["held"] = [];
   for (const [section, e] of standingAnswers(c)) {
     if (!live.has(section)) continue;
-    for (const h of P.sweepHolds(e, c.entries, c.sweeps, c.disputes, isMaterial(section, c))) held.push({ section, id: c.qs?.bySection.get(section)?.id ?? null, answer: `E-${e.seq}`, code: h.code, coverage: `E-${h.coverage.seq}` });
+    for (const h of P.sweepHolds(e, c.entries, c.sweeps, c.disputes, isMaterial(section, c), c.attestations)) held.push({ section, id: c.qs?.bySection.get(section)?.id ?? null, answer: `E-${e.seq}`, code: h.code, coverage: `E-${h.coverage.seq}` });
   }
   let released = 0;
   for (const e of records) {
@@ -1067,13 +1086,29 @@ async function duplicates(c: Context): Promise<RunMetrics["duplicates"]> {
   let files = 0;
   let bytes = 0;
   const whole: string[] = [];
+  // How many files each job's first committed output has, from its job_committed line: what "wholly" is held to before any file is read.
+  const sealed = new Map<string, number>();
+  for (const l of c.journal) if (l.type === "job_committed" && !sealed.has(str(l.job))) sealed.set(str(l.job), num((l.outputs as Rec | undefined)?.files));
   for (const l of same) {
+    // The line's own count and bytes (`files`, `bytes`): its `same_as` is the first few of a list kept in the side
+    // file the line names (store/jobs/<id>/same_as.jsonl), every one only on a line from before the side file.
     const list = (l.same_as as Rec[] | undefined) ?? [];
-    files += list.length;
-    bytes += list.reduce((a, s) => a + num(s.bytes), 0);
-    const m = await readFile(join(storePaths(c.S).jobs, str(l.job), "manifest.json"), "utf8").then((t) => JSON.parse(t) as { files?: Array<{ bytes?: number }> }).catch(() => null);
-    const nonEmpty = (m?.files ?? []).filter((f) => num(f.bytes) > 0).length;
-    if (m && nonEmpty > 0 && list.length >= nonEmpty) whole.push(str(l.job));
+    const n = l.files === undefined ? list.length : num(l.files);
+    files += n;
+    bytes += l.bytes === undefined ? list.reduce((a, s) => a + num(s.bytes), 0) : num(l.bytes);
+    if (!n) continue;
+    // Wholly an earlier job's: every file of it that is not empty. Its manifest is not read when the line's count is
+    // every file it sealed; else its files are counted from the manifest's index, as a stream, never the manifest parsed whole.
+    const all = sealed.get(str(l.job)) ?? 0;
+    if (all > 0 && n >= all) {
+      whole.push(str(l.job));
+      continue;
+    }
+    const view = await manifestOf(join(storePaths(c.S).jobs, str(l.job), "manifest.json")).catch(() => null);
+    if (!view) continue;
+    let nonEmpty = 0;
+    for await (const rows of view.files()) for (const f of rows) if (num(f.bytes) > 0) nonEmpty += 1;
+    if (nonEmpty > 0 && n >= nonEmpty) whole.push(str(l.job));
   }
   const withSimilar = similar.map((l) => str(l.job));
   return {
@@ -1083,7 +1118,8 @@ async function duplicates(c: Context): Promise<RunMetrics["duplicates"]> {
     independent,
     independent_with_similar: withSimilar.filter((j) => independent.includes(j)),
     same_as: { jobs: same.map((l) => str(l.job)), files, bytes, whole },
-    recipe_merged: c.journal.filter((l) => l.type === "job_deduplicated").length,
+    recipe_merged: c.journal.filter((l) => l.type === "job_deduplicated" && l.kind !== "tool").length,
+    tool_joined: c.journal.filter((l) => l.type === "job_deduplicated" && l.kind === "tool").length,
     shadow_would_merge: c.journal.filter((l) => l.type === "job_would_merge").length,
   };
 }
@@ -1115,6 +1151,106 @@ async function network(S: string, now: number): Promise<RunMetrics["network"]> {
   return out;
 }
 
+/**
+ * The answers firstSightings looks for: each standing answer of a question in scope, matched by its value's first line
+ * (or the pieces of a format of several), with its first record with that value. The keys stay in memory.
+ */
+function sightingAnswers(c: Context, scope: RunMetrics["questions"]): SightingAnswer[] {
+  const live = new Set(scope.in_scope.map((q) => q.section));
+  const out: SightingAnswer[] = [];
+  for (const [section, e] of standingAnswers(c)) {
+    if (!live.has(section)) continue;
+    const q = c.qs?.bySection.get(section);
+    const value = str(e.value);
+    const key = answerKey(value);
+    const pieces = answerPieces(value, q?.text);
+    const sameValue = (x: P.LedgerEntry) => (key ? answerKey(str(x.value)) === key : pieces ? JSON.stringify(answerPieces(str(x.value), q?.text)) === JSON.stringify(pieces) : x.seq === e.seq);
+    let first: P.LedgerEntry = e;
+    for (const x of c.entries) {
+      if (x.kind !== "answer" || !str(x.section).startsWith("question:") || sectionOf(str(x.section), c.qs) !== section || !sameValue(x)) continue;
+      if ((ms(x.at) ?? Infinity) < (ms(first.at) ?? Infinity)) first = x;
+    }
+    out.push({ section, id: q?.id ?? null, answer: `E-${e.seq}`, by: str(first.by), at: ms(first.at), key, pieces });
+  }
+  return out;
+}
+
+/** The model gateway's requests, each with its start (its logged end less its duration); null when the run has no gateway log. */
+async function gatewayRequests(S: string): Promise<ModelCall[] | null> {
+  const path = join(S, "traces", "model-gateway.jsonl");
+  if (!existsSync(path)) return null;
+  const out: ModelCall[] = [];
+  for (const l of await jsonl(path)) {
+    if (l.refused || l.upstream_error || typeof l.seat !== "string") continue;
+    const end = ms(l.at);
+    if (end === null || typeof l.ms !== "number") continue;
+    out.push({ seat: l.seat, start: end - l.ms, end });
+  }
+  return out;
+}
+
+const share = (x: number | null): string => (x === null ? "?" : `${Math.round(x * 100)}%`);
+
+/**
+ * The harness measures of the improvement plan (section 8), one a line: each says its figure, or "not measured" and
+ * why the run's registers cannot give it. From the trace (f, with an empty trace when it is unreadable), the store's
+ * journal and the ledger.
+ */
+function measuresOf(c: Context, f: FrictionMetrics, trace: boolean, sight: FirstSightings | undefined): Measure[] {
+  const TRACE = "not measured: no readable traces/events.jsonl";
+  const yes = (measure: string, value: string): Measure => ({ measure, measured: true, value });
+  const no = (measure: string, why: string): Measure => ({ measure, measured: false, value: why.startsWith("not measured") ? why : `not measured: ${why}` });
+  const t = (measure: string, value: () => Measure | string): Measure => {
+    if (!trace) return no(measure, TRACE);
+    const v = value();
+    return typeof v === "string" ? yes(measure, v) : v;
+  };
+  const s = (x: number | null) => (x === null ? "?" : `${x} s`);
+  const out: Measure[] = [];
+  const d = f.delivery;
+  out.push(
+    !c.have.journal
+      ? no("Job result delivery time", "no store/journal.jsonl")
+      : !d.jobs
+        ? yes("Job result delivery time", "no job finished")
+        : !d.told
+          ? no("Job result delivery time", `no job_notified line on the journal for any of ${d.jobs} finished job(s) (a run from before them)`)
+          : yes("Job result delivery time", `from a job's end to the first time a seat was told: median ${s(d.median_s)}, p90 ${s(d.p90_s)}, max ${s(d.max_s)} over ${d.told} job(s); ${d.never_told} finished job(s) never told`),
+  );
+  const ls = f.large_seal;
+  out.push(
+    !c.have.journal
+      ? no("Sealing time for large extractions", "no store/journal.jsonl")
+      : yes("Sealing time for large extractions", ls.jobs ? `${ls.jobs} job(s) of ${LARGE_FILES} files or more, from the fence to the commit: median ${s(ls.median_s)}, max ${s(ls.max_s)} (the largest ${ls.max_files} files); every job's commit wait max ${s(f.commit_wait.max_s)}` : `no job sealed ${LARGE_FILES} files or more; every job's commit wait: median ${s(f.commit_wait.median_s)}, max ${s(f.commit_wait.max_s)} over ${f.commit_wait.jobs} job(s)`),
+  );
+  out.push(t("Hub heap and loop delay", () => (f.hub.samples ? `loop p99 at most ${f.hub.loop_p99_max_ms} ms, heap at most ${share(f.hub.heap_share_max)} of its limit (${f.hub.samples} sample(s)); ${f.hub.memory_high} memory warning(s), ${f.hub.restarts} restart(s)` : no("Hub heap and loop delay", "no hub_health rows on the trace (a run with no hub, or from before them)"))));
+  out.push(t("Seat-down events", () => `${f.seats.down} down, ${f.seats.relaunched} started again, ${f.seats.dead} recorded dead`));
+  out.push(t("Refusals per accepted record", () => (f.record.accepted ? `${f.record.per_accepted} (${f.record.refused} refused for ${f.record.accepted} accepted)` : `no record accepted (${f.record.refused} refused)`)));
+  out.push(t("Records needing two or more refusals", () => `${f.refused_twice.records} record(s) accepted after two or more refusals in a row; the longest run of refusals ${f.refused_twice.longest_run}`));
+  out.push(t("job_run result text and hint share", () => (f.job_run_text.answers ? `${f.job_run_text.answers} answer(s), ${f.job_run_text.chars} characters; hints at admission ${share(f.job_run_text.hint_share)} of them${f.library.recorded ? `, the library hint ${share(f.library.of_job_run)}` : ""}` : no("job_run result text and hint share", "no job_run row gives its answer's size (none ran, or a run from before answer_chars)"))));
+  out.push(t("Library share", () => (f.library.recorded ? `the library hint (${f.library.hint_chars} characters) and the tools listings (${f.library.listing_chars}) are ${share(f.library.of_all)} of the ${f.library.all_chars} characters of tool answers` : no("Library share", "no job_run row gives library_chars and no tools row answer_chars (a run from before them)"))));
+  out.push(t("Gap before a model call", () => (f.model_gap.source === null ? no("Gap before a model call", "no model gateway log (traces/model-gateway.jsonl): a request's start is recorded only there") : f.model_gap.calls ? `from a seat's last tool result to its next request: median ${s(f.model_gap.median_s)}, p90 ${s(f.model_gap.p90_s)}, max ${s(f.model_gap.max_s)} over ${f.model_gap.calls} request(s)` : no("Gap before a model call", "no request followed a seat's tool result on the trace"))));
+  out.push(t("Compactions per seat-hour", () => (f.compactions.per_seat_hour === null ? no("Compactions per seat-hour", "no seat time on the trace") : `${f.compactions.per_seat_hour} (${f.compactions.done} compaction(s), ${f.compactions.failed} failed)`)));
+  out.push(
+    !c.have.ledger
+      ? no("Minutes from first sighting to answer", "no ledger/entries.jsonl")
+      : !sight
+        ? no("Minutes from first sighting to answer", TRACE)
+        : !sight.answers.length
+          ? yes("Minutes from first sighting to answer", "no standing answer in scope")
+          : yes(
+              "Minutes from first sighting to answer",
+              `${sight.seen} of ${sight.answers.length} answer(s) seen in a tool result at or before their record: median ${sight.median_minutes === null ? "?" : `${sight.median_minutes} min`}, max ${sight.max_minutes === null ? "?" : `${sight.max_minutes} min`}; ${sight.answers
+                .map((x) => `${x.id ?? `question:${x.section}`} ${x.answer} ${x.status === "seen" || x.status === "seen_in_pieces" ? `${x.minutes} min (${x.kind}${x.status === "seen_in_pieces" ? ", its pieces" : ""}, ${x.same_seat ? "its own seat" : "another seat"})` : x.status === "seen_after" ? `seen only after its record (${x.kind})` : x.status === "not_seen" ? "not seen in a tool result the trace holds" : "not matchable (no value, or one under 4 characters)"}`)
+                .join("; ")}${sight.rows_without_text ? `; ${sight.rows_without_text} job answer row(s) carry neither text nor a sighting digest (a run from before the digests): a value first seen there is not found` : ""}${sight.rows_cut ? `; ${sight.rows_cut} row(s) hold more tokens than their digest's bound` : ""}`,
+            ),
+  );
+  out.push(t("Idle waits", () => (f.idle_waits.waits ? `${f.idle_waits.idle} of ${f.idle_waits.waits} wait(s) ended with nothing delivered: ${f.idle_waits.idle_s} s, ${share(f.idle_waits.share_of_seat_time)} of seat time; all waits ${f.idle_waits.wait_s} s` : "no wait call")));
+  out.push(t("Empty summaries", () => (!f.compactions.done ? "no compaction" : f.summaries_sized ? `${f.empty_summaries} of ${f.summaries_sized} compaction(s) that give their summary's size` : no("Empty summaries", "no compaction row gives its summary's size (a run from before summary_chars)"))));
+  out.push(t("Largest answer", () => (f.largest_answer.tool ? `${f.largest_answer.chars} characters (${f.largest_answer.tool})${f.hub.answers_too_large ? `; ${f.hub.answers_too_large} answer(s) too large to send` : ""}` : "no tool answer on the trace")));
+  return out;
+}
+
 // --- one run --------------------------------------------------------------------------------------
 
 /** `now`: when a grant's status is read for a run still going (tests fix it); a run that ended is read at its end. */
@@ -1135,6 +1271,9 @@ export async function measureRun(runDirArg: string, o: { now?: number } = {}): P
   const t = await tail(c, scope, outcome);
   if (!c.have.finish) c.notes.push("no finish register (a run from before readiness was recorded): the tail is measured from the first answers");
   const endAt = ms(outcome.at);
+  const traced = c.have.trace && !unreadable;
+  const fr = frictionMetrics(traced ? events : [], c.journal, { calls: await gatewayRequests(S) });
+  const sight = traced && c.have.ledger ? firstSightings(events, sightingAnswers(c, scope)) : undefined;
   const m: RunMetrics = {
     format: METRICS_FORMAT,
     run: basename(S),
@@ -1159,6 +1298,10 @@ export async function measureRun(runDirArg: string, o: { now?: number } = {}): P
     cost: await cost(c),
     duplicates: dup,
     network: await network(S, endAt ?? o.now ?? Date.now()),
+    ...(c.have.trace && !unreadable ? { skills: skillMetrics(events) } : {}),
+    ...(traced ? { harness: fr } : {}),
+    ...(sight ? { first_sighting: sight } : {}),
+    measures: measuresOf(c, fr, traced, sight),
     notes: c.notes,
   };
   if (!m.cost.source) m.notes.push("no per-call token record (no model gateway log, no Pi sessions, and no seat total with calls on the trace): cost per question is not measured");
@@ -1338,10 +1481,16 @@ export function metricsText(m: RunMetrics): string {
     ["Interpretations", i.recorded ? `${i.total}: ${i.valid} valid, ${i.superseded} on a superseded entry, ${i.disputed} on a disputed one${i.missing ? `, ${i.missing} on no entry` : ""}; ${i.jobs_uninterpreted.length} of ${i.jobs_under_leads} lead jobs uninterpreted, ${i.jobs_without_valid.length} with no valid interpretation` : absent(LEADS)],
     ["Reversals", r.recorded ? `${r.result_changes.length + r.negative_reopens.length}: ${r.new_evidence} after new evidence, ${r.discoverable} discoverable in the original evidence (${r.result_changes.length} answer result changes, ${r.leads_recorded ? `${r.negative_reopens.length} negative leads reopened` : `negative reopens ${absent(LEADS)}`}); ${r.corrections} corrections kept the result; ${r.partial_after_cap.length} established answer(s) recorded partial after a capped attest${r.partial_after_cap.length ? ` (${list(r.partial_after_cap.map((x) => `question:${x.section} ${x.from} to ${x.to}, capped by ${x.capped_by.join(" ")}`))})` : ""}` : absent(LEDGER)],
     ["Cost", m.cost.source ? `${m.cost.tokens} tokens, $${m.cost.usd} (from ${m.cost.source === "model-gateway" ? "the model gateway's log" : m.cost.source === "pi-sessions" ? "the seats' Pi sessions" : "each seat's total spread over its calls on the trace, an estimate"}); ${m.cost.named.tokens} given to the questions and leads a call made holding no lead named (reviews, records, lead acts), ${m.cost.finish_and_report.tokens} on the finish and the report, ${m.cost.unheld.tokens} spent holding no lead and naming nothing (${Object.entries(m.cost.unheld.by_kind).map(([k, n]) => `${k} ${n}`).join(", ") || "none"}), ${m.cost.leads_without_question.tokens} on leads that answer no question${m.cost.no_trace.tokens ? `, ${m.cost.no_trace.tokens} a seat spent that the trace could not place (${m.cost.no_trace.seats.join(", ")})` : ""}` : "not measured (no per-call token record)"],
-    ["Duplicates", m.duplicates.recorded ? `${m.duplicates.jobs_with_similar.length} jobs with similar work by another seat (${m.duplicates.exact_repeats.length} exact repeats); ${m.duplicates.independent.length} independent reproductions; same_as ${m.duplicates.same_as.files} file(s), ${m.duplicates.same_as.bytes} bytes in ${m.duplicates.same_as.jobs.length} job(s), ${m.duplicates.same_as.whole.length} wholly; recipes merged ${m.duplicates.recipe_merged}` : `not recorded${m.duplicates.shadow_would_merge ? ` (the retired shadow merge said ${m.duplicates.shadow_would_merge})` : " (no reuse hints on the store's journal)"}`],
+    ["Duplicates", m.duplicates.recorded ? `${m.duplicates.jobs_with_similar.length} jobs with similar work by another seat (${m.duplicates.exact_repeats.length} exact repeats); ${m.duplicates.independent.length} independent reproductions; same_as ${m.duplicates.same_as.files} file(s), ${m.duplicates.same_as.bytes} bytes in ${m.duplicates.same_as.jobs.length} job(s), ${m.duplicates.same_as.whole.length} wholly; recipes merged ${m.duplicates.recipe_merged}; identical tool calls joined ${m.duplicates.tool_joined}` : `not recorded${m.duplicates.shadow_would_merge ? ` (the retired shadow merge said ${m.duplicates.shadow_would_merge})` : " (no reuse hints on the store's journal)"}`],
+    ["Skills", m.skills ? skillMetricsWords(m.skills) : absent("readable traces/events.jsonl")],
+    ["Harness", m.harness ? frictionWords(m.harness) : absent("readable traces/events.jsonl")],
     ["Network", n.recorded ? `${n.requests} request(s): ${n.granted} granted, ${n.denied} denied (${counts(n.denied_by_code)}); ${n.operator_items} operator item(s), ${n.operator_items_open} open; ${n.grants} grant(s) (${counts(n.grants_by_status)}); ${n.fetches} fetch(es), ${n.captures} capture(s), ${n.fetch_refusals} refused by the fetch service${n.contamination ? `; contamination ${n.contamination}` : ""}` : "not used (no network/ records)"],
   ];
   lines.push(...table(rows));
+  if (m.measures?.length) {
+    lines.push("", "Harness measures (docs/usage.md, \"Harness measures\"):");
+    lines.push(...table([["Measure", "Value"], ...m.measures.map((x) => [x.measure, x.value])]));
+  }
   if (m.cost.per_question.length) {
     lines.push("", "Cost per question (tokens apportioned by lead):");
     lines.push(...table([["Question", "Tokens", "USD", "Leads"], ...m.cost.per_question.map((q) => [qname(q), String(q.tokens), String(q.usd), q.leads.join(" ")])]));

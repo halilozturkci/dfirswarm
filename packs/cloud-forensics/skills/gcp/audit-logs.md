@@ -3,6 +3,7 @@ id: gcp/audit-logs
 title: Cloud Audit Log entries
 when: Supplied Cloud Audit Log entries must say which principal called which method on which resource.
 needs: [logs/what-exists]
+card: cloud_normalise {"path": "<LogEntry export>", "provider": "gcp"}: read status and pagination_markers first. log_type separates the four logs: a missing data_access entry does not show nothing was read; whether it was on comes from supplied settings. delegation_chain keeps every hop: its first party is not the last service account. receive_time_raw is delivery, not the event. A denied entry is an attempt. Does not show: a person, that a call took effect or data left.
 tools: [cloud_normalise]
 requires_host: []
 ---

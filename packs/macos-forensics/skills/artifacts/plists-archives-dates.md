@@ -3,6 +3,7 @@ id: artifacts/plists-archives-dates
 title: Keyed archives, plist dates, recent items
 when: A plist is a keyed archive, holds a date-like number, or lists recent items.
 needs: []
+card: safari_history's visit_time_raw is Apple absolute seconds (since 2001-01-01 UTC); a partial read goes on with after_visit_id from resume. URL query values are withheld by shape and a plain secret is printed: read a store whose URLs matter as a job with secret_output: true. A visit is the time Safari recorded, not what the visit was. plist_read shows a keyed archive's UID references unresolved; timestamp_decode lists candidate epochs for a bare number, and a plausible date is not proof that the epoch is the field's. Does not show: what an unresolved reference meant, or that a recent item was opened.
 tools: [plist_read, safari_history, timestamp_decode]
 requires_host: []
 ---

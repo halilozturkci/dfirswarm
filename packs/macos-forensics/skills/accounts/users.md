@@ -3,6 +3,7 @@ id: accounts/users
 title: Accounts, sessions and attribution limits
 when: Relate activity to accounts and distinguish local from remote sessions.
 needs: []
+card: plist_read with {"key": "uid"} (gid, generateduid, home, shell) selects identifying keys; a whole account plist holds a password verifier: read it only as a job with secret_output: true and write where the verifier sits and its length, never its bytes or a hash. An account plist's mtime is not a creation, password-change or login event. Does not show: who typed, or membership at an earlier event.
 tools: [plist_read, unified_log]
 requires_host: []
 ---

@@ -602,7 +602,10 @@ RULE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 # pipe wrote can be cut. At the cap the tool stops reading, ends the holder (reap_orphans, settle) and lets the pipes go: PIPE_CUT["cut"]
 # counts the calls cut that way, process_notes() says so, and process_apply turns a complete answer partial. The bytes kept are the ones
 # read, not a whole stream: a caller that parses the output sees the program's output and at most 1 MiB of what a leftover wrote. While the
-# program is still alive nothing is capped here (a program's own output is its caller's to bound); the timing is unchanged.
+# program runs each stream has a running cap too (STDOUT_CAP 64 MiB, STDERR_CAP 8 MiB with its head and last STDERR_TAIL 1 MiB kept, or the
+# caller's `caps`): past it the program is ended on the deadline's own path (kill_tree, its tree only), the stream comes back cut
+# (Output.cut, output_cut()), OUTPUT_CUT counts the call and process_apply turns a complete answer partial; a caller that parses a cut
+# output says so and never takes it for a whole one.
 import select as _select
 import selectors as _selectors
 import time
@@ -1437,11 +1440,12 @@ def process_verdict():
 def process_apply(answer):
     """Put process_verdict() into `answer` as answer["program_group"] and, when a program left a process behind or that cannot be ruled out,
     turn a complete answer into a partial one (status "partial", the ok and complete flags that are there false, a sentence in status_basis;
-    a call of communicate_bounded that was cut at POST_EXIT_BYTES counts, PIPE_CUT):
-    what a program wrote while the tool read it is not a complete result. A carrier calls it once where it prints its answer. Returns `answer`."""
+    a call of communicate_bounded that was cut at POST_EXIT_BYTES counts, PIPE_CUT, and so does one that ended a program whose output passed
+    its running cap, OUTPUT_CUT): what a program wrote while the tool read it, or what it printed past a cap, is not a complete result. A
+    carrier calls it once where it prints its answer. Returns `answer`."""
     verdict = process_verdict()
     answer["program_group"] = verdict
-    if (verdict["left_behind"] > 0 or verdict["unproven"] or PIPE_CUT["cut"]) and answer.get("status") == "complete":
+    if (verdict["left_behind"] > 0 or verdict["unproven"] or PIPE_CUT["cut"] or OUTPUT_CUT["cut"]) and answer.get("status") == "complete":
         answer["status"] = "partial"
         for flag in ("ok", "complete"):
             if flag in answer:
@@ -1449,6 +1453,8 @@ def process_apply(answer):
         if verdict["left_behind"] > 0:
             sentence = "a program left %d process%s running after it ended; the tool ended them, and what they wrote before that is in the files named here" % (
                 verdict["left_behind"], "" if verdict["left_behind"] == 1 else "es")
+        elif OUTPUT_CUT["cut"]:
+            sentence = "a program's output was not read whole: %s" % OUTPUT_CUT["last"]
         elif PIPE_CUT["cut"]:
             sentence = "a process that held a program's pipe after it ended went on writing; the tool read no more than %d bytes of it and let the pipe go" % POST_EXIT_BYTES
         else:
@@ -1457,22 +1463,57 @@ def process_apply(answer):
         answer["status_basis"] = "%s; %s" % (basis, sentence) if isinstance(basis, str) and basis else sentence
     return answer
 
-
 PIPE_GRACE = 1.0    # seconds the pipes of a program that has ended are given to reach end of file
 POST_EXIT_BYTES = 1 << 20    # the most bytes (both pipes together) read from the pipes of a program that has ended
 PIPE_CUT = {"cut": 0}        # how many calls stopped reading at POST_EXIT_BYTES because a process still held the pipes and went on writing
+STDOUT_CAP = 64 << 20        # the most bytes of standard output one call of communicate_bounded keeps; past it the program is ended and the output is cut
+STDERR_CAP = 8 << 20         # the most bytes of standard error one call reads before it ends the program; it keeps the head and the last STDERR_TAIL bytes
+STDERR_TAIL = 1 << 20        # the tail of standard error kept once it passes STDERR_CAP (a program's last words are at its end)
+OUTPUT_CUT = {"cut": 0, "last": None}    # how many calls cut a stream at its running cap, and the sentence of the last one
 
 
-def communicate_bounded(proc, seconds, input=None):
-    """(stdout bytes, stderr bytes, timed out) for a program started with pipes, in bytes. At `seconds` the program and what it started
-    are killed (timed out). A program that has ended while something it started still holds its pipes (a daemon, a helper that
-    inherited them) does not hold the tool: from the moment the program has ended (or was killed) the pipes are given PIPE_GRACE seconds
-    and POST_EXIT_BYTES bytes, whichever is used up first; what the program wrote is kept, what the tool lost is killed (reap_orphans,
-    settle), and the pipes are let go. A cut at the byte cap is counted in PIPE_CUT and noted (process_notes()); the return shape is the
-    same. The pipes are read here and by nothing else (not by Popen.communicate), so letting them go is safe. `input` is written while
-    the program runs and is dropped once it has ended."""
+class Output(bytes):
+    """What communicate_bounded kept of one stream: the bytes, and `cut`, None when the stream was read whole, or a sentence saying it was
+    not (the program printed past the stream's cap and was ended there). A caller that parses the output reads `cut` first: a cut output
+    is never a whole one."""
+    cut = None
+
+
+def output_cut(*outputs):
+    """The sentence of the first of `outputs` (values communicate_bounded or preflight returned) that was cut at its cap; None when each was
+    read whole."""
+    for out in outputs:
+        text = getattr(out, "cut", None)
+        if text:
+            return text
+    return None
+
+
+def _output(data, cut):
+    out = Output(data)
+    out.cut = cut
+    return out
+
+
+def communicate_bounded(proc, seconds, input=None, caps=None):
+    """(stdout bytes, stderr bytes, timed out) for a program started with pipes, in bytes (Output: bytes with a `cut` sentence or None). At
+    `seconds` the program and what it started are killed (timed out). What the tool holds is capped while the program runs: `caps` is
+    (stdout cap, stderr cap), STDOUT_CAP and STDERR_CAP when it is None. Standard output is kept to its cap; standard error keeps its head and
+    its last STDERR_TAIL bytes (at most half its cap). When either stream passes its cap the program and what it started are ended (kill_tree,
+    the deadline's own path: its tree, nothing else), what was kept is returned with `cut` set on that stream, the call is counted in
+    OUTPUT_CUT and said in process_notes(), and process_apply turns a complete answer partial. A program that has ended while something it
+    started still holds its pipes (a daemon, a helper that inherited them) does not hold the tool: from the moment the program has ended (or
+    was killed) the pipes are given PIPE_GRACE seconds and POST_EXIT_BYTES bytes, whichever is used up first; what the program wrote is kept,
+    what the tool lost is killed (reap_orphans, settle), and the pipes are let go. A cut at the byte cap is counted in PIPE_CUT and noted
+    (process_notes()); the return shape is the same. The pipes are read here and by nothing else (not by Popen.communicate), so letting them
+    go is safe. `input` is written while the program runs and is dropped once it has ended."""
     deadline = time.monotonic() + max(0.1, seconds)
-    bufs = (bytearray(), bytearray())
+    out_cap, err_cap = (STDOUT_CAP, STDERR_CAP) if caps is None else (max(0, int(caps[0])), max(0, int(caps[1])))
+    tail_keep = min(STDERR_TAIL, err_cap // 2)
+    bufs = (bytearray(), bytearray())       # standard output; the head of standard error
+    tail = bytearray()                      # the last tail_keep bytes of standard error read past its head
+    seen, over = [0, 0], [False, False]     # bytes read from each stream; the stream passed its cap while the program ran
+    late = [False, False]                   # the stream passed its cap after the program had ended (by itself, or at the deadline)
     sel = _selectors.DefaultSelector()
     pending = memoryview(input) if input and proc.stdin is not None else None
     for index, stream in enumerate((proc.stdout, proc.stderr)):
@@ -1483,13 +1524,17 @@ def communicate_bounded(proc, seconds, input=None):
             sel.register(proc.stdin, _selectors.EVENT_WRITE, 2)
         else:
             _close_pipe(proc.stdin)
-    timed_out, note, ended, extra, cut, sampled = False, None, None, 0, False, 0.0
+    timed_out, note, ended, extra, cut, sampled, ended_at_cap = False, None, None, 0, False, 0.0, False
     try:
         while True:
             now = time.monotonic()
             if ended is None:
                 if proc.poll() is not None:
                     ended = now
+                elif over[0] or over[1]:
+                    ended_at_cap = True
+                    note = kill_tree(proc)
+                    ended = time.monotonic()
                 elif now >= deadline:
                     timed_out = True
                     note = kill_tree(proc)
@@ -1532,9 +1577,29 @@ def communicate_bounded(proc, seconds, input=None):
                 if not data:
                     sel.unregister(key.fileobj)
                     continue
-                bufs[key.data].extend(data)
+                index = key.data
+                seen[index] += len(data)
                 if ended is not None:
                     extra += len(data)
+                if index == 0:
+                    room = out_cap - len(bufs[0])
+                    if room > 0:
+                        bufs[0].extend(data[:room])
+                    if seen[0] > out_cap:
+                        over[0], late[0] = (over[0], True) if ended is not None else (True, late[0])
+                else:
+                    room = err_cap - tail_keep - len(bufs[1])
+                    if room > 0:
+                        bufs[1].extend(data[:room])
+                        data = data[room:]
+                    if data:
+                        tail.extend(data)
+                        if len(tail) > tail_keep:
+                            del tail[:len(tail) - tail_keep]
+                    if seen[1] > err_cap:
+                        over[1], late[1] = (over[1], True) if ended is not None else (True, late[1])
+                if (over[0] or over[1]) and ended is None:
+                    break           # the loop's head ends the program at once
         if any(key.data != 2 for key in sel.get_map().values()):
             reap_orphans(_pipe_inodes(proc))
             settle()
@@ -1550,10 +1615,27 @@ def communicate_bounded(proc, seconds, input=None):
     except subprocess.TimeoutExpired:
         pass
     settle()
+    # A stream that passed its cap only after the program had ended is cut too, unless the pipes were cut at POST_EXIT_BYTES: then what passed
+    # it is a process that held the pipe and went on writing, PIPE_CUT says so, and the program's own output was read whole.
+    for index in (0, 1):
+        over[index] = over[index] or (late[index] and not cut)
+    ending = "; the tool ended the program there" if ended_at_cap else ""
+    out_cut = ("the program printed more than %d bytes on its standard output; the tool kept the first %d and did not read the rest%s" % (
+        out_cap, len(bufs[0]), ending)) if over[0] else None
+    err_cut = ("the program printed more than %d bytes on its standard error; the tool kept the first %d and the last %d%s" % (
+        err_cap, len(bufs[1]), len(tail), ending)) if over[1] else None
+    for sentence in (out_cut, err_cut):
+        if sentence:
+            OUTPUT_CUT["cut"] += 1
+            OUTPUT_CUT["last"] = sentence
+            _note(sentence)
     err = bytes(bufs[1])
+    if over[1]:
+        err += b"\n[... %d bytes of standard error not kept ...]\n" % (seen[1] - len(bufs[1]) - len(tail))
+    err += bytes(tail)
     if note:
         err = err + (b"\n" if err else b"") + note.encode("utf-8", "replace")
-    return bytes(bufs[0]), err, timed_out
+    return _output(bufs[0], out_cut), _output(err, err_cut), timed_out     # (one copy of standard output, not two)
 
 
 def _close_pipe(pipe):
@@ -1815,6 +1897,7 @@ def main():
     errfd, errname = tempfile.mkstemp(prefix=".yara-stderr-", dir=_ensure(outdir))
     TEMPS.append(errname)
     timed_out = [False]
+    left_running = [False]    # yara closed its output and was still running PIPE_GRACE seconds later: it was ended
     never_ran = yara_seconds < 1
     ignored = 0           # lines that are neither a rule line for a path of the target nor a string line: counted, never shown
     current = None        # [rule, file, string count]
@@ -1840,6 +1923,7 @@ def main():
             kill_tree(proc)
 
         timer = threading.Timer(yara_seconds, stop)
+        yara_until = time.monotonic() + yara_seconds
         timer.start()
         # The output is read by a thread of its own and the main thread waits in short turns: a stop signal that arrives in the instant before a blocking read
         # begins is then handled within half a second, where a main thread already blocked in the read would never run its handler.
@@ -1895,8 +1979,19 @@ def main():
             if 'error' in box:
                 raise box['error']
         finally:
+            # The output has reached its end (or the reader failed): yara has ended or is about to. A program that closed its output and went on
+            # running is given PIPE_GRACE seconds (never past its own clock) and then ended: the wait is never without a bound.
+            try:
+                rc = proc.wait(timeout=max(0.0, min(PIPE_GRACE, yara_until - time.monotonic())))
+            except subprocess.TimeoutExpired:
+                if not timed_out[0]:
+                    left_running[0] = True
+                kill_tree(proc)
+                try:
+                    rc = proc.wait(timeout=PIPE_GRACE)
+                except subprocess.TimeoutExpired:
+                    rc = None
             timer.cancel()
-            rc = proc.wait()
             if proc in ACTIVE:
                 ACTIVE.remove(proc)
             values.close()
@@ -1955,11 +2050,11 @@ def main():
     # or PR_SET_CHILD_SUBREAPER refused) the file cannot be shown to be final.
     verdict = process_verdict()
     unsettled = bool(verdict["left_behind"] or verdict["unproven"])
-    complete = (not never_ran and rc == 0 and not timed_out[0] and error_page["matched"] == 0 and skipped_page["matched"] == 0 and not walk_cut
+    complete = (not never_ran and rc == 0 and not timed_out[0] and not left_running[0] and error_page["matched"] == 0 and skipped_page["matched"] == 0 and not walk_cut
                 and not stderr_unread and rules_digest is not None and not unsettled)
     if complete:
         status = "complete"
-    elif never_ran or timed_out[0] or (rc == 0 and not timed_out[0]) or rule_page["matched"] or string_page["matched"]:
+    elif never_ran or timed_out[0] or left_running[0] or (rc == 0 and not timed_out[0]) or rule_page["matched"] or string_page["matched"]:
         status = "partial"
     else:
         status = "failed"
@@ -1968,9 +2063,11 @@ def main():
         reasons.append("the tool's own clock (%d s) left yara no time to run (the probes and the walk of the target used it): nothing was scanned" % DEADLINE_SECONDS)
     if timed_out[0]:
         reasons.append("yara was stopped after %d s (its share of the tool's %d s clock, or timeout_seconds): what it printed before is listed" % (yara_seconds, DEADLINE_SECONDS))
+    if left_running[0]:
+        reasons.append("yara closed its output and was still running %.1f s later: it was ended, and what it would still have printed or written is missing" % PIPE_GRACE)
     if walk_cut:
         reasons.append("the walk of the target for files yara skips was cut by the clock: not_attempted is incomplete")
-    if rc not in (0, None) and not timed_out[0]:
+    if rc not in (0, None) and not timed_out[0] and not left_running[0]:
         reasons.append("yara exited %d" % rc)
     if error_page["matched"]:
         reasons.append("%d file(s) could not be scanned (scan_errors)" % error_page["matched"])

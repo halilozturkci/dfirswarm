@@ -337,7 +337,10 @@ except BrokenPipeError:
 `;
 
 for (const kind of ["yes", "empty"] as const) {
-  test(`tcrypt_header: a ${kind === "yes" ? "setsid yes leftover that floods the pipe" : "megabyte of empty lines"} is not parsed whole: the answer comes fast and the header fields are still read`, { skip: NO_ADOPTION }, async () => {
+  // cryptsetup's output is held to 1 MiB while it runs (the shared PROCESS block's running cap). Both floods pass it while the stand-in still
+  // runs, so cryptsetup is ended there; with no exit code of its own, nothing is said of the password or the header, and nothing is read from
+  // what was kept.
+  test(`tcrypt_header: a ${kind === "yes" ? "setsid yes leftover that floods the pipe" : "megabyte of empty lines"} is not parsed whole: the answer comes fast, says the output was cut and claims nothing of the header`, { skip: NO_ADOPTION }, async () => {
     await scratch(async ({ cwd, out, bin }) => {
       const pidFile = join(cwd, "pids");
       await writeFile(join(bin, "cryptsetup"), FLOOD_STUB(kind, pidFile));
@@ -348,11 +351,12 @@ for (const kind of ["yes", "empty"] as const) {
       const started = Date.now();
       const run = await runTool(cwd, { source: "real.img", password_file: "password.txt" }, env);
       const ms = Date.now() - started;
-      const a = answer<{ status: string; decrypted: boolean; fields: Record<string, string> }>(run);
+      const a = answer<{ status: string; status_basis: string; decrypted: boolean | null; fields: Record<string, string> }>(run);
       try {
-        assert.equal(a.decrypted, true, run.stdout.slice(0, 600));
-        assert.equal(a.fields.cipher_chain, "aes-twofish-serpent");
-        assert.equal(a.fields.key_size_bits, "192");
+        assert.equal(a.status, "failed", run.stdout.slice(0, 600));
+        assert.match(a.status_basis, /cryptsetup's output was not read whole .*nothing is said about the password or the header/);
+        assert.equal(a.decrypted, null);
+        assert.deepEqual(a.fields, {});
         assert.ok(ms < 3000, `answered in ${ms} ms`);
       } finally {
         if (kind === "yes") {

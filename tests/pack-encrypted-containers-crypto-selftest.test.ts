@@ -212,7 +212,8 @@ test("hostile parameters are JSON refusals", async () => {
 });
 
 test("the real pyAesCrypt and pytsk3 are exercised where the host has them", async (t) => {
-  const have = (m: string): boolean => spawnSync("python3", ["-c", `import ${m}`]).status === 0;
+  // The tool imports each module in an isolated interpreter (python3 -I), so a module only in the user's site-packages is not one the host has for it.
+  const have = (m: string): boolean => spawnSync("python3", ["-I", "-c", `import ${m}`]).status === 0;
   if (!have("pyAesCrypt") && !have("pytsk3")) {
     t.skip("neither pyAesCrypt nor pytsk3 is importable on this host");
     return;

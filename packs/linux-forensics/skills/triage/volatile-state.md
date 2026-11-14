@@ -3,6 +3,7 @@ id: triage/volatile-state
 title: What each kind of acquisition holds
 when: Saying what a disk, collection, /proc, memory or live output can show.
 needs: []
+card: linux_triage {"source": "<image or extracted root>", "out_dir": "work/<your id>/<name>"} runs no command on the target and reports no running state; execution_complete is not coverage. Say which acquisition each statement rests on: a disk image holds no process list, sockets or mounts; a collection holds what its collector chose; a captured /proc is not one instant; saved live output is a collector's view. Does not show: that a process or connection was absent, or that a command output is true.
 tools: [linux_triage]
 requires_host: []
 ---

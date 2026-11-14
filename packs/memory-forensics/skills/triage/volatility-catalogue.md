@@ -1,7 +1,7 @@
 ---
 id: triage/volatility-catalogue
 title: The kickoff's plugin catalogue and its limits
-when: The memory-windows recipe has run at the kickoff and you read its receipts.
+when: The memory-windows recipe ran at the kickoff and you read its receipts.
 needs: []
 tools: []
 requires_host: []

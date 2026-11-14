@@ -3,6 +3,7 @@ id: accounts/sessions
 title: Account, session, person
 when: Tie activity to an account or session.
 needs: [accounts/logons]
+card: evtx_query {"path": "<Security.evtx>", "event_ids": [4624, 4634, 4647, 4672, 4688]}: join by LogonId, which is unique within one computer and one boot only; a missing logoff does not show the session stayed open. A record carries the token's account, not the human: name the mechanism you claim (a service, a task, runas, remote control, a shared credential read the same) and what outside the account's own logs supports a person; without it write "activity under account X in session Y". A negative about a logon carries its qualifiers: the audit subcategory, rollover, another machine. Does not show: who was at the keyboard.
 tools: [evtx_query]
 requires_host: []
 ---

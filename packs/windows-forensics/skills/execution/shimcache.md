@@ -3,6 +3,7 @@ id: execution/shimcache
 title: ShimCache, AppCompatCache
 when: Records of files seen.
 needs: []
+card: userassist_bam_shimcache {"hive": "<SYSTEM>", "source": "shimcache"} decodes AppCompatCache into one record per entry with layout and layout_basis: say the tool, its parser and the layout; its offsets are from published notes, and cross_check is not_run. A cached file time is the file's metadata, not an execution time; the order is not a complete sequence of runs; a hive from a running system can lag memory, so an absence near the end of a timeline is not evidence. Read the control set the question concerns, not a hard-coded ControlSet001. regkv returns the value as hex only. Does not show: that the program ran, by whom, how often or when.
 tools: [userassist_bam_shimcache, regkv]
 requires_host: []
 ---

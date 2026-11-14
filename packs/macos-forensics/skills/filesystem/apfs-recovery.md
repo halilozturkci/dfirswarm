@@ -3,6 +3,7 @@ id: filesystem/apfs-recovery
 title: APFS deletion, recovery limits and timestamps
 when: Say what a deleted APFS file leaves behind, or read APFS file times.
 needs: []
+card: APFS file times are nanoseconds since the Unix epoch, not the Apple epoch: keep the raw integer beside the UTC value, and check that timestamp_decode keeps the fractions you need. Nanosecond storage is not clock accuracy, and the inode-change time is not a creation time. No $MFT does not mean no recoverable history. Does not show: that deleted content is gone or recoverable from one route, or an event's time from a changed time.
 tools: [timestamp_decode]
 requires_host: []
 ---

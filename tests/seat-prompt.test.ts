@@ -309,3 +309,12 @@ function budget(): Parameters<typeof capSteerText>[0] {
 function pressureOf(b: Parameters<typeof capSteerText>[0]) {
   return budgetPressure(b);
 }
+
+test("a hand-off header written when the hub could not be reached says its facts are unknown, never zero entries or an absent sentinel (the run s082123)", () => {
+  const facts = { claims: [], unread: {}, ledgerTotal: 0, ledgerMine: 0, sentinel: false, spentUsd: 0, unknown: true };
+  const h = handoffHeader("agent00", 4, facts, true, "threshold");
+  assert.match(h, /Live claims, unread posts, the ledger, the sentinel and spend: unknown \(the hub could not be reached/);
+  assert.doesNotMatch(h, /Sentinel: absent|Ledger: 0 entries/);
+  const known = handoffHeader("agent00", 4, { ...facts, unknown: undefined }, true, "threshold");
+  assert.match(known, /Ledger: 0 entries, 0 yours\. Sentinel: absent\./);
+});

@@ -3,6 +3,7 @@ id: recovery/survivability
 title: Which recovery points survive, and could one be restored?
 when: The question is whether a VM or dataset can still be recovered, and from what.
 needs: []
+card: Test each copy for five things, each with evidence or "unverified": it exists, its chain is whole (snapshot_chain_check), its bytes are intact, its key is held apart from the damage, a restore was tested. A job record from backup_audit_normalise is not a restore test. Does not show: that a point is clean, application-consistent, or restorable within a time.
 tools: [snapshot_chain_check, backup_audit_normalise, virtualization_inventory]
 requires_host: []
 ---

@@ -1,16 +1,17 @@
 ---
 id: triage/what-you-have
 title: Classify a memory capture first
-when: A memory image, crash dump, saved VM state, paging or hibernation file is in the evidence.
+when: A memory image, crash or process dump, VM state, paging or hibernation file is in the evidence.
 needs: [evidence/verify]
+card: check_inputs, then mem_profile {"path": "<image>"}: a heuristic over the header and a sample. "unrecognised" fits a flat capture and a non-memory file alike; OS hints are strings in sampled_ranges; file_pages_4k_estimate is length over 4096. Confirm format, architecture, ranges and completion from validated headers and the acquisition record, not the name. A check_inputs pass is agreement with the manifest, not authenticity. Does not show: completeness, build or capture time.
 tools: [mem_profile, check_inputs]
 requires_host: []
 ---
 
 Use when the evidence includes a memory image, a process dump, a crash dump, a VM's saved state, a paging file or a hibernation file. Not for choosing plugins (`triage/volatility`) or for a capture no framework reads (`triage/no-framework`).
 
-Memory arrives in half a dozen containers and they are not interchangeable. Naming
-the wrong one wastes an hour and produces a framework error that reads like a
+Memory arrives in half a dozen containers, not interchangeable. Naming the
+wrong one wastes an hour and produces a framework error that reads like a
 corrupt image.
 
 First fetch `evidence/verify`: compare the inputs with the manifest and the
@@ -22,6 +23,7 @@ acquisition record, and run `check_inputs`. Then run `mem_profile`.
     hiberfil.sys                HIBR or WAKE, or a zeroed header: a saved state, compressed as a rule
     LiME / AVML                 Linux, with their own framing
     ELF core                    a hypervisor's guest-memory dump, or one process's core
+    process dump (MDMP)         one Windows process, not an image: `triage/process-dumps`
 
 `mem_profile` is a heuristic first pass over the header and a sample. Its
 "unrecognised" is not a finding that the file is RAM (a flat capture and a file that

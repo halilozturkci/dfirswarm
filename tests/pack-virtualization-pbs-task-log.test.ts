@@ -191,8 +191,12 @@ test("a file of a million lines is read within max_seconds, every row is on disk
     assert.ok(took < 58, `took ${took}s`);
     const out = json(run);
     assert.ok(["complete", "partial"].includes(out.status));
+    // A partial says why. A host that reaches max_seconds first names it in partial_reasons. A host that reads all 1,000,001 lines in time (an
+    // idle M3 Max: about 29 s) judges the paging file's strings until the run's cap of characters judged (about 604,000 rows' worth), withholds
+    // the 396,236 strings after it by their size, and is partial for that: the boundary names the stop and status_basis says it.
     if (out.status === "complete") assert.equal(out.counts.events, 1_000_001);
-    else assert.ok(out.partial_reasons.some((r: string) => /max_seconds/.test(r)) || out.partial_reasons.length > 0);
+    else assert.ok(out.partial_reasons.length > 0 || (typeof out.boundary.stopped_by === "string" && /judging the strings stopped at /.test(out.status_basis)),
+      `a partial answer says why: ${out.status_basis}`);
     assert.ok(Buffer.byteLength(run.stdout) < 2_000_000, "the inline list is cut");
     const file = out.pages.events.all_results;
     assert.ok(file, "the whole list is in a file");

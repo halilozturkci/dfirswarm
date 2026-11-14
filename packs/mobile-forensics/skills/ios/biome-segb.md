@@ -3,6 +3,7 @@ id: ios/biome-segb
 title: Biome and SEGB records
 when: An activity question depends on an iOS Biome stream.
 needs: [extractions/what-you-have]
+card: protobuf_peek {"path": "<segb file>", "offset": "<payload offset>", "length": "<n>"}: never hex, never a window inside a withheld field; an aimed window under 16 bytes or 4 fields is not_accepted. Wire structure only: no field names, units or event meaning; content goes to a values file only with write_values in a secret_output job. Keep container and payload times apart. Does not show: a person acting.
 tools: [protobuf_peek]
 requires_host: [ileapp]
 ---

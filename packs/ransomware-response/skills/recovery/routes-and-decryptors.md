@@ -5,6 +5,7 @@ when: Files are partly encrypted, originals may be deleted, or a decryptor is to
 needs: []
 tools: [file_carver, recovery_validate]
 requires_host: []
+card: file_carver ({"path": "<image>", "offset": <n>, "sig_type": "<type>"}) gives a candidate, not a recovered file: check its completeness and structure and keep its source offset. recovery_validate checks an output, run separately: matches_known_original, structurally_valid, unrecovered or inconclusive; a decryptor's exit code is not evidence, and a valid structure is not the original. Three entropy windows do not locate every modified region. Does not show: permanent loss after one failed route.
 ---
 
 Use only if files are partly damaged, originals may survive deletion, or a decryptor is to be tested. Not for the preservation gate or the restoration position (`recovery/what-is-possible`).

@@ -3,6 +3,7 @@ id: triage/clocks-boots
 title: Clocks, zones and boot history
 when: Fixing the zone and year for timestamps and building the boot history.
 needs: []
+card: timestamp_decode {"value": "<raw>"} gives candidates: choose the epoch from the source's format. Take a record's zone from the configuration and corroboration in force on that date, not /etc/timezone alone (today's setting); apply one stated correction per source. Build boots from every source: journal boot ids, BOOT_TIME records of utmp_parse {"path": "<wtmp>", "types": ["BOOT_TIME"]}, a SQLite accounting database, boot and shutdown logs, captured uptime, hypervisor or cloud records; wtmp is neither guaranteed nor exhaustive. Does not show: a boot no source you read recorded, or an earlier date's zone from today's setting.
 tools: [timestamp_decode, utmp_parse]
 requires_host: []
 ---

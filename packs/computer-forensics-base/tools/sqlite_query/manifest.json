@@ -68,6 +68,12 @@
   },
   "by": "s881002",
   "at": "2026-09-18T13:31:25.586Z",
-  "version": 19,
-  "sha256": "a08bb3f870377d29ac8eff56a7c7224d810611347bfc98b90602f830f9b6acee"
+  "not_for": [
+    {
+      "what": "deleted text in a database's free pages",
+      "use": "sqlite_freespace"
+    }
+  ],
+  "version": 21,
+  "sha256": "2269eb623ae17925911be46e72d9368776b2a5871cc7ba5df32dcc72fbbeff2e"
 }

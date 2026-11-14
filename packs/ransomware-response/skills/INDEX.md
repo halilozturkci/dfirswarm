@@ -4,6 +4,8 @@ Fetch a body with `skill("<id>")`. A body may name others; fetch those the same 
 
 Router: `ransomware/router`
 
+Core: `encryptor/traces`, `identify/family`, `recovery/scheme-from-sample`
+
 - `encryptor/backup-infrastructure` Backup servers, immutable storage and hypervisors: A backup server, immutable store, hypervisor or recovery setting was affected.
 - `encryptor/destroyed-backups` Recovery impairment and surviving recovery paths: Backups, snapshots, catalogues or recovery services may have been altered.
 - `encryptor/samples-and-notes` Recovered samples, tails and note placement: You hold a recovered binary or script, repeated tails, or note placement.
@@ -21,6 +23,7 @@ Router: `ransomware/router`
 - `recovery/preserve-and-restore` The minimum preservation package before a rebuild: A rebuild, repair, decryption or reconnection is about to change a source.
 - `recovery/public-decryptors` Public decryptors: catalogue lookup, test on copies: A family or variant may have a public decryptor to obtain and test.
 - `recovery/routes-and-decryptors` Partial damage, deleted originals, decryptors: Files are partly encrypted, originals may be deleted, or a decryptor is to be tested.
+- `recovery/scheme-from-sample` Key scheme from sample, dump and files: Encrypted files and the encryptor or its process dump are held; no public decryptor fits.
 - `recovery/what-is-possible` Assessing and validating recovery without destroying evidence: The organisation needs a defensible recovery position and restoration plan.
 - `reporting/conclusions-and-controls` Conclusions by phase, and control findings: Writing conclusions by phase, a negative exfiltration finding or insurance findings.
 - `reporting/for-regulators` Evidence-led reporting and notification assessment: Preparing incident findings for legal, regulatory, insurance or executive review.

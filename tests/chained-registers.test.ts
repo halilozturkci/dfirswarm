@@ -223,7 +223,7 @@ test("--redact treats a sweep's looked_for strings and hits like other sensitive
   // A sensitive entry whose words the second sweep repeats, and a sensitive coverage record whose strings are the secret itself.
   const ioc = await rec(a0, { kind: "ioc", value: `the vault key ${SECRET}`, source: "notes", evidence: "row 11", sensitive: true });
   assert.ok(ioc.ok, (ioc as { reason?: string }).reason);
-  const abs = await rec(a0, { kind: "absence", value: "a key", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["2"] });
+  const abs = await rec(a0, { kind: "absence", value: "a key", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["2"] });
   assert.ok(abs.ok);
   const seqAbs = (abs as { entry: { seq: number } }).entry.seq;
   const sensitiveCov = await rec(a0, { ...coverage("2", ["input:disk.E01"], [`E-${seqAbs}`], { looked_for: ["Other-Secret-5521"] }), sensitive: true });

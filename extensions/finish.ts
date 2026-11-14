@@ -60,6 +60,8 @@ import { join } from "node:path";
 import * as L from "./leads.ts";
 import * as NB from "./negative-bar.ts";
 import * as P from "./protocol.ts";
+import { boundItems } from "./reply-bound.ts";
+import { firstLine } from "./answer-format.ts";
 
 export const FINISH_LOG = "leads/finish.jsonl";
 /** How a done that is not the coordinator's is answered: quietly, never as a refusal. */
@@ -1176,7 +1178,7 @@ export async function prepareFinish(ctx: P.SwarmContext, input: { report?: strin
   if (!report) return { ok: false, reason: "name the report you drafted (report, e.g. work/report.md): prepare binds the finish to it" };
   if (!(await reportDigest(S, report))) return { ok: false, reason: `${report} does not exist yet: write the report and publish it, then prepare the finish on it` };
   const r = await readiness(S);
-  const readinessOut = { ready: r.ready, revision: r.revision, items: r.items, limited: r.limited, ...(r.warnings.length ? { warnings: r.warnings } : {}) };
+  const readinessOut = { ready: r.ready, revision: r.revision, items: r.items, limited: r.limited, ...heldOut(r), ...(r.warnings.length ? { warnings: r.warnings } : {}) };
   const got = await withFinish(S, async (held) => {
     const turn = await takeLease(ctx, report, now, held);
     if (!turn.mine) return { turn, mine: false as const };
@@ -1265,6 +1267,32 @@ async function goalExtraSections(sandboxRoot: string): Promise<string[]> {
 export type ReadinessHold = { section: string; code: string; why: string };
 
 export type Readiness = { ready: boolean; revision: string; items: string[]; limited: string[]; confirming: string[]; warnings: string[]; warned: P.LedgerWarning[]; held?: ReadinessHold[] };
+
+/**
+ * What holds each section, by the ledger gate's code (sweep_hits,
+ * no_critic_act, answer_support, …): the codes of the items, for the seat
+ * and for the trace, which keeps codes and counts and never the items' words.
+ */
+export function heldOut(r: Pick<Readiness, "held">): { held?: Array<{ section: string; code: string }> } {
+  return r.held?.length ? { held: r.held.map((h) => ({ section: h.section, code: h.code })) } : {};
+}
+
+/** The codes that hold the finish, with how many sections each holds: what the trace records of a readiness. */
+export function heldCodes(held: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!Array.isArray(held)) return out;
+  for (const h of held) {
+    const code = h && typeof h === "object" ? String((h as { code?: unknown }).code ?? "") : "";
+    if (code) out[code] = (out[code] ?? 0) + 1;
+  }
+  return out;
+}
+
+/** What the trace keeps of a readiness a finish act gave: ready, how many items, and the codes holding sections; never the items' words. */
+export function readinessCounts(r: Record<string, unknown>): { ready: boolean; items?: number; held?: Record<string, number> } {
+  const held = heldCodes(r.held);
+  return { ready: r.ready === true, ...(Array.isArray(r.items) ? { items: r.items.length } : {}), ...(Object.keys(held).length ? { held } : {}) };
+}
 
 const readinessCache = new Map<string, Readiness>();
 
@@ -1406,6 +1434,39 @@ async function closeChanged(sandboxRoot: string, s: L.LeadsSnapshot, all: string
   return after.filter((w) => changed.has(w.section));
 }
 
+/**
+ * The seats still at work (on the team, neither done nor marked dead, with a working row on the trace within the stale
+ * limit) whose newest ended job of evidence (a command or tool job that ended ok) ended after their newest ledger entry:
+ * one item a seat. In the run s082123 a seat had computed an answer at minute 152 and never recorded it, and the run was
+ * stopped with the value in its context alone; a finish that does not wait for such a seat ends without it.
+ */
+export async function unrecordedWork(sandboxRoot: string, s: L.LeadsSnapshot, now = Date.now()): Promise<string[]> {
+  const ids = await P.teamIds(sandboxRoot).catch(() => [] as string[]);
+  if (!ids.length) return [];
+  const act = await L.recentActivity(sandboxRoot, L.leadStaleMs(), now);
+  const lastEntry = new Map<string, number>();
+  for (const e of s.ledger.entries) {
+    const at = Date.parse(e.at ?? "");
+    if (!Number.isFinite(at)) continue;
+    for (const by of [e.by, ...((e as { authors?: string[] }).authors ?? [])]) if (by) lastEntry.set(by, Math.max(lastEntry.get(by) ?? 0, at));
+  }
+  const out: string[] = [];
+  for (const id of ids) {
+    if (["done", "dead"].some((m) => existsSync(join(sandboxRoot, "done", "agents", `${id}.${m}`)))) continue;
+    const row = act.get(id);
+    if (!row?.last || now - row.last >= L.leadStaleMs()) continue;
+    let newest: { id: string; at: number } | null = null;
+    for (const j of s.jobs) {
+      if (j.agent !== id || (j.kind !== "command" && j.kind !== "tool") || j.status !== "ok" || !j.finished_at) continue;
+      const at = Date.parse(j.finished_at);
+      if (Number.isFinite(at) && (!newest || at > newest.at)) newest = { id: j.id, at };
+    }
+    if (!newest || newest.at <= (lastEntry.get(id) ?? 0)) continue;
+    out.push(`${id} is at work and its job ${newest.id} ended after its last record (${lastEntry.has(id) ? new Date(lastEntry.get(id)!).toISOString() : "none"}): ask it to record what that job showed, or wait for it`);
+  }
+  return out;
+}
+
 async function computeReadiness(sandboxRoot: string, s: L.LeadsSnapshot, revision: string): Promise<Readiness> {
   const items: string[] = [];
   const limited: string[] = [];
@@ -1419,6 +1480,8 @@ async function computeReadiness(sandboxRoot: string, s: L.LeadsSnapshot, revisio
   // An addition committed and not yet applied (docs/adr/0014): what it reopens may still look settled; the gate holds it too.
   const M = await import("../scripts/material.ts").catch(() => null);
   for (const a of (await M?.unappliedAdditions(sandboxRoot).catch(() => [])) ?? []) items.push(`import:${a.import} (${a.type === "evidence_added" ? "evidence" : "material"} added at ${a.at}) is committed and not all it implies is recorded yet (the hub records it at its next round)`);
+  // A seat still at work whose newest job of evidence ended after its newest record: what that job showed is on no record yet.
+  for (const w of await unrecordedWork(sandboxRoot, s).catch(() => [])) items.push(w);
   const sections = await readinessSections(sandboxRoot, s);
   const inputs = await gateInputs(sandboxRoot, s);
   const { attestations } = inputs;
@@ -1579,22 +1642,46 @@ export async function syncPhase(sandboxRoot: string, p: FinishPhase): Promise<bo
   }).catch(() => false);
 }
 
+/**
+ * Readiness for the header, shared: eight seats that wake on one post ask at once, and each call walked every
+ * register. One computation serves the calls of the next READINESS_SHARE_MS; a gate decision (prepare, done, status)
+ * never reads it.
+ */
+const READINESS_SHARE_MS = 2000;
+const readinessHeld = new Map<string, { at: number; value: Promise<Awaited<ReturnType<typeof readiness>>> }>();
+function readinessShared(sandboxRoot: string): Promise<Awaited<ReturnType<typeof readiness>>> {
+  const had = readinessHeld.get(sandboxRoot);
+  if (had && Date.now() - had.at < READINESS_SHARE_MS) return had.value;
+  const value = readiness(sandboxRoot);
+  readinessHeld.set(sandboxRoot, { at: Date.now(), value });
+  value.catch(() => readinessHeld.delete(sandboxRoot));
+  return value;
+}
+
 /** The finish in the header (A4): readiness, the coordinator, and what this seat does about it. */
 export async function finishHeader(sandboxRoot: string, me: string): Promise<string | null> {
   if (await P.swarmDoneExists(sandboxRoot)) return null;
-  const r = await readiness(sandboxRoot);
+  const r = await readinessShared(sandboxRoot);
   await syncReadiness(sandboxRoot, r).catch(() => false);
   const st = await readFinish(sandboxRoot);
   const lease = st.lease;
   const mine = lease?.holder === me;
   const who = lease ? `${lease.holder}${mine ? " (you)" : ""} coordinates it (generation ${lease.generation})` : "nobody coordinates it yet: the first prepare or done takes it (normally the report's publisher, who prepares it with finish prepare once the report is drafted)";
-  const state = r.ready ? `READY by the registers${r.limited.length ? `, limited: ${r.limited.join("; ")}` : ""}` : `not ready (${r.items.length}): ${r.items.join("; ")}`;
+  // The header rides on every wait, inbox and leads answer and on every hand-off: it names the caller's own items and
+  // a few of the rest, each cut to a bound, and counts the others. The whole list is finish status's. Joined whole it
+  // was 40-59% of all wait output in four runs, and 38 MB a call once an item listed 137,703 unsearched objects.
+  const shown = boundItems(r.items, (item) => item.includes(me));
+  const state = r.ready
+    ? `READY by the registers${r.limited.length ? `, limited: ${boundItems(r.limited, () => false).text}` : ""}`
+    : `not ready (${r.items.length}${shown.own ? `, ${shown.own} of them yours` : ""}): ${shown.text}`;
   let act = "";
   // The finish phase: recorded when it turns, and said to every seat.
   const phase = await finishPhase(sandboxRoot).catch(() => null);
   if (phase) await syncPhase(sandboxRoot, phase).catch(() => false);
   if (phase?.assembling) act += mine ? " ASSEMBLING: you assemble the finish; another seat's answer revision is admitted only with material (why it changes a conclusion); yours are free." : ` ASSEMBLING by ${phase.coordinator}: an answer revision from another seat is admitted only with material (why it changes a conclusion); a rewording or a restatement is not recorded now.`;
   if (mine) {
+    const differs = await reportCheck(sandboxRoot, lease.report).catch(() => [] as string[]);
+    if (differs.length) act += ` The report and the ledger differ in ${differs.length} place(s) (finish status lists them under report_against_ledger): bring them together before done.`;
     const late = await lateItems(sandboxRoot, me, lease.report);
     const digest = await reportDigest(sandboxRoot, lease.report);
     act += late.length ? ` Late against the report, each for your typed resolution, all in one call (finish resolve with items, generation ${lease.generation}, digest ${(digest ?? "").slice(0, 12)}): ${late.map((x) => (x.kind === "post" ? `post #${x.id} (${x.tag}) by ${x.by}` : `objection ${x.id} by ${x.by}: ${x.why}`)).join("; ")}.` : r.ready ? " Call done." : "";
@@ -1633,9 +1720,42 @@ export async function recordCheck(sandboxRoot: string, by: string, revision: str
  * against the report. What is late needs the lease's boundary: before a
  * coordinator's prepare (or done) there is none, and nothing is listed.
  */
+/**
+ * A report held against the ledger: each question's standing answer whose value's first line the report does not hold,
+ * and each E-<n> the report cites that the ledger does not have. A run's report held six exact strings its ledger had
+ * as sentences (s082123), another cited E-97 in a ledger that ended at E-95, a third said "pending" twelve minutes
+ * after the answer was recorded. Pure: `answers` are the standing answers, `maxSeq` the ledger's last entry.
+ */
+export function reportAgainstLedger(report: string, answers: ReadonlyArray<{ section: string; seq: number; value: string }>, maxSeq: number): string[] {
+  const out: string[] = [];
+  const flat = report.replace(/[*_`]/g, "").replace(/\s+/g, " ").toLowerCase();
+  for (const a of answers) {
+    const first = firstLine(a.value);
+    if (!first) continue;
+    const want = first.replace(/[*_`]/g, "").replace(/\s+/g, " ").toLowerCase();
+    if (!flat.includes(want)) out.push(`the report does not hold ${a.section}'s standing answer (E-${a.seq}): its value's first line, ${first.length > 120 ? `${first.slice(0, 117)}...` : first}, is not in it; the report and the ledger must say the same, so bring one to the other`);
+  }
+  const cited = new Set([...report.matchAll(/\bE-(\d{1,6})\b/g)].map((m) => Number(m[1])));
+  const missing = [...cited].filter((n) => n > maxSeq || n < 1).sort((x, y) => x - y);
+  if (missing.length) out.push(`the report cites ${missing.slice(0, 10).map((n) => `E-${n}`).join(", ")}${missing.length > 10 ? ` and ${missing.length - 10} more` : ""}, which the ledger does not have (its last entry is E-${maxSeq})`);
+  return out;
+}
+
+/** The standing report held against the standing answers, or [] with no report to read. */
+export async function reportCheck(sandboxRoot: string, report: string | null | undefined): Promise<string[]> {
+  if (!report) return [];
+  const bytes = await P.readSandboxFile(sandboxRoot, report).catch(() => null);
+  if (!bytes) return [];
+  const entries = await P.readLedger(sandboxRoot).catch(() => [] as P.LedgerEntry[]);
+  const replaced = P.supersededBy(entries);
+  const answers = entries.filter((e) => e.kind === "answer" && !replaced.has(e.seq) && String(e.section ?? "").startsWith("question:")).map((e) => ({ section: String(e.section), seq: e.seq, value: String(e.value ?? "") }));
+  return reportAgainstLedger(Buffer.from(bytes.bytes).toString("utf8"), answers, entries.reduce((m, e) => Math.max(m, e.seq), 0));
+}
+
 export async function finishStatus(ctx: P.SwarmContext): Promise<Record<string, unknown>> {
   const r = await readiness(ctx.sandboxRoot);
   const st = await readFinish(ctx.sandboxRoot);
+  const reportItems = await reportCheck(ctx.sandboxRoot, st.lease?.report).catch(() => [] as string[]);
   const digest = await reportDigest(ctx.sandboxRoot, st.lease?.report);
   const review = await reportReview(ctx.sandboxRoot, st).catch(() => null);
   const last = st.checks.at(-1);
@@ -1646,6 +1766,7 @@ export async function finishStatus(ctx: P.SwarmContext): Promise<Record<string, 
     revision: r.revision,
     items: r.items,
     limited: r.limited,
+    ...heldOut(r),
     // What the answers check warns of and the finish never holds on: the coordinator weighs each before its done.
     ...(r.warnings.length ? { warnings: r.warnings } : {}),
     // The boundary late items are read against (the lease's since), its resume segment and what it carries from before a resume.
@@ -1657,6 +1778,8 @@ export async function finishStatus(ctx: P.SwarmContext): Promise<Record<string, 
     // Every review that stands for this version (on it, or carried over from an earlier one whose sections it covered are unchanged), and those asked again on what changed.
     ...(review ? { reviews: { ...reviewSummary(review), invite: reviewInvite(review), ...(st.carries.some((c) => c.digest === review.digest && c.report === review.report) ? { carry: st.carries.filter((c) => c.digest === review.digest && c.report === review.report).at(-1)!.seq } : {}) } } : {}),
     late: st.lease ? await lateItems(ctx.sandboxRoot, st.lease.holder, st.lease.report) : [],
+    // The report held against the ledger: where they say different things, for the coordinator to bring them together before done.
+    ...(reportItems.length ? { report_against_ledger: reportItems } : {}),
     chain: st.chain.ok ? "intact" : `BROKEN at line ${st.chain.broken_at} (${st.chain.reason})`,
     ...(existsSync(join(ctx.sandboxRoot, FINISH_LOG)) ? {} : { note: "no finish act yet" }),
   };

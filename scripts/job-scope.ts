@@ -39,7 +39,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { constants, statfsSync } from "node:fs";
 import { chmod, link, lstat, mkdir, open, readdir, readFile, realpath, rename, rm, stat, writeFile, type FileHandle } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
-import { readManifest, storePaths, type Manifest } from "./evidence-store.ts";
+import { manifestFile, manifestOf, readManifest, storePaths } from "./evidence-store.ts";
 import type { Mount } from "./vm.ts";
 
 /** declared: the worker sees what the job named; all: everything, said; default-all: everything, because nothing was said. */
@@ -357,7 +357,9 @@ async function resolveObjects(S: string, declared: string[], o: { collections?: 
       }
       const kind = segs[1] as "jobs" | "imports";
       const id = segs[2];
-      const found = await readManifest(join(kind === "jobs" ? P.jobs : P.imports, id, "manifest.json"));
+      // Asked of the manifest's head and index (manifest-index.ts), never the manifest whole.
+      const manifestPath = join(kind === "jobs" ? P.jobs : P.imports, id, "manifest.json");
+      const found = await manifestOf(manifestPath);
       if (!found) throw new ScopeError(`${at.ref}: ${kind === "jobs" ? "job" : "import"} ${id} has no sealed output${kind === "jobs" ? " (not committed yet)" : ""}`);
       const base = `store/${kind}/${id}`;
       if (segs.length === 4 && segs[3] !== "out") {
@@ -369,19 +371,18 @@ async function resolveObjects(S: string, declared: string[], o: { collections?: 
       if (segs[3] !== "out") throw new ScopeError(`${at.ref}: a job's files are under ${base}/out/`);
       const rel = segs.slice(4).join("/");
       if (!rel) {
-        add({ ref: at.ref, path: `${base}/out`, area: "store", shape: "dir", from: w.from, files: found.manifest.totals.files, bytes: found.manifest.totals.bytes });
+        add({ ref: at.ref, path: `${base}/out`, area: "store", shape: "dir", from: w.from, files: found.head.totals.files, bytes: found.head.totals.bytes });
         continue;
       }
-      const name = (f: Manifest["files"][number]) => [f.path, Buffer.from(f.path_b64, "base64").toString("utf8")];
-      const file = at.dir ? undefined : found.manifest.files.find((f) => name(f).includes(rel));
+      const file = at.dir ? null : await manifestFile(manifestPath, found, [rel]);
       if (file) {
         const utf8 = Buffer.from(file.path_b64, "base64").toString("utf8") === file.path;
         add({ ref: at.ref, path: `${base}/out/${file.path}`, ...(utf8 ? {} : { path_b64: Buffer.concat([Buffer.from(`${base}/out/`), Buffer.from(file.path_b64, "base64")]).toString("base64") }), area: "store", shape: "file", from: w.from, sha256: file.sha256, bytes: file.bytes });
         continue;
       }
-      const inside = found.manifest.files.filter((f) => f.path.startsWith(`${rel}/`));
-      if (!inside.length) throw new ScopeError(`${at.ref}: ${rel} is not in ${kind === "jobs" ? "job" : "import"} ${id}'s manifest`);
-      add({ ref: at.ref, path: `${base}/out/${rel}`, area: "store", shape: "dir", from: w.from, files: inside.length, bytes: inside.reduce((a, f) => a + f.bytes, 0) });
+      const inside = await found.dir(rel);
+      if (!inside) throw new ScopeError(`${at.ref}: ${rel} is not in ${kind === "jobs" ? "job" : "import"} ${id}'s manifest`);
+      add({ ref: at.ref, path: `${base}/out/${rel}`, area: "store", shape: "dir", from: w.from, files: inside.files, bytes: inside.bytes });
       continue;
     }
     // The catalogue and the agents' work: what is there now, by lstat, a link neither followed nor taken.
@@ -424,8 +425,8 @@ async function catalogSha(S: string, rel: string): Promise<{ sha256?: string }> 
   if (!m) return {};
   try {
     const g = JSON.parse(await readFile(join(S, "catalog", "gen", m[1], "generation.json"), "utf8")) as { job?: string };
-    const found = g.job ? await readManifest(join(storePaths(S).jobs, g.job, "manifest.json")) : null;
-    const f = found?.manifest.files.find((x) => x.path === m[2]);
+    const found = g.job ? await manifestOf(join(storePaths(S).jobs, g.job, "manifest.json")) : null;
+    const f = await found?.file([m[2]]);
     return f ? { sha256: f.sha256 } : {};
   } catch {
     return {};

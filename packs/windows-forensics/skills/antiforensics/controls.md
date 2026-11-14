@@ -3,6 +3,7 @@ id: antiforensics/controls
 title: Controls changed
 when: Exclusion, disabled protection, deleted VM disk.
 needs: [antiforensics/traces]
+card: An exclusion or a disabled protection is a recorded change, not an actor: read the policy and exclusion keys with regkv ({"hive": "<SOFTWARE>", "key": "<policy key>"}) and the product's, service and PowerShell events with evtx_query ({"path": "<channel>.evtx", "contains": "<text>"}). Separate a requested change from an effective one and from a blocked attempt, and compare with approved administration (group policy, management software, installers) before attributing it. evtx_carve reads carved chunks; a record still belongs to the channel it names. regkv prints a plain password. Does not show: who made the change, or that it took effect.
 tools: [regkv, evtx_query, evtx_carve]
 requires_host: []
 ---

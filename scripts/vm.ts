@@ -49,7 +49,7 @@
  *   node --experimental-strip-types scripts/vm.ts capacity --n N --cpus N --memory MIB
  *   node --experimental-strip-types scripts/vm.ts netcheck --image REF [--allow-host H]...
  *   node --experimental-strip-types scripts/vm.ts check-allow ENTRIES...
- *   node --experimental-strip-types scripts/vm.ts toolbox --image REF --out FILE [--preset SETS] [--required] [--packs DIRS]
+ *   node --experimental-strip-types scripts/vm.ts toolbox --image REF --out FILE [--preset SETS] [--required] [--packs DIRS] [--requires CAPS]
  *   node --experimental-strip-types scripts/vm.ts fuse-check --image REF   (exit 0 when a VM of the image has /dev/fuse, 1 when not)
  *   node --experimental-strip-types scripts/vm.ts catalog --image REF --sandbox DIR [--evidence DIR]... [--allow-host H]... [--memory MIB] [--run ID] [--registry FILE]
  *   node --experimental-strip-types scripts/vm.ts msb-path
@@ -103,7 +103,14 @@ const GUEST_OAUTH_EXPIRES = Date.UTC(2099, 0, 1);
  * anything runs. `view` marks a tree the hub built for one job: it may hold
  * only directories and regular files, checked the same way.
  */
-export type Mount = { host: string; guest?: string; readonly?: boolean; noexec?: boolean; expect?: { dev: number; ino: number }; view?: boolean };
+/**
+ * A share into a VM. `quota_mb` bounds what the guest may add under a writable
+ * bind: microsandbox applies a default of 4 GiB when none is given (measured:
+ * a write stops at 4,294,967,296 bytes; three whole-image extractions of one
+ * run stopped there with ENOSPC), so a share that takes a job's output names
+ * its own.
+ */
+export type Mount = { host: string; guest?: string; readonly?: boolean; noexec?: boolean; quota_mb?: number; expect?: { dev: number; ino: number }; view?: boolean };
 
 export type ProviderSpec = {
   provider: string;
@@ -1350,6 +1357,7 @@ async function createOne(
       v.bind(hostPath);
       if (m.readonly) v.readonly();
       if (m.noexec) v.noexec();
+      if (!m.readonly && m.quota_mb && m.quota_mb > 0) v.quota(Math.floor(m.quota_mb));
       return v;
     });
   }
@@ -1926,7 +1934,7 @@ function putAwayOnSignal(name: string): () => void {
  * host, which an agent in a VM never touches. Returns the check's exit code
  * (3: a required tool is missing) and the toolbox.json it wrote.
  */
-export async function imageToolbox(image: string, preset: string, required: boolean, packDirs: string[] = []): Promise<{ code: number; json: string; output: string; digest?: string }> {
+export async function imageToolbox(image: string, preset: string, required: boolean, packDirs: string[] = [], requires = ""): Promise<{ code: number; json: string; output: string; digest?: string }> {
   const M = await sdk();
   const { mkdtemp, copyFile } = await import("node:fs/promises");
   const tmp = await mkdtemp("/tmp/dfs-tb-");
@@ -1962,7 +1970,7 @@ export async function imageToolbox(image: string, preset: string, required: bool
       .detached(true)
       .volume("/tb", (v) => v.bind(realpathSync(tmp)))
       .create();
-    const out = await sandbox.exec("bash", ["/tb/toolbox.sh", "/tb/sbx", preset, ...(required ? ["--required"] : []), "--image", "/tb/image.json"]);
+    const out = await sandbox.exec("bash", ["/tb/toolbox.sh", "/tb/sbx", preset, ...(required ? ["--required"] : []), "--image", "/tb/image.json", ...(requires ? ["--requires", requires] : [])]);
     let json = await readFile(join(tmp, "sbx", "toolbox.json"), "utf8").catch(() => "");
     // Which image this was, by digest: the check describes that image, not a tag.
     const digest = await imageDigest(name);
@@ -2266,16 +2274,19 @@ export function workerName(run: string, job: string, attempt: number): string {
  * that no VM of that name is left. Only then is the job's staging directory
  * safe to seal — a VM that may still write to it is not fenced.
  */
-export async function destroyWorker(name: string): Promise<{ ok: boolean; error?: string }> {
+export async function destroyWorker(name: string, o: MakerSeams = {}): Promise<{ ok: boolean; error?: string; gone_at?: string }> {
   // A maker still at work (or orphaned by a hub that died) could make the VM
   // again after it is removed: it goes first.
-  const maker = await stopMaker(name);
+  const maker = await stopMaker(name, o);
   if (!maker.ok) return maker;
   let last = "";
   for (let attempt = 0; attempt < 3; attempt += 1) {
     if (attempt) await new Promise((r) => setTimeout(r, 1000 * attempt));
     await run(msbBinary(), ["stop", name], { timeoutMs: 120_000 });
     const rm1 = await run(msbBinary(), ["rm", name], { timeoutMs: 60_000 });
+    // When its VM went: msb's stop and rm have returned. Said only when msb then confirms it (below): the two
+    // questions that follow can take a minute on a loaded host, and they are not part of the worker's life.
+    const goneAt = new Date().toISOString();
     const inspect = await run(msbBinary(), ["inspect", name, "--format", "json"], { timeoutMs: 30_000 });
     // Gone only when msb says it does not know the name, and its list, read
     // whole and understood, agrees: on Ali Hadi #10 a worker whose boot had
@@ -2284,7 +2295,7 @@ export async function destroyWorker(name: string): Promise<{ ok: boolean; error?
     if (notFound) {
       const list = await run(msbBinary(), ["list", "--format", "json"], { timeoutMs: 30_000 });
       const names = list.code === 0 ? listedNames(list.stdout) : null;
-      if (names && !names.includes(name)) return { ok: true };
+      if (names && !names.includes(name)) return { ok: true, gone_at: goneAt };
       last = list.code !== 0 ? `msb could not list its VMs: ${(list.stderr || list.stdout).trim() || `exit ${list.code}`}` : !names ? `msb's list (${list.stdout.length} bytes) was not a list of VMs` : `msb lists ${name} although it says it does not know it`;
       continue;
     }
@@ -2312,28 +2323,98 @@ export function listedNames(text: string): string[] | null {
 }
 
 /**
- * Stop the process making or running worker `name` (runWorker's child,
- * `vm.ts worker-once --name <name>`), found by its command line so an orphan
- * of a hub that died is found too. ok when none is left.
+ * The makers this process spawned (runWorkerInChild), by the worker's name:
+ * the child itself, and whether it has exited. The fence asks here first: a
+ * maker this process made is its own child, known from the spawn, and needs
+ * no search of the host's processes to be found or to be seen gone.
  */
-export async function stopMaker(name: string): Promise<{ ok: boolean; error?: string }> {
-  const find = async () => {
-    // -ww: the whole command line, however long (the hub's is past 200 characters).
-    const ps = await run("ps", ["-e", "-ww", "-o", "pid=,args="], { timeoutMs: 15_000 });
-    if (ps.code !== 0) return null;
-    return ps.stdout
-      .split("\n")
-      .map((l) => l.trim().match(/^(\d+)\s+(.*)$/))
-      .filter((m): m is RegExpMatchArray => !!m && / worker-once --name (\S+)$/.exec(m[2])?.[1] === name && Number(m[1]) !== process.pid)
-      .map((m) => Number(m[1]));
+type KnownMaker = { pid: number | undefined; exited: boolean; kill: () => void; wait: (ms: number) => Promise<boolean> };
+const makers = new Map<string, KnownMaker>();
+
+/** Keep a maker's process under its worker's name from its spawn; the registration ends with a later maker of the same name, never with the exit. */
+export function trackMaker(name: string, child: { pid?: number; kill: (signal?: NodeJS.Signals) => boolean; once: (event: "exit", fn: () => void) => unknown }): KnownMaker {
+  let seen: Array<() => void> = [];
+  const known: KnownMaker = {
+    pid: child.pid,
+    // A child that was never started (no pid: the spawn failed) has nothing to exit.
+    exited: child.pid === undefined,
+    // Through the child's own handle, and never once its exit was seen: a pid is not signalled after it may be another process's.
+    kill: () => {
+      if (!known.exited) child.kill("SIGKILL");
+    },
+    wait: (ms) =>
+      known.exited
+        ? Promise.resolve(true)
+        : new Promise<boolean>((res) => {
+            const t = setTimeout(() => res(known.exited), ms);
+            seen.push(() => {
+              clearTimeout(t);
+              res(true);
+            });
+          }),
   };
+  child.once("exit", () => {
+    known.exited = true;
+    for (const fn of seen) fn();
+    seen = [];
+  });
+  makers.set(name, known);
+  // Not a map that only grows in a hub that runs for days: past 4096 names the exited ones are forgotten (a fence of one then lists the host's processes, as for an orphan).
+  if (makers.size > 4096) for (const [n, m] of makers) if (m.exited && n !== name) makers.delete(n);
+  return known;
+}
+
+/** Seams for the tests of the fence: the host's process list, and how a pid found there is stopped. */
+export type MakerSeams = { list?: (name: string) => Promise<number[] | null>; kill?: (pid: number) => void; listTries?: number };
+
+/** The pids of every `vm.ts worker-once --name <name>` on the host but this process, or null when the host's processes could not be listed. */
+async function listMakers(name: string): Promise<number[] | null> {
+  // -ww: the whole command line, however long (the hub's is past 200 characters).
+  const ps = await run("ps", ["-e", "-ww", "-o", "pid=,args="], { timeoutMs: 15_000 });
+  if (ps.code !== 0) return null;
+  return ps.stdout
+    .split("\n")
+    .map((l) => l.trim().match(/^(\d+)\s+(.*)$/))
+    .filter((m): m is RegExpMatchArray => !!m && / worker-once --name (\S+)$/.exec(m[2])?.[1] === name && Number(m[1]) !== process.pid)
+    .map((m) => Number(m[1]));
+}
+
+/**
+ * Stop the process making or running worker `name` (runWorker's child,
+ * `vm.ts worker-once --name <name>`). ok when none is left.
+ *
+ * A maker this process spawned is known from its spawn (trackMaker): it is
+ * stopped through its own handle and seen gone by its exit, and the host's
+ * processes are not listed at all. On the runs of s17fdfe the listing (`ps
+ * -e -ww` under a 15 s limit) failed 21, 7 and 20 times on a loaded host,
+ * each a fence that failed ("could not list processes to find the maker
+ * of ..."), and workers were confirmed gone up to 248 s late. The listing
+ * is the fallback for a name this process made no maker for: an orphan of a
+ * hub that died, found by its command line. It is asked a few times before
+ * it is given up.
+ */
+export async function stopMaker(name: string, o: MakerSeams = {}): Promise<{ ok: boolean; error?: string }> {
+  const known = makers.get(name);
+  if (known) {
+    if (known.exited) return { ok: true };
+    known.kill();
+    if (await known.wait(5000)) return { ok: true };
+    return { ok: false, error: `the process making ${name} (pid ${known.pid ?? "unknown"}) did not stop` };
+  }
+  const find = o.list ?? listMakers;
+  const kill = o.kill ?? ((pid: number) => process.kill(pid, "SIGKILL"));
+  const listTries = Math.max(1, o.listTries ?? 3);
   for (let i = 0; i < 20; i += 1) {
-    const pids = await find();
+    let pids = await find(name);
+    for (let k = 1; pids === null && k < listTries; k += 1) {
+      await new Promise((r) => setTimeout(r, 500 * k));
+      pids = await find(name);
+    }
     if (pids === null) return { ok: false, error: `could not list processes to find the maker of ${name}` };
     if (!pids.length) return { ok: true };
     for (const pid of pids) {
       try {
-        process.kill(pid, "SIGKILL");
+        kill(pid);
       } catch {
         // gone already
       }
@@ -2358,7 +2439,7 @@ export async function stopMaker(name: string): Promise<{ ok: boolean; error?: st
  * and the fence runs after it has exited. A VM that failed to boot (nothing
  * ran) is removed and made once more.
  */
-export async function runWorker(spec: WorkerSpec, hooks: { onCreated?: () => void } = {}): Promise<{ code: number | null; digest?: string; error?: string; fenced: boolean; fence_error?: string; boot_retry?: string; create_ms?: number }> {
+export async function runWorker(spec: WorkerSpec, hooks: { onCreated?: () => void } = {}): Promise<{ code: number | null; digest?: string; error?: string; fenced: boolean; fence_error?: string; boot_retry?: string; create_ms?: number; gone_at?: string }> {
   const asked = Date.now();
   let createMs: number | undefined;
   const timed = { onCreated: () => { createMs = Date.now() - asked; hooks.onCreated?.(); } };
@@ -2380,7 +2461,9 @@ export async function runWorker(spec: WorkerSpec, hooks: { onCreated?: () => voi
   const gone = await destroyWorker(spec.name);
   const { phase: _phase, ...result } = ran;
   // create_ms: from asking to the VM up, the wait at the make gate included.
-  return { ...result, ...(bootRetry ? { boot_retry: bootRetry } : {}), ...(createMs !== undefined ? { create_ms: createMs } : {}), fenced: gone.ok, ...(gone.ok ? {} : { fence_error: gone.error }) };
+  // gone_at: when msb's stop and rm of the VM had returned, in the pass msb then confirmed it gone by (destroyWorker): the
+  // job's worker_gone_at, which was the time this call returned (after msb's inspect and list, and whatever the hub did before it read the answer).
+  return { ...result, ...(bootRetry ? { boot_retry: bootRetry } : {}), ...(createMs !== undefined ? { create_ms: createMs } : {}), fenced: gone.ok, ...(gone.ok ? (gone.gone_at ? { gone_at: gone.gone_at } : {}) : { fence_error: gone.error }) };
 }
 
 type WorkerRan = { code: number | null; digest?: string; error?: string; phase?: "create" | "exec" };
@@ -2405,6 +2488,8 @@ async function runWorkerInChild(spec: WorkerSpec, hooks: { onCreated?: () => voi
   const release = await takeMakeGate();
   return new Promise((done) => {
     const child = spawn(process.execPath, ["--experimental-strip-types", "--no-warnings", fileURLToPath(import.meta.url), "worker-once", "--name", spec.name], { stdio: ["pipe", "pipe", "pipe"], env: process.env });
+    // Known by its worker's name from here on: the fence stops it and sees it gone without listing the host's processes.
+    trackMaker(spec.name, child);
     let out = "";
     let err = "";
     let created = false;
@@ -2589,6 +2674,7 @@ async function runWorkerOnce(spec: WorkerSpec, hooks: { onCreated?: () => void }
         let b = v.bind(host);
         if (m.readonly) b = b.readonly();
         if (m.noexec) b = b.noexec();
+        if (!m.readonly && m.quota_mb && m.quota_mb > 0) b = b.quota(Math.floor(m.quota_mb));
         return b;
       });
     }
@@ -2881,15 +2967,24 @@ export function hostCapacity(): { mem_mib: number; cpus: number } {
  * memory is the host's, and a host out of it kills something); vCPUs are
  * shared, so only a count far past the cores is refused.
  */
-export function capacityVerdict(n: number, cpusEach: number, memEach: number, host: { mem_mib: number; cpus: number }): { blockers: string[]; warnings: string[] } {
+export function capacityVerdict(
+  n: number,
+  cpusEach: number,
+  memEach: number,
+  host: { mem_mib: number; cpus: number },
+  others: { mem_mib: number; cpus: number; runs: number } = { mem_mib: 0, cpus: 0, runs: 0 },
+): { blockers: string[]; warnings: string[] } {
   const blockers: string[] = [];
   const warnings: string[] = [];
+  // What the other runs that are going on this host may ask for counts too: three runs started together each fitted
+  // alone, their workers took 2.7 to 26 s to create where one run's take 0.3 s, and their figures could not be compared.
+  const beside = others.runs > 0 ? ` beside the ${others.mem_mib} MiB and ${others.cpus} vCPUs that ${others.runs} other run(s) going on this host may take` : "";
   const mem = n * memEach;
-  if (mem > host.mem_mib * 0.85) blockers.push(`${n} VMs of ${memEach} MiB need ${mem} MiB, and this host has ${host.mem_mib} MiB: lower --vm-memory or --n`);
-  else if (mem > host.mem_mib * 0.6) warnings.push(`${n} VMs of ${memEach} MiB take ${mem} of this host's ${host.mem_mib} MiB; whatever else it runs shares the rest`);
+  if (mem + others.mem_mib > host.mem_mib * 0.85) blockers.push(`${n} VMs of ${memEach} MiB need ${mem} MiB${beside}, and this host has ${host.mem_mib} MiB: lower --vm-memory or --n${others.runs > 0 ? ", or wait for the other run(s) to end" : ""}`);
+  else if (mem + others.mem_mib > host.mem_mib * 0.6) warnings.push(`${n} VMs of ${memEach} MiB take ${mem} of this host's ${host.mem_mib} MiB${beside}; whatever else it runs shares the rest`);
   const cpus = n * cpusEach;
-  if (cpus > host.cpus * 4) blockers.push(`${n} VMs of ${cpusEach} vCPU are ${cpus} vCPUs on ${host.cpus} cores: lower --vm-cpus or --n`);
-  else if (cpus > host.cpus) warnings.push(`${cpus} vCPUs on ${host.cpus} cores: the agents' tools will share them`);
+  if (cpus + others.cpus > host.cpus * 4) blockers.push(`${n} VMs of ${cpusEach} vCPU are ${cpus} vCPUs${beside} on ${host.cpus} cores: lower --vm-cpus or --n`);
+  else if (cpus + others.cpus > host.cpus) warnings.push(`${cpus + others.cpus} vCPUs on ${host.cpus} cores${others.runs > 0 ? ` (${cpus} of this run, ${others.cpus} of ${others.runs} other run(s))` : ""}: the agents' tools will share them${others.runs > 0 && cpus + others.cpus > host.cpus * 2 ? ", and runs started together on one host are not a fair comparison" : ""}`);
   return { blockers, warnings };
 }
 
@@ -3003,8 +3098,9 @@ async function main(): Promise<void> {
     case "capacity": {
       // n cpus-each mem-each: the kickoff's question, answered with this host's numbers.
       const [n, cpus, mem] = [opt("--n"), opt("--cpus"), opt("--memory")].map((v) => Number(v));
-      const verdict = capacityVerdict(n, cpus, mem, hostCapacity());
-      console.log(JSON.stringify({ ok: verdict.blockers.length === 0, host: hostCapacity(), ...verdict }));
+      const others = { mem_mib: Number(opt("--others-memory") ?? 0) || 0, cpus: Number(opt("--others-cpus") ?? 0) || 0, runs: Number(opt("--others-runs") ?? 0) || 0 };
+      const verdict = capacityVerdict(n, cpus, mem, hostCapacity(), others);
+      console.log(JSON.stringify({ ok: verdict.blockers.length === 0, host: hostCapacity(), others, ...verdict }));
       process.exit(verdict.blockers.length ? 2 : 0);
     }
     case "check-allow": {
@@ -3156,8 +3252,8 @@ async function main(): Promise<void> {
       const image = opt("--image");
       const preset = opt("--preset") ?? "dfir";
       const out = opt("--out");
-      if (!image || !out) throw new Error("toolbox needs --image REF --out FILE [--preset SETS] [--packs DIR:DIR] [--required]");
-      const r = await imageToolbox(image, preset, rest.includes("--required"), (opt("--packs") ?? "").split(":"));
+      if (!image || !out) throw new Error("toolbox needs --image REF --out FILE [--preset SETS] [--packs DIR:DIR] [--required] [--requires CAPS]");
+      const r = await imageToolbox(image, preset, rest.includes("--required"), (opt("--packs") ?? "").split(":"), opt("--requires") ?? "");
       if (r.json) await writeFile(out, r.json);
       // The script names the file at its guest path; the operator reads the host's.
       process.stderr.write(r.output.replaceAll("/tb/sbx/toolbox.json", out));

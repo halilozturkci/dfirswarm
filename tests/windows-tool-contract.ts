@@ -391,7 +391,7 @@ export async function rerunSmaller(tool: ToolRef, first: unknown, second: unknow
 
 // --- arguments of the wrong type ----------------------------------------------------------------------------------------------------
 
-type Manifest = { params?: Record<string, unknown> };
+type Manifest = { params?: Record<string, unknown>; description?: string };
 
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;

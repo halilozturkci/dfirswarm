@@ -1,7 +1,7 @@
 {
   "id": "ad1-items",
-  "version": "1.2.9",
-  "description": "The item list of an AccessData AD1 logical image (FTK Imager's custom content image): every file and folder with its size, its modified, accessed and created times, the MD5 and SHA-1 the image records, the SHA-256 of its content and a locator that names it alike in a partial and a whole read, each file inflated to check those digests, and every metadata entry the image keeps. Nothing is extracted: the ad1_extract tool writes the tree out, as a job, and the derived catalogue takes what it writes.",
+  "version": "1.3.1",
+  "description": "The item list of an AccessData AD1 logical image (FTK Imager's custom content image): every file and folder with its size, its modified, accessed and created times, the MD5 and SHA-1 the image records, the SHA-256 of its content and a locator that names it alike in a partial and a whole read, each file inflated to check those digests, and every metadata entry the image keeps. Two phases: the listing first (members.tsv, attributes.tsv, image.json and index.tsv whole on disk, each file's check pending, and coverage.json saying \"listing complete; digests pending\"), then the digests (sha256 and check filled in); RECIPE_PHASE=listing ends the run after the first. Nothing is extracted: the ad1_extract tool writes the tree out, as a job, and the derived catalogue takes what it writes.",
   "object": "AD1 logical image",
   "order": 32,
   "min_bytes": 600,
@@ -20,6 +20,9 @@
     "kickoff",
     "derived"
   ],
+  "phases": [
+    "listing"
+  ],
   "limits": {
     "seconds": 3600
   },
@@ -32,5 +35,5 @@
   ],
   "purpose": "inventory",
   "covers": "Every item of an unencrypted version 4 AD1 image's tree, its metadata as the image records it, and whether each file's content matches the digests the image records. A logical image holds only what the imager took: no unallocated space, and slack only where it was taken as an item. It opens no file inside the image (ad1_extract writes them out, and the derived catalogue takes them from there), does not decrypt an ADCRYPT image, and reads a segment that is not beside the first, or not in a job's view, as missing.",
-  "sha256": "15c1fe2e685afe681a1f745e9a34b4c143b3032552a693395bf7c1d240c64cba"
+  "sha256": "a33dcd8b262a03a15f14f40fc01b8a0ca81abda8b2737ca6f87d3235c8ceac9f"
 }

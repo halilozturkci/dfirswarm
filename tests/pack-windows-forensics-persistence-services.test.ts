@@ -150,6 +150,11 @@ dual("a dirty SYSTEM hive is said to be, per hive, with its logs named and not r
     assert.equal(out.hives.system.hive_dirty, true);
     assert.deepEqual(out.hives.system.transaction_logs_beside_hive, ["work/SYSTEM.LOG1"]);
     assert.equal(out.hives.system.transaction_logs_replayed, false);
+    // A dirty hive whose logs were not replayed is never plainly complete, and the basis says which hive.
+    assert.equal(out.status, "partial");
+    assert.match(out.status_basis, /the system hive: the hive is dirty \(its sequence numbers 9 and 8 differ\) and no transaction log was replayed/);
+    assert.match(out.status_basis, /found 1 \(transaction_logs_beside_hive\), and it replays none/);
+    assert.deepEqual((out.hives.system as unknown as { transaction_logs_looked_for: string[] }).transaction_logs_looked_for, ["work/SYSTEM.LOG1", "work/SYSTEM.LOG2", "work/SYSTEM.LOG"]);
   });
 });
 
@@ -307,9 +312,9 @@ for (const variant of VARIANTS) {
   });
 }
 
-test("the manifest says what the tool reads, that no second reader is started, and is version 3", async () => {
+test("the manifest says what the tool reads, that no second reader is started, and is version 12", async () => {
   const manifest = JSON.parse(await readFile(join(WIN, TOOL, "manifest.json"), "utf8"));
-  assert.equal(manifest.version, 4);
+  assert.equal(manifest.version, 12);
   assert.deepEqual(manifest.requires, [], "no second reader is started, so nothing is required");
   assert.match(manifest.description, /every ControlSetNNN Services key/);
   assert.match(manifest.description, /Second reader: NOT DONE/);

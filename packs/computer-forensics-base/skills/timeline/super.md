@@ -1,7 +1,7 @@
 ---
 id: timeline/super
 title: Build and validate a scoped machine timeline
-when: Broad parser output can identify relevant events or improve source coverage.
+when: Broad parser output can find events or widen coverage.
 needs: []
 tools: [timeline_super, catalog_search]
 requires_host: [log2timeline, psort, pinfo]

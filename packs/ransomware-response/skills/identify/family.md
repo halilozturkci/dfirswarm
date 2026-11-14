@@ -2,6 +2,7 @@
 id: identify/family
 title: Identifying a ransomware family without overstating attribution
 when: Artefacts may support a family classification or a public recovery option.
+core: 2
 needs: []
 tools: [ransom_note_scan, encrypted_survey, file_type]
 requires_host: []
@@ -38,7 +39,7 @@ never visit a portal, contact the adversary or follow a note's instructions.
 (`file_type` says what a file's first bytes show and whether the extension agrees),
 sizes, headers, footers, candidate metadata and any known-good counterpart.
 `encrypted_survey` samples candidates and returns the last `tail_bytes` bytes, 32 by
-default; it can miss a marker elsewhere in a file, intermittent encryption and files
+default, as measures, and as bytes only what every sampled tail shares; it can miss a marker elsewhere in a file, intermittent encryption and files
 it did not select. Repeated tail bytes can be padding, an ordinary format trailer or
 duplicated content: its `shared_tail_suffix` is an observation until validated
 references and independent files show it discriminates.

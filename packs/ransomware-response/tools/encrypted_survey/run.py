@@ -18,12 +18,16 @@ survives whole, who the family is, or when anything ran. What it does:
     either heuristic": it is no statement about the file's content;
   * profiles the first `sample` candidates of more than 4096 bytes: entropy of three
     64 KiB windows (head, middle, end) with their offsets and lengths, and the last
-    `tail_bytes` bytes. Windows can overlap in a small file, and intermittent
+    `tail_bytes` bytes (measured, not printed). Windows can overlap in a small file, and intermittent
     encryption can fall between them;
   * counts modification times by hour twice, for every regular file and for the
     candidates. The clock is the filesystem's mtime as collected, which an extraction
     or a copy can change; it is not an execution time of anything;
   * reports what the sampled tails share as an observation pending a reference match;
+  * reports what points at the scheme (`scheme_pointers`): the smallest member, the bytes each member gained over a same-name
+    plaintext twin beside it (sizes only), and whether the last bytes are unique per file, for members of 4096 bytes or less too
+    (read whole, their tails measured and not printed). A constant overhead with a tail that is unique per file is said in
+    status_basis: that is where per-file key material is usually kept;
   * prints a path only through shown() (the same rule ransom_note_scan uses): every
     directory component, and the name of a file that is named like a note
     (ransom_note_scan's pattern), is withheld when it holds a token shaped like an
@@ -212,7 +216,7 @@ import tempfile
 import unicodedata
 from pathlib import Path
 
-PARSER = "encrypted_survey/3"
+PARSER = "encrypted_survey/5"
 WINDOW = 65536
 SMALL = 4096                 # a file of at most this many bytes has no entropy measurement
 HEAD_THRESHOLD = 7.5         # bits per byte in the head window
@@ -232,7 +236,7 @@ KNOWN = {"jpg", "jpeg", "png", "gif", "bmp", "tif", "tiff", "webp", "heic", "hei
          "pst", "ost", "txt", "csv", "xml", "json", "html", "md", "log", "ini", "cfg", "conf", "yml", "yaml",
          "zip", "gz", "tgz", "bz2", "xz", "zst", "7z", "rar", "tar", "jar", "apk",
          "mp4", "mp3", "mkv", "avi", "mov", "wmv", "flac", "ogg", "wav", "m4a", "aac",
-         "exe", "dll", "sys", "dat", "sql", "bak", "db", "mdb", "accdb",
+         "exe", "dll", "sys", "dat", "sql", "bak", "db", "sqlite", "sqlite3", "mdb", "accdb",
          "vhd", "vhdx", "vmdk", "iso", "img", "py", "js", "c", "cpp", "h", "java", "php"}
 # Formats that are normally compressed or packed: a high-entropy head is what they look like
 # whole, so entropy alone is the weakest reason to call one of them a candidate.
@@ -1235,6 +1239,8 @@ def cell(value):
 # the copies equal). A path is printed only through shown(): every component is judged, and no directory above a file is exempt.
 # Everything derived from a name that is withheld (an extension, a stem, a length, the place of the name among its siblings) is withheld
 # with it: a name that is withheld is replaced by one constant marker, and the order of a listing never follows the text that was withheld.
+import heapq
+
 WITHHELD = "<identifier-shaped name withheld>"
 WITHHELD_PATHS = [0]              # printed paths that had a component withheld (one per call of shown)
 _IDRUN = re.compile(r"[A-Za-z0-9]{8,}")
@@ -1372,38 +1378,87 @@ def shown(path, values=(), keep_last=False, count=True):
 
 
 _ORDER_SALT = os.urandom(16)
+# A directory is read through listing() and put in order through print_order(), both under the tool's clock (out_of_time of the STOP block, or
+# the clock a caller names): one directory of two million entries was held whole (900 MB) and had every name judged (a minute) past a clock
+# of two seconds, because a walk reads its clock between entries and the listing and the order came before the first.
+MAX_LISTED = 1 << 18              # entries of one directory held at once (an entry with its name and path is a few hundred bytes)
+NAMES_CUT = {"not_judged": 0}     # entries print_order put in order without judging their name, because the clock had run out
 
 
-def print_order(entries, judged, hidden=None):
+def _rank(path):
+    """A keyed hash of a whole path under the salt of this run: an order drawn afresh every run, unrelated to the name and to the listing."""
+    return hashlib.blake2b(path.encode("utf-8", "surrogatepass"), key=_ORDER_SALT, digest_size=8).digest()
+
+
+def listing(it, late=None):
+    """The entries of one directory (`it`, an os.scandir iterator) that a walk examines: read under the clock (`late`, the tool's out_of_time
+    unless given, read for every entry) and at most MAX_LISTED of them held. Past the bound the directory is read on only to be counted, and
+    the entries kept are the MAX_LISTED of the smallest keyed hash of their path (_rank): which entries the bound keeps follows neither a name
+    nor the order the directory lists them in. Returns (entries, not_kept, cut): not_kept is how many entries were read and not kept, and cut
+    is True when the clock ended the reading (the entries after it are not known, not even their number)."""
+    late = late or out_of_time
+    held, heap, read, cut = [], None, 0, False
+    for entry in it:
+        if late():
+            cut = True
+            break
+        read += 1
+        if heap is None:
+            held.append(entry)
+            if len(held) > MAX_LISTED:
+                heap = [(-int.from_bytes(_rank(e.path), "big"), n, e) for n, e in enumerate(held)]
+                held = None
+                heapq.heapify(heap)
+                heapq.heappop(heap)                   # the largest hash goes: the heap keeps the smallest, the largest of them on top
+        else:
+            key = -int.from_bytes(_rank(entry.path), "big")
+            if key > heap[0][0]:
+                heapq.heapreplace(heap, (key, read, entry))
+    if heap is not None:
+        held = [k[2] for k in heap]
+    return held, read - len(held), cut
+
+
+def print_order(entries, judged, hidden=None, late=None):
     """The directory entries in the order an answer prints them: by the text printed for each (the marker for a name that is judged
     and withheld, the name itself otherwise; `judged(entry)` says whether the answer prints the entry's name through the judge;
     `hidden(entry)`, when given, says that a name the first rule lets through is withheld all the same, because the note beneath it holds
     its value: it sorts as the marker does), and the entries that print alike in an order drawn afresh every run (a keyed hash of the whole
     path, the directory above included, under a salt of this run: the same name in two directories has two unrelated ranks). The rank of a
     withheld name among its siblings, the order a directory lists them in and the inode never show in what an answer lists, in the
-    order of its rows, in the numbers it hands out or in which entries a limit keeps."""
-    texts = []
-    for entry in entries:
+    order of its rows, in the numbers it hands out or in which entries a limit keeps. The judging runs under the clock (`late`, the tool's
+    out_of_time unless given), read for every entry: once it has run out, the entries not judged yet come after the judged ones in the order
+    of the keyed hash alone, each is counted in NAMES_CUT["not_judged"], and the caller says so and makes its answer partial (a walk on the
+    same clock examines none of them)."""
+    late = late or out_of_time
+    keyed, rest = [], []
+    for n, entry in enumerate(entries):
+        if rest or late():
+            rest.append((_rank(entry.path), n))
+            continue
         name = entry.name
         try:
             if hidden is not None and hidden(entry):
-                texts.append(WITHHELD)
+                text = WITHHELD
             else:
-                texts.append((_judge(name) or name) if judged(entry) else name)
+                text = (_judge(name) or name) if judged(entry) else name
         except OSError:
-            texts.append(_judge(name) or name)
-    order = sorted(range(len(entries)), key=texts.__getitem__)
+            text = _judge(name) or name
+        keyed.append((text, n))
+    NAMES_CUT["not_judged"] += len(rest)
+    keyed.sort()
     out, i = [], 0
-    while i < len(order):
+    while i < len(keyed):
         j = i + 1
-        while j < len(order) and texts[order[j]] == texts[order[i]]:
+        while j < len(keyed) and keyed[j][0] == keyed[i][0]:
             j += 1
-        group = order[i:j]
+        group = [n for _, n in keyed[i:j]]
         if len(group) > 1:
-            group.sort(key=lambda n: (hashlib.blake2b(entries[n].path.encode("utf-8", "surrogatepass"), key=_ORDER_SALT, digest_size=8).digest(), n))
+            group.sort(key=lambda n: (_rank(entries[n].path), n))
         out.extend(group)
         i = j
-    return [entries[n] for n in out]
+    rest.sort()
+    return [entries[n] for n in out] + [entries[n] for _, n in rest]
 # END SHARED NAMES
 
 
@@ -1828,7 +1883,8 @@ def walk(top, exclude_top, counters, exceptions, skipped, exclusions, census, st
     """Yield (path, lstat) for every regular file under `top`, in print order (print_order), following no link.
 
     A directory that cannot be listed, an entry that cannot be examined, a link and a file
-    that is not a regular file are each counted, listed and put in the census; none is dropped.
+    that is not a regular file are each counted, listed and put in the census; none is dropped. A directory is read through listing()
+    (under the clock, at most MAX_LISTED of its entries held): the entries past the bound are counted, not examined.
     When the tool's own clock runs out the walk ends and `stopped` says how much of the tree it had not reached.
     """
     stack = [(top, True)]
@@ -1839,7 +1895,8 @@ def walk(top, exclude_top, counters, exceptions, skipped, exclusions, census, st
         directory, is_top = stack.pop()
         try:
             with os.scandir(directory) as it:
-                entries = print_order(list(it), judged_entry)
+                entries, not_kept, cut = listing(it)
+            entries = print_order(entries, judged_entry)
         except OSError as exc:
             counters["directories_failed"] += 1
             row = {"path": shown(directory), "status": "failed", "what": "directory", "reason": "the directory could not be listed",
@@ -1848,6 +1905,12 @@ def walk(top, exclude_top, counters, exceptions, skipped, exclusions, census, st
             census.add({"record": "failed_directory", **row})
             continue
         counters["directories_visited"] += 1
+        if cut:
+            stopped.update({"entries_not_examined": len(entries), "directories_not_entered": len(stack), "listing_cut": True})
+            return
+        if not_kept:
+            counters["directories_over_entry_bound"] += 1
+            counters["entries_not_listed"] += not_kept
         subdirs = []
         for index, entry in enumerate(entries):
             if out_of_time():
@@ -1898,6 +1961,14 @@ class Budget:
 
     def spend(self, n):
         self.read += n
+
+
+def tail_measure(tail):
+    """What is said of a file's last bytes instead of the bytes: how many, how many distinct values, and their entropy."""
+    counts = collections.Counter(tail)
+    entropy = -sum(n / len(tail) * math.log2(n / len(tail)) for n in counts.values())
+    return {"bytes": len(tail), "distinct_byte_values": len(counts), "entropy_bits_per_byte": round(entropy, 2),
+            "entropy_ceiling_for_this_length": round(math.log2(min(len(tail), 256)), 2)}
 
 
 def common_suffix(a, b):
@@ -1975,7 +2046,8 @@ def main():
     counters = {"directories_visited": 0, "directories_failed": 0, "directories_excluded": 0, "entries_failed": 0,
                 "links_not_followed": 0, "special_files_skipped": 0, "regular_files_visited": 0,
                 "candidate_files": 0, "noncandidate_files": 0, "unmeasured_files": 0, "read_failed_files": 0,
-                "profile_failures": 0, "mtime_unconvertible": 0, "appended_extensions_withheld": 0}
+                "profile_failures": 0, "mtime_unconvertible": 0, "appended_extensions_withheld": 0,
+                "directories_over_entry_bound": 0, "entries_not_listed": 0}
     PROGRESS["coverage"] = counters
     sizes = {"candidate_bytes": 0, "noncandidate_bytes": 0, "unmeasured_bytes": 0, "read_failed_bytes": 0}
     unmeasured_by_reason = collections.Counter()
@@ -1985,10 +2057,19 @@ def main():
     all_hours, cand_hours = collections.Counter(), collections.Counter()
     all_over, cand_over = [0], [0]
     tails = collections.Counter()
-    shared = None
     sampled = 0
     not_profiled = collections.Counter()
     stopped = {}
+    # What points at the encryption scheme (parser 4): the smallest member, the size a member gained over a same-name plaintext twin,
+    # and whether the last bytes are unique per file. A member here is a candidate by its name (an extension after a known one).
+    scheme = {"members": 0, "smallest": None, "twins": 0, "overheads": collections.Counter(), "examples": [], "tails": set(), "tails_read": 0,
+              "small_read": 0, "small_failed": 0, "small_budget": 0, "small_bytes_read": 0, "pooled": collections.Counter(), "distinct": []}
+
+    def tail_seen(tail):
+        scheme["tails"].add(tail)
+        scheme["tails_read"] += 1
+        scheme["pooled"].update(tail)
+        scheme["distinct"].append(len(set(tail)))
 
     for path, st in walk(root, set(exclude_top), counters, exceptions, skipped, exclusions, census, stopped):
         counters["regular_files_visited"] += 1
@@ -2067,6 +2148,21 @@ def main():
                 bump(cand_hours, hour_bucket(modified), HOUR_CAP, cand_over)
             if head is None:
                 row["entropy_unmeasured"] = unmeasured
+            if reasons:
+                scheme["members"] += 1
+                if scheme["smallest"] is None or size < scheme["smallest"][0]:
+                    scheme["smallest"] = (size, shown_path, evidence)
+                try:
+                    twin = os.lstat(os.path.splitext(path)[0])
+                except (OSError, ValueError):
+                    twin = None
+                if twin is not None and stat.S_ISREG(twin.st_mode):
+                    scheme["twins"] += 1
+                    scheme["overheads"][size - twin.st_size] += 1
+                    row["plaintext_twin"] = {"bytes": twin.st_size, "overhead_bytes": size - twin.st_size}
+                    if len(scheme["examples"]) < 5:
+                        scheme["examples"].append(seal_row({"file": shown_path, "bytes": size, "twin_bytes": twin.st_size,
+                                                            "overhead_bytes": size - twin.st_size}, evidence))
             # Profile: the first `sample` candidates that have a head window, while the budget lasts.
             if head is not None and fd is not None:
                 if sampled >= sample_size:
@@ -2101,9 +2197,12 @@ def main():
                             row["windows"] = windows
                             row["windows_overlap"] = overlap(windows)
                             if tail:
-                                row["tail_hex"] = tail.hex()
-                                tails[tail.hex()] += 1
-                                shared = tail if shared is None else common_suffix(shared, tail)
+                                # The last bytes are where per-file key material is usually kept (scheme_pointers says so): they are
+                                # measured here and not printed. Only bytes that every distinct sampled tail shares are (shared_tail_suffix).
+                                row["tail"] = tail_measure(tail)
+                                tails[tail] += 1
+                                if reasons:
+                                    tail_seen(tail)
                             if end_exact is not None and end_exact < END_LOW:
                                 low_tail.add({"file": shown_path, "bytes": size, "end_entropy": windows[2]["entropy"],
                                               "head_entropy": head, "windows": windows,
@@ -2119,6 +2218,29 @@ def main():
                 row["profiled"] = False
                 row["profile_skipped"] = unmeasured
                 not_profiled[unmeasured] += 1
+                # A small member has no entropy windows, and its last bytes are still where a trailer is: they are measured, not printed.
+                if unmeasured == "too_small_for_entropy" and reasons and size and scheme["small_read"] < sample_size and not budget.allows(min(size, SMALL)):
+                    scheme["small_budget"] += 1                   # a small member is read whole: that read is in the budget too
+                    row["small_profile_skipped"] = "read_budget_spent"
+                elif unmeasured == "too_small_for_entropy" and reasons and size and scheme["small_read"] < sample_size:
+                    small_fd = None
+                    try:
+                        small_fd, _small_st = open_regular(path)
+                        data = pread_full(small_fd, SMALL, 0)
+                        budget.spend(len(data))
+                        scheme["small_read"] += 1
+                        scheme["small_bytes_read"] += len(data)
+                        small_tail = data[-tail_bytes:] if tail_bytes else b""
+                        row["small_profile"] = {"bytes_read": len(data), "tail_bytes": len(small_tail),
+                                                "tail_distinct_byte_values": len(set(small_tail))}
+                        if small_tail:
+                            tail_seen(small_tail)
+                    except OSError as exc:
+                        scheme["small_failed"] += 1
+                        row["small_profile_error"] = describe(exc)
+                    finally:
+                        if small_fd is not None:
+                            os.close(small_fd)
             row = candidates.add(row, evidence)
             census.add(row, evidence)
         elif head is None:
@@ -2151,15 +2273,21 @@ def main():
     for ext, n in sorted(appended.items(), key=lambda kv: (-kv[1], kv[0])):
         ext_page.add({"extension": ext, "files": n}, appended_from.get(ext))
     tail_page = NoReplacePage("encrypted_survey", [real, "repeated tails"], limit)
-    for tail, n in sorted(tails.items(), key=lambda kv: (-kv[1], kv[0])):
+    for tail, n in sorted(tails.items(), key=lambda kv: (-kv[1], len(kv[0]), len(set(kv[0])))):
         if n > 1:
-            tail_page.add({"tail_hex": tail, "files": n, "basis": "observation"})
+            tail_page.add({"files": n, **tail_measure(tail), "basis": "observation",
+                           "bytes_printed": "no: the same last bytes in several files can be one file copied after it was encrypted"})
+    # The common suffix is taken over the DISTINCT tails, and only when there are two or more: copies of one encrypted file have one tail,
+    # and a suffix taken over copies would be the whole tail (the bytes where a per-file key is kept). Of two different tails of one length
+    # the common suffix is always shorter than either, so no whole tail is printed.
     shared_out = None
-    if sum(tails.values()) > 1 and shared is not None and len(shared) >= 4:
+    shared = functools.reduce(common_suffix, tails) if len(tails) >= 2 else None
+    if shared is not None and len(shared) >= 4:
         shared_out = {"suffix_hex": shared.hex(), "bytes": len(shared), "across_files": sum(tails.values()), "basis": "observation",
                       "pending": "a match against a reference for a family, with the suffix and its position",
-                      "caveat": "every sampled tail ends with these bytes. Padding, an ordinary format trailer, duplicated "
-                                "content or one tool's output also do; this is not a finding about the family"}
+                      "caveat": "every sampled tail ends with these bytes, and they are what %d different tails have in common (copies of one "
+                                "file count once). Padding, an ordinary format trailer, duplicated content or one tool's output also do; this "
+                                "is not a finding about the family" % len(tails)}
 
     pages = {"candidates": finish_page(candidates), "low_entropy_tail_candidates": finish_page(low_tail),
              "note_name_candidates": finish_page(note_names), "skipped": finish_page(skipped), "exceptions": finish_page(exceptions),
@@ -2167,8 +2295,57 @@ def main():
              "appended_extension_observations": finish_page(ext_page), "repeated_tails": finish_page(tail_page)}
     OWN_NAMES.update(page["all_results"] for page in pages.values() if page.get("all_results"))
 
+    constant = None
+    if scheme["twins"] and len(scheme["overheads"]) == 1:
+        constant = next(iter(scheme["overheads"]))
+    pooled_bytes = sum(scheme["pooled"].values())
+    pooled_entropy = None
+    if pooled_bytes:
+        pooled_entropy = round(-sum(n / pooled_bytes * math.log2(n / pooled_bytes) for n in scheme["pooled"].values()), 2)
+    unique_tails = None if scheme["tails_read"] < 2 else len(scheme["tails"]) == scheme["tails_read"]
+    trailer_seen = bool(constant and constant > 0 and unique_tails and (pooled_bytes < 256 or pooled_entropy >= 6.0))
+    if trailer_seen:
+        pointer = ("every plaintext twin found (%d) is smaller than its encrypted member by the same %d bytes, and the last %d bytes are different "
+                   "in each of the %d members read: a constant-size trailer that is unique per file is where per-file key material is usually "
+                   "kept. Test it (stream_kpa_check, with a tail slice as the key source) before hunting memory" % (scheme["twins"], constant, tail_bytes, scheme["tails_read"]))
+    elif constant is not None and constant > 0:
+        pointer = ("every plaintext twin found (%d) is smaller than its encrypted member by the same %d bytes: the encryptor added that much "
+                   "per file. Whether the added bytes are unique per file was not shown here" % (scheme["twins"], constant))
+    elif unique_tails:
+        pointer = ("the last %d bytes are different in each of the %d members read, and no plaintext twin measured what was added: a per-file "
+                   "trailer is possible, not shown" % (tail_bytes, scheme["tails_read"]))
+    else:
+        pointer = "no constant overhead and no per-file tail was seen in what was read"
+    scheme_pointers = {
+        "basis": "observation",
+        "members_by_name": scheme["members"],
+        "smallest_member": None if scheme["smallest"] is None else seal_row({"file": scheme["smallest"][1], "bytes": scheme["smallest"][0]}, scheme["smallest"][2]),
+        "plaintext_twins": {"pairs": scheme["twins"], "constant_overhead_bytes": constant,
+                            "overheads": [{"overhead_bytes": k, "pairs": n} for k, n in scheme["overheads"].most_common(10)],
+                            "examples": scheme["examples"],
+                            "twin": "a regular file beside the member whose name is the member's without its last extension; sizes only, "
+                                    "its content is not compared"},
+        "tails": {"tail_bytes": tail_bytes, "members_read": scheme["tails_read"], "small_members_read": scheme["small_read"],
+                  "small_members_not_read": scheme["small_failed"], "small_members_not_read_budget": scheme["small_budget"],
+                  "small_members_bytes_read": scheme["small_bytes_read"],
+                  "distinct_tails": len(scheme["tails"]), "unique_per_file": unique_tails,
+                  "pooled_entropy_bits_per_byte": pooled_entropy, "pooled_bytes": pooled_bytes,
+                  "distinct_byte_values_per_tail": {"least": min(scheme["distinct"]), "most": max(scheme["distinct"])} if scheme["distinct"] else None,
+                  "scope": "the profiled members of more than 4096 bytes, and the first `sample` members of 4096 bytes or less (read whole, "
+                           "within read_budget_bytes); no member's tail is printed, each is measured (its row's `tail` or `small_profile`)"},
+        "trailer_seen": trailer_seen,
+        "reading": pointer,
+        "rules": ["measure what the encryptor added", "read the routine to the last use of the per-file secret: where is it written?",
+                  "one member that opens, with what opened it, verifies a trailer guess on every other member",
+                  "a search that finds nothing is a negative only after its planted control passed"],
+    }
+
     c = counters
     reasons = []
+    if scheme["small_budget"]:
+        reasons.append("the read budget (%d bytes) was spent: %d members of 4096 bytes or less were not read for their tails" % (budget.total, scheme["small_budget"]))
+    if scheme["small_failed"]:
+        reasons.append("%d members of 4096 bytes or less could not be read for their tails" % scheme["small_failed"])
     if c["read_failed_files"]:
         reasons.append("%d files could not be read (read_failed)" % c["read_failed_files"])
     if c["profile_failures"]:
@@ -2187,7 +2364,14 @@ def main():
                        "(raise sample, at most %d, to profile more)" % (not_profiled["sample_limit"], sample_size, MAX_SAMPLE))
     if stopped:
         reasons.append("the time limit (max_seconds %d) was reached: %d entries of the directory being read and at least %d directories were "
-                       "not examined, and nothing under them is counted" % (max_seconds, stopped["entries_not_examined"], stopped["directories_not_entered"]))
+                       "not examined, and nothing under them is counted%s" % (
+                           max_seconds, stopped["entries_not_examined"], stopped["directories_not_entered"],
+                           "; the listing of that directory was itself cut, so its entries after the last one read are not known"
+                           if stopped.get("listing_cut") else ""))
+    if c["entries_not_listed"]:
+        reasons.append("%d directories hold more than %d entries, the most this tool holds for one directory: %d of their entries were not "
+                       "examined and nothing of them is counted (the entries kept are drawn by a keyed hash of their path, not by name or by the "
+                       "order the directory lists them in)" % (c["directories_over_entry_bound"], MAX_LISTED, c["entries_not_listed"]))
     where_every_one = ("the census has every one" if full_census and not census_problem
                        else "the census does not list files that matched nothing, so those are counted nowhere")
     for name, over in (("all files", all_over), ("candidates", cand_over)):
@@ -2205,6 +2389,8 @@ def main():
     basis = ("; ".join(reasons) if reasons else
              "every entry under the root was visited and accounted for (candidate, noncandidate, unmeasured or read_failed), the read "
              "budget and the time limit were not reached, every candidate of more than 4096 bytes was profiled and no table was capped")
+    if trailer_seen:
+        basis = "%s. Seen besides: %s" % (basis, pointer)
     receipt = {"parser": PARSER, "complete": complete, "status": complete, "status_basis": basis, "partial_reasons": reasons,
                "coverage": {**counters, "bytes_read": budget.read, "paths_withheld": WITHHELD_PATHS[0]}, "bytes": sizes,
                "parameters": {"root": shown_root, "sample": sample_size, "tail_bytes": tail_bytes, "read_budget_bytes": budget.total,
@@ -2246,6 +2432,7 @@ def main():
             for name, over in (("all_files", all_over), ("candidates", cand_over))},
         "repeated_tails": tail_page.page,
         "shared_tail_suffix": shared_out,
+        "scheme_pointers": scheme_pointers,
         "note_name_candidates": note_names.page,
         "exclusions": exclusions,
         "skipped": skipped.page,
@@ -2271,8 +2458,8 @@ def main():
         "truncated": any(p["truncated"] for p in pages.values()),
         **({"unrecognised_parameters": unknown} if unknown else {}),
         "note": "Candidates are leads. Entropy of three windows does not say what part of a file was encrypted, and an "
-                "intermittent layout can fall between them; the sampled tails are bytes of the files and say nothing about a "
-                "family until a reference matches. Take the questions this cannot answer (extent, recoverability, family, "
+                "intermittent layout can fall between them; a file's last bytes are measured and not printed, and what the sampled tails "
+                "share says nothing about a family until a reference matches. Take the questions this cannot answer (extent, recoverability, family, "
                 "timing) to file-format validation, a known-good counterpart or a documented layout. coverage and complete say "
                 "what was and was not read; a file in read_failed or unmeasured was not shown to be anything.",
     })

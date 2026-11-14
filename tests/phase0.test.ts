@@ -387,12 +387,17 @@ test("a ledger entry is corrected by a later one that supersedes it: both stay, 
     assert.match((unknown as { reason: string }).reason, /no entry #9/);
     const self = await recordEntry(a0, { kind: "finding", value: "y", source: "s", evidence: "e", ...F, supersedes: 3 });
     assert.equal(self.ok, false, "the next seq is no entry yet: an entry cannot supersede itself");
-    const twice = await recordEntry(a0, { kind: "finding", value: "z", source: "s", evidence: "e", ...F, supersedes: 1 });
+    // An entry corrected already is corrected at the end of its chain, the one move the ledger takes: across kinds it is still refused, with the entry to name.
+    const twice = await recordEntry(a0, { kind: "ioc", value: "z", source: "s", evidence: "e", supersedes: 1 });
     assert.equal(twice.ok, false);
     assert.match((twice as { reason: string }).reason, /already superseded by #2: correct #2 instead/);
     const same = await recordEntry(a0, { kind: "finding", value: "The shell was uploaded through the file manager, not the contact form", source: "access.log", evidence: "POST /filemanager/upload.php at 12:39", ...F, supersedes: 2 });
-    assert.equal(same.ok, false);
-    assert.match((same as { reason: string }).reason, /word for word/);
+    // A correction that repeats the entry word for word records nothing and says so: the entry stands as it was (it was a refusal the seat had nothing to fix on).
+    assert.equal(same.ok, true);
+    assert.equal((same as { merged: boolean }).merged, true);
+    assert.equal((same as { entry: { seq: number } }).entry.seq, 2);
+    assert.match(String((same as { note?: string }).note), /#2 already says this word for word, with the same confidence, refs and fields: nothing was recorded/);
+    assert.equal((await readLedger(root)).length, 2);
     // The same sentence with another confidence is a correction (18 of 33 refusals on the recorded runs were this).
     const surer = await recordEntry(a0, { kind: "finding", value: "The shell was uploaded through the file manager, not the contact form", source: "access.log", evidence: "POST /filemanager/upload.php at 12:39", ...F, confidence: "high", supersedes: 2, because: "the upload's own log line was found" });
     assert.equal(surer.ok, true, (surer as { reason?: string }).reason);

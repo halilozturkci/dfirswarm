@@ -64,7 +64,7 @@ import { pathToFileURL } from "node:url";
 import { execFile } from "node:child_process";
 import { eventChainVerifier, HARNESS_RECORD_TOOL, specialKind, verifyAttestationChain, verifyDisputeChain, verifyLedgerChain } from "../extensions/protocol.ts";
 import { verifyLeadChain } from "../extensions/leads.ts";
-import { LEDGER_SWEEPS, verifySweepChain } from "../extensions/store-sweep.ts";
+import { checkSweepSideFiles, LEDGER_SWEEPS, sweepSideFiles, verifySweepChain } from "../extensions/store-sweep.ts";
 import { FINISH_LOG } from "../extensions/finish.ts";
 import { checkNetwork, FETCH_LOG, GRANTS_LOG, type NetworkCheck } from "./net-grants.ts";
 import { hashArtifacts, type ArtifactIndex } from "./artifacts.ts";
@@ -1664,6 +1664,15 @@ export async function takeCustody(sandboxInput: string, options: CustodyOptions 
   if ("text" in sweepsRead && sweepsRead.text.trim()) {
     const v = verifySweepChain(sweepsRead.text);
     state.sweeps = { lines: v.total, intact: v.ok, detail: v.ok ? `${v.total} lines, chain intact` : `broken at line ${v.broken_at} (${v.reason})` };
+    // A line whose list of what it did not search, or of what it found, is long names a side file by its sha256
+    // (ledger/sweeps/unsearched-<sha256>.jsonl, ledger/sweeps/hits-<sha256>.jsonl): held to it.
+    if (v.ok) {
+      const side = await sweepSideLists(sandbox, sweepsRead.text);
+      if (side.named) {
+        state.sweeps.detail += `; ${side.named} side list(s) of what was not searched or what was found, ${side.bad.length ? `${side.bad.length} NOT as named (${side.bad.slice(0, 3).join("; ")})` : "each as its line names it"}`;
+        if (side.bad.length) state.sweeps.intact = false;
+      }
+    }
     if (state.seal) state.seal.sweeps = { lines: v.total, head: v.head };
   } else if ("why" in sweepsRead && sweepsRead.why !== "missing") {
     state.sweeps = { lines: 0, intact: false, detail: `the store sweeps are ${sweepsRead.why}` };
@@ -3032,4 +3041,16 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
         process.exit(1);
       });
   }
+}
+
+/**
+ * The side lists the sweep lines name (`unsearched_all.file`: what a sweep
+ * did not search; `hits_all.file`: what it found, when that is longer than
+ * its line holds), each a path under ledger/sweeps/ named by the sha256 of
+ * its bytes, hashed and held to its line (store-sweep.ts
+ * checkSweepSideFiles). A list that is missing, is not a regular file under
+ * ledger/sweeps/, is not named by its sha256, or hashes otherwise is named.
+ */
+export async function sweepSideLists(sandbox: string, sweepsText: string): Promise<{ named: number; bad: string[] }> {
+  return checkSweepSideFiles(sweepSideFiles(sweepsText), (path) => join(sandbox, path));
 }

@@ -3,6 +3,7 @@ id: volumes/luks-filevault
 title: Choosing the LUKS or FileVault examination route
 when: A Linux or Apple volume appears encrypted.
 needs: []
+card: Identify the format before choosing a reader: crypto_id ({"path": "<image>", "offset": <bytes>}) gives a lead, with its next reader. LUKS and FileVault are different routes with different limits: for a LUKS volume or header read volumes/luks, for an Apple volume volumes/filevault-apfs. Keep the original encrypted object and its metadata as they came. Use material the case supplies, within the recorded authority; jobs that handle secret material run with secret_output: true. If contents stay inaccessible, state exactly which were not examined; do not write that no usable key exists. Does not show: who added an unlock path or when.
 tools: [crypto_id]
 requires_host: []
 ---

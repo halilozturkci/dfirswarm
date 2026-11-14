@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
+import { alwaysBlock, alwaysProblems } from "./pack-router-checks.ts";
 import { estimateTokens, readPackIndex, readPackIndexes, renderSkillsSection, SKILL_BUDGET } from "../extensions/skills.ts";
 import { ROOT } from "./tool-library-harness.ts";
 import { TAUGHT as TAUGHT_A } from "./windows-skills-taught-registry.ts";
@@ -254,7 +255,7 @@ const BEFORE = [
   "registry/readers", "registry/system-profile",
 ];
 
-test("windows/router is the pack's only router, within 500 tokens, holds no rule, and names every other skill exactly once; every old id is alive", async () => {
+test("windows/router is the pack's only router, within its limit, holds no rule outside its Always block, and names every other skill exactly once; every old id is alive", async () => {
   const skills = await load(SKILLS);
   const routers = [...skills.values()].filter((s) => s.meta.router === "true");
   assert.deepEqual(routers.map((s) => s.id), [ROUTER], "one router, and it is windows/router");
@@ -263,7 +264,10 @@ test("windows/router is the pack's only router, within 500 tokens, holds no rule
   assert.match(router.body.trim().split("\n")[0], /^Use when .*\bNot for\b/);
   assert.deepEqual(router.meta.tools ?? [], [], "the router names no tool");
   // No rule content: after its first line the body is group headings and lines that start with a skill id and say when to read it.
-  for (const line of router.body.trim().split("\n").slice(1)) {
+  // The Always block (docs/packs.md "Routers") holds the rules every note holds; the routing lines hold none.
+  const { routing, rules } = alwaysBlock(router.body.trim());
+  assert.deepEqual(alwaysProblems(rules), []);
+  for (const line of routing.trim().split("\n").slice(1)) {
     if (!line.trim()) continue;
     assert.match(line, /^(`[a-z0-9-]+\/[a-z0-9-]+`|[A-Z][A-Za-z, -]{0,30}$)/, `a router line is a heading or starts with an id: ${line}`);
     assert.doesNotMatch(line, /\b(must|never|always|do not|don't|only if)\b/i, `a router holds no rule: ${line}`);
@@ -322,7 +326,10 @@ test("a run that carries this pack with others is over the run's index budget, a
     assert.equal(bare.shown, "full", `${label}: without its router the pack is shown whole`);
     assert.ok(without.no_router.includes("windows-forensics"), `${label}: without its router the report names the pack as one that cannot be shortened`);
     const routerLine = (await readPackIndex(PACK)).entries.find((e) => e.id === ROUTER)!.tokens;
-    assert.equal(without.shown_tokens - whole.shown_tokens, mine.tokens - routerLine, `${label}: the section grows by the pack's index minus its router line`);
+    // Collapsed, the pack shows its router and the core notes the budget had room for (docs/packs.md "Routers"); whole, every line.
+    const coreLines = (await readPackIndex(PACK)).entries.filter((e) => (mine.core_shown ?? []).includes(e.id)).reduce((n, e) => n + e.tokens, 0);
+    assert.ok(without.shown_tokens > whole.shown_tokens, `${label}: shown whole the pack takes more of the section`);
+    assert.ok(mine.tokens - routerLine - coreLines > 0, `${label}: collapsed, the pack leaves out what is not its router or core`);
   }
   // The family on its own: with the family's routers the section fits the run's budget, without them it does not (the base pack's router, if it has one, is no help:
   // the family's indexes alone are over the budget).
@@ -331,4 +338,23 @@ test("a run that carries this pack with others is over the run's index budget, a
   assert.ok(fits.shown_tokens <= SKILL_BUDGET.run, `with the routers the section is ${fits.shown_tokens} tokens`);
   const bare = await section(family, FAMILY);
   assert.ok(bare.shown_tokens > SKILL_BUDGET.run, `without the family's routers the section is ${bare.shown_tokens} tokens, over the run's ${SKILL_BUDGET.run}`);
+});
+
+test("the notes say what regkv answers today, and a secret browser store is read as secret output, as the base pack's note shows", async () => {
+  const skills = await load(SKILLS);
+  // regkv: a missing key is an answer, and a dirty hive is partial.
+  const readers = skills.get("registry/readers")!.body;
+  assert.match(readers, /A key not in the hive is an answer \(`found: false`, exit 0\)/);
+  assert.doesNotMatch(readers, /absent is answered `ok: false`/);
+  assert.match(skills.get("registry/overview")!.body, /a dirty hive answers `partial`/);
+  const regkv = await toolSource("regkv");
+  for (const name of ["found", "path_parts_matched", "transaction_logs_looked_for"]) assert.ok(regkv.includes(`"${name}"`), `regkv writes ${name}`);
+  // sqlite_query on Login Data: the base note's own example is the table export as secret output, so this note cannot say "never".
+  const strings = skills.get("browser/strings")!.body;
+  assert.doesNotMatch(strings, /never on `Login Data`/);
+  assert.match(strings, /`Login Data`, `Cookies`, `Web Data`, `cookies\.sqlite` and `key4\.db` are read as secret output: a job with `secret_output: true`, `table` and `write_values: true`/);
+  assert.match(strings, /never an inline `sql` over the values \(the base pack's `data\/sqlite-secrets`\)/);
+  const base = (await load(join(BASE, "skills"))).get("data/sqlite-secrets")!.body;
+  assert.match(base, /secret_output: true/);
+  assert.match(base, /"write_values": true/);
 });

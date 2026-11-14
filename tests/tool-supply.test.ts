@@ -129,10 +129,10 @@ test("a supplied tool is sealed as operator-supplied material with its provenanc
   assert.match(post, /It was supplied for R-1, L-1\./);
   assert.match(post, /the harness vouches for the bytes only/);
   assert.match(post, /Test it on input whose answer you know before you rely on it/);
-  // The way to run it: declared as an input of a job, copied into an executable directory inside the job.
-  assert.match(post, /job_run with inputs \["import:mat-0001\/detector"\]/);
-  assert.match(post, /Nothing in the store can be executed where it stands \(sealed files have no execute bit\)/);
-  assert.match(post, /copy it, and every library it loads, into an executable temporary directory inside the job \(for example one made with mktemp -d under \/tmp\), make it executable there \(chmod \+x\) and run it from the copy/);
+  // The way to run it: named in a job's programs, which copies it into an executable directory in the worker.
+  assert.match(post, /job_run with programs \["import:mat-0001"\] \(and inputs \["import:mat-0001\/detector"\] when you declare them\)/);
+  assert.match(post, /Nothing in the store or in a job's \$OUT can be executed where it stands \(sealed files have no execute bit, \$OUT is no-exec\)/);
+  assert.match(post, /its bin\/ on PATH and its lib\/ on LD_LIBRARY_PATH \(\$PROGRAMS names the directory\), and your command calls it by name/);
   assert.match(post, /cites the job and import:mat-0001\/detector, and says what the tool is/);
   // Listed as material, with what was said of it.
   const listed = (await listMaterial(S)).find((m) => m.import === "mat-0001")!;
@@ -216,7 +216,7 @@ test("a directory is a tool too: a program and the libraries it loads are sealed
   assert.deepEqual((r.tool as { checked: string[] }).checked, [progSha, libSha], "a hash named twice is checked and kept once");
   assert.deepEqual((r.files as Array<{ path: string }>).map((f) => f.path).sort(), ["lib/libx.so.1", "prog"]);
   const post = (await posts(S)).find((x) => /TOOL SUPPLIED/.test(x))!;
-  assert.match(post, /job_run with inputs \["import:mat-0001"\]/);
+  assert.match(post, /job_run with programs \["import:mat-0001"\] \(and inputs \["import:mat-0001"\] when you declare them\)/);
   assert.ok(post.includes(`prog (20 bytes, sha256 ${progSha})`) && post.includes(`lib/libx.so.1 (14 bytes, sha256 ${libSha})`));
 });
 

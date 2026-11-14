@@ -53,7 +53,17 @@
   "example": "{\"path\": \"inputs/memory.raw\", \"kinds\": [\"registry hive\"], \"extract_to\": \"work/<your id>/carved\", \"write_values\": true, \"results_to\": \"work/<your id>/memory-hits.jsonl\"}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 14,
+  "not_for": [
+    {
+      "what": "making one of its hits ready for the parser that reads it",
+      "use": "carve_handoff"
+    },
+    {
+      "what": "the registry hives a Windows memory image's kernel lists",
+      "use": "mem_registry"
+    }
+  ],
+  "version": 15,
   "sha256": "2bd9731a52a9ae73dbaaf43f3d03619a7a8beca9d95d31336310d3b0fc985a40",
   "use": {
     "extensions": [

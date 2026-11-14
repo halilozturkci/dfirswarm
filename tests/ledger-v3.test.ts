@@ -64,7 +64,11 @@ test("a hypothesis has a status, a limitation a reason, and each field is checke
   const l = ok(await recordEntry(a0, { kind: "limitation", value: "The vault's second volume was not opened", source: "vault.vhdx p2", evidence: "bitlocker: no recovery key found", reason: "unavailable" }));
   assert.equal(l.entry.reason, "unavailable");
   refused(await recordEntry(a0, { kind: "finding", ...F, value: "x", source: "s", evidence: "e", reason: "failed" }), /reason is a limitation's/);
-  refused(await recordEntry(a0, { kind: "finding", ...F, value: "x", source: "s", evidence: "e", answers: ["Q 3"] }), /section ids/);
+  refused(await recordEntry(a0, { kind: "finding", ...F, value: "x", source: "s", evidence: "e", answers: ["two words!"] }), /section ids/);
+  // A section id in a spelling the seats used is the id it names: taken, and said.
+  const spelt = ok(await recordEntry(a0, { kind: "finding", ...F, value: "y", source: "s", evidence: "e", answers: ["question:3", "Q 4"] }));
+  assert.deepEqual(spelt.entry.answers, ["3", "4"]);
+  assert.match(spelt.note ?? "", /answers "question:3", "Q 4" taken as "3", "4": answers takes the id alone/);
   refused(await recordEntry(a0, { kind: "finding", ...F, value: "x", source: "s", evidence: "e", clock: "NTFS $SI" }), /give ts too/);
   refused(await recordEntry(a0, { kind: "finding", ...F, value: "x", source: "s", evidence: "e", completion: "partial" }), /completion is an absence's/);
   refused(await recordEntry(a0, { kind: "finding", ...F, value: "x", source: "s", evidence: "e", because: "wrong" }), /give supersedes too/);
@@ -125,13 +129,13 @@ test("a duplicate names the entry that stands; a second author is an attestation
 test("an entry resting on the kept output of a job that failed says why it still holds: a finding in qualifies, another kind is told", async () => {
   const { a0 } = await run();
   refused(await recordEntry(a0, { kind: "finding", ...F, value: "The message names the buyer", source: "q10_messages.json", evidence: "jq", refs: ["job:j000002/rows.json", "job:j000001/rows.json"] }), /rests on the kept output of a job that did not succeed \(job:j000002\/rows\.json: failed\): say in qualifies/);
-  refused(await recordEntry(a0, { kind: "finding", ...F, value: "The message names the buyer", source: "q10_messages.json", evidence: "jq", refs: ["job:j000002/rows.json", "job:j000001/rows.json"], qualifies: [{ ref: "job:j000001/rows.json", why: "x" }] }), /whose job succeeded/);
+  refused(await recordEntry(a0, { kind: "finding", ...F, value: "The message names the buyer", source: "q10_messages.json", evidence: "jq", refs: ["job:j000002/rows.json", "job:j000001/rows.json"], qualifies: [{ ref: "job:j000001/rows.json", why: "x" }] }), /rests on the kept output of a job that did not succeed \(job:j000002\/rows\.json: failed\).*To keep it, add qualifies: \[\{ref: "job:j000002\/rows\.json", why: "<why its bytes are still usable>"\}\].*Taken as meant, nothing to change there: qualifies on job:j000001\/rows\.json is left out: its job succeeded/);
   const r = ok(await recordEntry(a0, { kind: "finding", ...F, value: "The message names the buyer", source: "q10_messages.json", evidence: "jq", refs: ["job:j000002/rows.json", "job:j000001/rows.json"], qualifies: [{ ref: "job:j000002/rows.json", why: "the job failed after writing every row" }] }));
   assert.deepEqual(r.entry.qualifies, [{ ref: "job:j000002/rows.json", why: "the job failed after writing every row" }]);
   assert.equal(r.note, undefined, "a qualified ref needs no note");
   const ioc = ok(await recordEntry(a0, { kind: "ioc", value: "buyer@example.org", source: "q10_messages.json", evidence: "jq", refs: ["job:j000002/rows.json"] }));
   assert.match(ioc.note ?? "", /rests on the kept output of a job that did not succeed: job:j000002\/rows\.json \(job j000002: failed\)/);
-  refused(await recordEntry(a0, { kind: "absence", value: "No second buyer", source: "q10_messages.json", evidence: "jq", refs: ["job:j000002/rows.json"] }), /cannot show that something is absent/);
+  refused(await recordEntry(a0, { kind: "absence", value: "No second buyer", source: "q10_messages.json", evidence: "jq", refs: ["job:j000002/rows.json"], control: { ref: "job:j000002/rows.json", found: "the same search finds a planted row" } }), /cannot show that something is absent/);
 });
 
 test("the report shows hypotheses, limitations, contradictions, the questions answered and what is sensitive", async () => {

@@ -3,6 +3,7 @@ id: keys/where-they-hide
 title: Locating and safeguarding authorised key material
 when: A case question requires access to encrypted evidence.
 needs: []
+card: Record the question, the encrypted object and the authority first; look first in what the case supplies. recovery_key_scan ({"path": "<directory or file>"}) locates recovery-password text and private-key headers: run it as a job with secret_output: true; {"write_values": true} writes values only to recovery-passwords.jsonl under $OUT. ioc_scan ({"path": "<file>", "needles": "<literal>"}) finds a literal you name. Cite file and offset, not the value. Does not show: that it opens this container.
 tools: [recovery_key_scan, ioc_scan]
 requires_host: []
 ---
@@ -30,8 +31,8 @@ headers and conventional key-file names. Only if you report what it found:
 `keys/recovery-key-scan` says what it shows and does not.
 
 **ioc_scan** finds a literal you name, in ASCII and UTF-16LE, in a file or an image;
-use it for a known identifier or a phrase such as the name of a key file. Its hits
-carry context snippets that can themselves be the secret.
+use it for a known identifier or a key file's name. It answers with locators; the
+bytes around a hit can be the secret and need `write_values`.
 
 Only if the key may sit in a password store, a memory image, an escrow record or shell history: `keys/other-sources`.
 

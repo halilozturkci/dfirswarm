@@ -79,7 +79,7 @@ async function notDeterminable(r: Awaited<ReturnType<typeof operatorRun>>, o: { 
   await L.attachJob(r.S, "a0", o.quick ? "j000001" : "j000006", lead);
 
   const job = o.quick ? "j000001" : "j000006";
-  const absence = ok(await rec(r.a0, { kind: "absence", value: "a remote tool", source: "inputs/disk.E01", evidence: "a search over the disk", completion: "complete", refs: [`job:${job}/hits.txt`], answers: ["2"] })).entry;
+  const absence = ok(await rec(r.a0, { kind: "absence", value: "a remote tool", source: "inputs/disk.E01", evidence: "a search over the disk", completion: "complete", refs: [`job:${job}/hits.txt`], control: { ref: `job:${job}/hits.txt`, found: "the same search finds a planted row" }, answers: ["2"] })).entry;
   assert.ok((await L.recordInterpretations(r.S, "a0", absence.seq, [{ job }])).ok);
   const closed = await L.closeLead(r.a0, lead, { disposition: "negative", ref: `E-${absence.seq}` });
   assert.ok(closed.ok, (closed as { reason?: string }).reason);
@@ -161,7 +161,7 @@ test("under --stop operator, an unreviewed negative, a quick negative nobody att
   const s = await notDeterminable(stale);
   assert.ok((await P.attestEntry(stale.a2, { seq: s.cov.seq, how: "ran the search again", review: REVIEW })).ok);
   assert.equal((await finish(stale.S)).verdict.proceed, true);
-  ok(await rec(stale.a0, { kind: "absence", value: "a remote tool", source: "inputs/disk.E01", evidence: "a search over one volume only", completion: "partial", refs: ["job:j000001/hits.txt"], answers: ["2"], supersedes: s.absence.seq, because: "the search stopped at the first volume" }));
+  ok(await rec(stale.a0, { kind: "absence", value: "a remote tool", source: "inputs/disk.E01", evidence: "a search over one volume only", completion: "partial", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["2"], supersedes: s.absence.seq, because: "the search stopped at the first volume" }));
   f = await finish(stale.S);
   assert.ok(f.check.defects.some((d) => d.code === "coverage_stale"));
   assert.equal(f.gate.questions.find((x) => x.id === "2")?.disposition, undefined);

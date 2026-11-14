@@ -2,6 +2,16 @@
 """ad1-items: the item list of an AccessData AD1 logical image, each file's
 content inflated to check the digests the image records; nothing extracted.
 
+Two phases. Phase 1, the listing, walks the tree and writes members.tsv,
+attributes.tsv, image.json and index.tsv whole, with every file's sha256
+empty and its check `pending`, and coverage.json then says `phase: "listing
+complete; digests pending"` (seconds on an image of 400,000 items). Phase 2,
+the digests, inflates every file and writes members.tsv again with sha256
+and check filled in, renamed over the first: members.tsv is at every moment
+a whole list. RECIPE_PHASE=listing ends the run after phase 1 (status
+partial; digests pending), for a caller that publishes the list first and
+runs the recipe again for the digests.
+
     run.py detect --target TARGET [--probe-out DIR]   exit 0 applies, 1 does not, 2 error
     run.py run --target TARGET --out DIR              members.tsv, attributes.tsv, image.json,
                                                       index.tsv and coverage.json in DIR
@@ -527,6 +537,8 @@ LABELS = {
     0xA029: "$I30 size", 0xA02A: "$I30 physical size", 0xA02B: "$I30 created", 0xA02C: "$I30 modified",
     0xA02D: "$I30 accessed", 0xA02E: "$I30 changed", 0x10002: "data source name",
 }
+PENDING = "pending"              # a file's check between the two phases: listed, its content not inflated yet
+PHASE_LISTING = "listing"        # coverage.json's phase while the list is being written; after it, "listing <status>; digests <status>"
 CLASSES = {b"1": "regular file", b"2": "placeholder", b"3": "folder", b"4": "file system metadata", b"6": "file slack",
            b"9": "symbolic link", b"11": "reparse point"}
 
@@ -591,6 +603,7 @@ AD1_FOLD_AT = 1 << 16             # reached-range entries held before they are m
 AD1_SLACK = 0                     # non-zero bytes of the data nothing may lead to before the walk is not called whole
 AD1_GAP_BLOCK = 1 << 20            # bytes of unreached data read at a time: the clock is looked at before each block
 AD1_GAPS_LISTED = 20              # gaps named one by one in the report: those with non-zero bytes, or not read to their end
+AD1_AHEAD = 4096                  # bytes taken at once for a small read: an item's header, name and metadata entries lie one after the other
 AD1_GUID_TABLES = (b"ATTRGUID", b"LOCSGUID")   # the two tables FTK Imager leaves after the items; the header points at them
 
 
@@ -678,6 +691,7 @@ class AD1:
         self._reached, self._lo, self._hi = _array.array("Q"), _array.array("Q"), _array.array("Q")
         self._chains, self._chains_held = {}, 0
         self.packed_read = 0          # compressed bytes of content read so far, for a ratio against what is written
+        self._ahead = (0, b"")        # the last small read, with the bytes after it: (address, bytes)
         self.gap_report = None
         if self.read(0, 14) != AD1_LOGICAL_MAGIC:
             raise AD1Error("no ADLOGICALIMAGE header at the start of the image's data")
@@ -720,6 +734,20 @@ class AD1:
         """n bytes of the image's data from addr, across segments."""
         if addr < 0 or n < 0 or addr + n > self.end:
             raise AD1Error("address %d (+%d) is outside the image's data" % (addr, n))
+        if n <= AD1_AHEAD:
+            # A small read is answered from the last one when it lies inside it, and else takes AD1_AHEAD bytes in one read of the one
+            # segment it starts in: the same bytes, a twelfth of the reads (a walk of 400,000 items made 13 million). Anything that read
+            # cannot answer whole (a segment that is not there, the end of a segment, a file cut short) is left to the exact read below,
+            # which names it.
+            at, held = self._ahead
+            if at <= addr and addr + n <= at + len(held):
+                return held[addr - at:addr - at + n]
+            k = _bisect.bisect_right(self.starts, addr) - 1
+            if self.paths[k] is not None:
+                got = _os.pread(self._fh(k).fileno(), min(AD1_AHEAD, self.starts[k + 1] - addr), self.margins[k] + addr - self.starts[k])
+                if len(got) >= n:
+                    self._ahead = (addr, got)
+                    return got[:n]
         out = bytearray()
         while len(out) < n:
             at = addr + len(out)
@@ -880,11 +908,15 @@ class AD1:
         children, then its next sibling), numbered from 0, with its path
         (names joined by "/"). A node that cannot be read ends its chain,
         and is named in walk_errors: a numbering after it is not the
-        numbering of a whole read, and an item's address (locator) is."""
+        numbering of a whole read, and an item's address (locator) is.
+        FTK Imager writes the address of the item's parent folder (0 for a
+        top-level item) as 8 bytes after its name: those count as reached
+        when they hold that address, and are left to the unreferenced-data
+        check (non-zero bytes nothing accounts for) when they do not."""
         seen, n = set(), 0
-        stack = [(self.first_item, b"", None, 0)] if self.first_item else []
+        stack = [(self.first_item, b"", None, 0, 0)] if self.first_item else []
         while stack:
-            addr, parent, parent_n, depth = stack.pop()
+            addr, parent, parent_n, depth, parent_addr = stack.pop()
             if addr in seen:
                 self.walk_errors.append("the tree loops back to item address %d under %s: not followed" % (addr, ad1_where(parent)))
                 continue
@@ -899,6 +931,8 @@ class AD1:
                 name = self.read(addr + 48, name_len)
                 meta = self.metadata(meta)
                 self._reach(addr, 48 + name_len)
+                if addr + 56 + name_len <= self.end and _struct.unpack("<Q", self.read(addr + 48 + name_len, 8))[0] == parent_addr:
+                    self._reach(addr + 48 + name_len, 8)
                 if table:
                     self._reach_table(table, size)
             except AD1Error as e:
@@ -909,9 +943,9 @@ class AD1:
                     "size": size, "table": table, "meta": meta}
             n += 1
             if nxt:
-                stack.append((nxt, parent, parent_n, depth))
+                stack.append((nxt, parent, parent_n, depth, parent_addr))
             if child:
-                stack.append((child, path, item["n"], depth + 1))
+                stack.append((child, path, item["n"], depth + 1, addr))
             yield item
 
     def chunks(self, item):
@@ -1152,6 +1186,8 @@ def detect(path):
 
 
 def row_of(img, item, w, deadline, cov, escapes):
+    """Phase 1, the listing: one row of members.tsv from the item's header, its metadata and its chunk table. No content is inflated here:
+    a file's sha256 is left empty and its check says pending, for digest_pass (phase 2) to fill in."""
     meta = item["meta"]
     raw_path = item["path"]
     flags = []
@@ -1174,7 +1210,7 @@ def row_of(img, item, w, deadline, cov, escapes):
     # As recorded, escaped as any text is: a field never breaks the row.
     md5 = esc((ad1_text(meta, 0x5001) or b"").strip()).lower()
     sha1 = esc((ad1_text(meta, 0x5002) or b"").strip()).lower()
-    packed, sha256, check = "", "", ""
+    packed, check = "", ""
     ranges = True
     try:
         packed = ""
@@ -1183,52 +1219,77 @@ def row_of(img, item, w, deadline, cov, escapes):
             for k, (c_start, c_end) in enumerate(img.chunks(item)):
                 packed += c_end - c_start
                 if k and k % 4096 == 0 and time.monotonic() > deadline:
-                    packed = ""        # cut by the clock: not known, and the file is not inflated either
+                    packed = ""        # cut by the clock: not known
                     break
     except AD1Error as e:
         ranges = None
         cov["errors"].append("item %d (%s, %s): %s" % (item["n"], esc(raw_path), "ad1:item=%d" % item["addr"], e))
     if item["type"] != AD1_FOLDER:
-        if ranges is None:
-            check = "not-read"
-        elif time.monotonic() > deadline:
-            check = "not-read"
-            cov["unread_at_limit"] += 1
-        else:
-            hs = [hashlib.md5(), hashlib.sha1(), hashlib.sha256()]
-            try:
-                cut = False
-                for block in img.content(item):
-                    for h in hs:
-                        h.update(block)
-                    if time.monotonic() > deadline:
-                        cut = True     # past the limit part way through one file: it is not a checked file, and says so
-                        break
-                if cut:
-                    check = "not-read"
-                    cov["unread_at_limit"] += 1
-                else:
-                    sha256 = hs[2].hexdigest()
-                    if not md5 and not sha1:
-                        check = "no-stored-hash"
-                        cov["no_stored_hash"] += 1
-                    elif (md5 and md5 != hs[0].hexdigest()) or (sha1 and sha1 != hs[1].hexdigest()):
-                        check = "mismatch"
-                        flags.append("hash-mismatch")
-                        cov["mismatches"].append(item["n"])
-                    else:
-                        check = "ok"
-                    cov["checked"] += 1
-            except AD1Error as e:
-                check = "not-read"
-                cov["errors"].append("item %d (%s, %s): %s" % (item["n"], esc(raw_path), "ad1:item=%d" % item["addr"], e))
+        check = "not-read" if ranges is None else PENDING
+        cov["digests_pending"] += 0 if ranges is None else 1
     klass = ad1_text(meta, 0x02)
     w.write("\t".join(str(v) for v in (
         item["n"], kind, esc(raw_path), base64.b64encode(raw_path).decode("ascii"), item["size"], packed,
         stamp(ad1_text(meta, 0x09)), "unknown", "", "", "", "", "ad1:item=%d" % item["addr"], ",".join(flags),
-        stamp(ad1_text(meta, 0x07)), stamp(ad1_text(meta, 0x08)), md5, sha1, sha256, check,
+        stamp(ad1_text(meta, 0x07)), stamp(ad1_text(meta, 0x08)), md5, sha1, "", check,
         CLASSES.get((klass or b"").strip(), esc(klass or b"")))) + "\n")
     cov["folders" if item["type"] == AD1_FOLDER else "files"] += 1
+
+
+def digest_of(img, n, addr, shown_path, md5, sha1, deadline, cov):
+    """Phase 2, one file: (sha256, check, mismatch) of the content of the item at `addr`, inflated and compared with the digests the image
+    records, exactly as the one-pass recipe did. The item's chunk table and size are read again from its header at its address."""
+    if time.monotonic() > deadline:
+        cov["unread_at_limit"] += 1
+        return "", "not-read", False
+    hs = [hashlib.md5(), hashlib.sha1(), hashlib.sha256()]
+    try:
+        _next, _child, _meta, table, size, _kind, _name_len = _struct.unpack("<QQQQQII", img.read(addr, 48))
+        for block in img.content({"table": table, "size": size}):
+            for h in hs:
+                h.update(block)
+            if time.monotonic() > deadline:
+                cov["unread_at_limit"] += 1      # past the limit part way through one file: it is not a checked file, and says so
+                return "", "not-read", False
+    except AD1Error as e:
+        cov["errors"].append("item %d (%s, %s): %s" % (n, shown_path, "ad1:item=%d" % addr, e))
+        return "", "not-read", False
+    cov["checked"] += 1
+    if not md5 and not sha1:
+        cov["no_stored_hash"] += 1
+        return hs[2].hexdigest(), "no-stored-hash", False
+    if (md5 and md5 != hs[0].hexdigest()) or (sha1 and sha1 != hs[1].hexdigest()):
+        cov["mismatches"].append(n)
+        return hs[2].hexdigest(), "mismatch", True
+    return hs[2].hexdigest(), "ok", False
+
+
+def digest_pass(img, out_dir, cov, deadline):
+    """Phase 2, the digests: members.tsv as phase 1 left it is read row by row and written again beside it with every pending file's
+    sha256 and check filled in, then renamed over it, so members.tsv is at every moment a whole list: the listing with its checks pending,
+    or the listing with its checks made. Nothing of the list is held in memory. Past the content deadline a file's check is not-read."""
+    src = os.path.join(out_dir, "members.tsv")
+    tmp = src + ".digests.tmp"
+    at_check, at_sha256, at_flags, at_loc = COLUMNS.index("check"), COLUMNS.index("sha256"), COLUMNS.index("flags"), COLUMNS.index("locator")
+    at_md5, at_sha1 = COLUMNS.index("md5"), COLUMNS.index("sha1")
+    temp_hold(tmp)
+    try:
+        with open(src, encoding="utf-8", newline="\n") as r, open(tmp, "w", encoding="utf-8", newline="\n") as w:
+            w.write(r.readline())
+            for line in r:
+                f = line[:-1].split("\t") if line.endswith("\n") else line.split("\t")
+                if len(f) == len(COLUMNS) and f[at_check] == PENDING:
+                    sha256, check, mismatch = digest_of(img, int(f[0]), int(f[at_loc][len("ad1:item="):]), f[2], f[at_md5], f[at_sha1], deadline, cov)
+                    cov["digests_pending"] -= 1
+                    f[at_sha256], f[at_check] = sha256, check
+                    if mismatch:
+                        f[at_flags] = ",".join([x for x in f[at_flags].split(",") if x] + ["hash-mismatch"])
+                    line = "\t".join(f) + "\n"
+                w.write(line)
+        temp_replace(tmp, src)
+    except BaseException:
+        temp_drop(tmp)
+        raise
 
 
 def missing_words(img):
@@ -1245,10 +1306,74 @@ def label(key):
     return LABELS.get(key, "")
 
 
+NOT_IN_ANY_AD1 = ("anything the imager did not put in the image (a logical image holds no unallocated space, and slack only where it was taken as an item); "
+                  "files inside the files; an encrypted (ADCRYPT) image")
+
+
+def covered_words(cov, whole):
+    """coverage.json's covered, written from what this run read and never from what a whole run would have: how many items were
+    listed, whether that is the whole tree (`whole`: the walk reached its end with no limit, no missing segment and no item that
+    broke), and how many files' content was inflated and compared with the digests the image records."""
+    if not cov["items"]:
+        return "no item of the image's tree: none was listed"
+    counts = "%d: %d files, %d folders" % (cov["items"], cov["files"], cov["folders"])
+    if whole:
+        head = "every item of the image's tree (%s), with its metadata" % counts
+    else:
+        head = "the %d item(s) of the image's tree that this run listed (%d files, %d folders), with their metadata, which is not the whole tree (see not_covered)" % (cov["items"], cov["files"], cov["folders"])
+    files, read = cov["files"], cov["checked"]
+    compared = read - cov["no_stored_hash"]
+    if not files:
+        return head
+    if read == files and not cov["no_stored_hash"]:
+        tail = "each of those files' content inflated and checked against the digests the image records"
+    else:
+        tail = "the content of %d of those %d file(s) inflated, %d of them compared with the digests the image records" % (read, files, compared)
+        if cov["no_stored_hash"]:
+            tail += " (%d have no stored digest)" % cov["no_stored_hash"]
+    if cov["mismatches"]:
+        tail += "; %d do not match (mismatches)" % len(cov["mismatches"])
+    return "%s, and %s" % (head, tail)
+
+
+def not_covered_words(cov, listing_cut, broken_items):
+    """coverage.json's not_covered: first what this run did not read of this image, then what no AD1 image holds."""
+    own = []
+    if cov["segments_missing"]:
+        own.append("the items and the content that lie in the %d segment(s) that are not there (segments_missing), and the siblings listed after an item that lies in one"
+                   % len(cov["segments_missing"]))
+    if listing_cut:
+        own.append("every item after the %d listed, in the image's order (the listing stopped at a limit: limits_hit)" % cov["items"])
+    if broken_items:
+        own.append("%d item(s) that could not be read, and the siblings after each (errors)" % broken_items)
+    pending = cov.get("digests_pending", 0)
+    if pending > 0:
+        own.append("the content of %d listed file(s), which the digest pass has not inflated (check pending, sha256 empty): %s"
+                   % (pending, cov.get("digests_pending_why") or "the digest pass (phase 2) had not finished"))
+    unread = cov["files"] - cov["checked"] - max(pending, 0)
+    if unread > 0:
+        own.append("the content of %d listed file(s), which was not inflated or not inflated to its end (check not-read; %d of them at the time limit)" % (unread, cov["unread_at_limit"]))
+    if cov.get("unaccounted"):
+        own.append("data of the image that no listed item leads to (unreferenced_bytes, unreferenced_gaps)")
+    if cov.get("interrupted"):
+        own.append("every item after the %d listed when the recipe was stopped" % cov["items"])
+    return ("of this image: %s. Of any AD1 image: %s" % ("; ".join(own), NOT_IN_ANY_AD1)) if own else NOT_IN_ANY_AD1
+
+
 def run(target, paths, out_dir):
     seconds = limits()
-    deadline = time.monotonic() + seconds * 0.9       # past this, no further file's content is inflated
-    list_deadline = time.monotonic() + float(os.environ.get("RECIPE_LISTING_SECONDS") or seconds * 0.97)  # past this, no further item is listed
+    began = time.monotonic()
+    deadline = began + seconds * 0.9       # past this, no further file's content is inflated
+    list_deadline = began + float(os.environ.get("RECIPE_LISTING_SECONDS") or seconds * 0.97)  # past this, no further item is listed
+    # Two phases. Phase 1 lists: members.tsv, attributes.tsv, image.json and index.tsv are written whole and closed, and coverage.json
+    # says "listing complete; digests pending", before any content is inflated (on a 400,000-item image the list is there in under a
+    # minute, the digests take twenty). Phase 2 inflates every file and fills in sha256 and check. RECIPE_PHASE=listing ends the run after
+    # phase 1 (status partial, digests pending), for a caller that wants the list published first and the digests as a second run.
+    phase_arg = os.environ.get("RECIPE_PHASE") or "all"
+    if phase_arg not in ("all", "listing"):
+        print_answer({"ok": False, "status": "failed", "error": "RECIPE_PHASE is listing (phase 1 only) or all (the default: the listing, then the digests)",
+                      "status_basis": "the phase asked for is not one this recipe has, so nothing was run"})
+        sys.exit(2)
     try:
         os.makedirs(out_dir, exist_ok=True)
     except (OSError, ValueError) as exc:        # a name too long, a loop, a file in the way, a directory that cannot be entered
@@ -1258,12 +1383,20 @@ def run(target, paths, out_dir):
     _probe_out(out_dir)
     cov = {"recipe": "ad1-items", "target": paths[0], "format": "AD1", "items": 0, "files": 0, "folders": 0, "checked": 0,
            "mismatches": [], "no_stored_hash": 0, "unread_at_limit": 0, "segments_missing": [],
-           "covered": "every item of the image's tree, with its metadata, and each file's content inflated and checked against the digests the image records",
-           "not_covered": "anything the imager did not put in the image (a logical image holds no unallocated space, and slack only where it was taken as an item); files inside the files; an encrypted (ADCRYPT) image",
+           "phase": PHASE_LISTING, "digests_pending": 0,
+           "covered": "nothing yet: the run had started and had listed no item",
+           "not_covered": "every item of the image, until the run lists it. Of any AD1 image: " + NOT_IN_ANY_AD1,
            "limits_hit": [], "errors": []}
+    read = {"listing_cut": False, "broken_items": 0, "ended": False, "in_digests": False, "pending_listed": 0}      # how far the walk got and what it left out, for covered and not_covered
+
+    def whole_tree():
+        return read["ended"] and not read["broken_items"] and not cov["segments_missing"] and not cov.get("interrupted")
 
     def write_cov():
         _write_json_whole(os.path.join(out_dir, "coverage.json"), cov, indent=2)
+
+    def listing_whole():
+        return whole_tree() and not cov["limits_hit"] and not cov["errors"]
 
     def finish(status, code):
         cov["status"] = status
@@ -1271,10 +1404,18 @@ def run(target, paths, out_dir):
                                "partial": "a limit was hit, a segment is missing, an item broke, or the tree does not account for all of the image's data (see limits_hit and errors)",
                                "failed": "no item could be listed (see errors)",
                                "unsupported": "this is not an AD1 image this recipe reads (see why)"}.get(status, status)
+        if status == "partial" and cov.get("digests_pending", 0) > 0:
+            # The listing phase alone: the status is of the two phases together, and the basis says which one is not done.
+            cov["status_basis"] = ("the listing is whole (every item of the tree, its metadata, and the data the tree leads to accounts for the image's); " if listing_whole() else
+                                   "the listing is not whole (see limits_hit and errors); ") + \
+                "the digest pass has not run: the content of %d file(s) was not inflated, their sha256 is empty and their check says pending" % cov["digests_pending"]
+        # covered and not_covered say what this run read, whatever the status: a partial read is never described as the whole tree.
+        cov["covered"] = covered_words(cov, whole_tree())
+        cov["not_covered"] = not_covered_words(cov, read["listing_cut"], read["broken_items"])
         if "integrity_status" not in cov:
             cov["integrity_status"] = "mismatch" if cov["mismatches"] else "unverified" if cov["files"] > cov["checked"] or cov["no_stored_hash"] or cov.get("unaccounted") else "verified" if cov["files"] else "not_applicable"
         write_cov()
-        print_answer({"ok": code == 0, "status": status, "format": "AD1", "items": cov["items"]})
+        print_answer({"ok": code == 0, "status": status, "format": "AD1", "items": cov["items"], "phase": cov["phase"]})
         return code
 
     # Said before the first read: a run cut short leaves a coverage file that says it was, never none.
@@ -1289,14 +1430,25 @@ def run(target, paths, out_dir):
         cov["interrupted"] = True
         cov["signal"] = signum
         cov["status_basis"] = "the recipe was stopped by signal %d: the items listed before the stop are in members.tsv, and nothing is claimed about the rest" % signum
+        if read["in_digests"]:
+            # members.tsv on disk is the list as phase 1 closed it: the digests made since are in the unfinished copy, which is removed.
+            cov["status_basis"] = ("the recipe was stopped by signal %d during the digest pass: members.tsv is the whole listing as phase 1 wrote it "
+                                   "(check pending on its files), and the digests made before the stop (%d file(s)) were not kept" % (signum, cov["checked"]))
+            cov["digests_discarded"] = cov["checked"]
+            cov["digests_pending"] = read["pending_listed"]
+            cov["digests_pending_why"] = "the recipe was stopped during the digest pass"
+            cov["checked"], cov["mismatches"], cov["no_stored_hash"], cov["unread_at_limit"] = 0, [], 0, 0
+            cov["phase"] = "listing %s; digests pending" % cov["phases"]["listing"]["status"]
+            cov["phases"]["digests"] = {"status": "interrupted", "files_pending": cov["digests_pending"]}
         cov["integrity_status"] = "unverified"
+        cov["covered"] = covered_words(cov, False)
+        cov["not_covered"] = not_covered_words(cov, read["listing_cut"], read["broken_items"])
         try:
             write_cov()
         except OSError:
             pass
-        print(json.dumps({"ok": False, "status": "partial", "interrupted": True, "signal": signum, "format": "AD1", "items": cov["items"]}), flush=True)
+        print(json.dumps({"ok": False, "status": "partial", "interrupted": True, "signal": signum, "format": "AD1", "items": cov["items"], "phase": cov["phase"]}), flush=True)
     install_signal_handlers(_stopped)
-    img_source = b""
     try:
         img = AD1(paths[0], paths[1:])
     except AD1Error as e:
@@ -1309,25 +1461,40 @@ def run(target, paths, out_dir):
     if img.missing:
         cov["errors"].append(missing_words(img))
     cov["errors"] += img.errors
+
+    def write_index():
+        mism = len(cov["mismatches"])
+        pending = cov["digests_pending"]
+        with open(os.path.join(out_dir, "index.tsv"), "w", encoding="utf-8") as fh:
+            fh.write("members.tsv\tAD1 item list (%d items: %d files, %d folders), paths under the data source name %s: n, type, path, path_b64, size, packed, mtime, tz, mode, uid, gid, link, locator, flags, atime, btime, md5, sha1, sha256, check, class; ad1_extract takes n or the locator%s%s\n"
+                     % (cov["items"], cov["files"], cov["folders"], esc(img.source_name) or "(none recorded)",
+                        "; %d file(s) whose content does not match the digests the image records (check mismatch)" % mism if mism else "",
+                        "; digests pending: the content of %d file(s) is not inflated yet (sha256 empty, check pending)" % pending if pending > 0 else ""))
+            fh.write("attributes.tsv\tevery metadata entry of every item (a chain several items share is written once, then a same-chain row names the item): n, category, key, label, text\n")
+            fh.write("image.json\tthe AD1 segment and logical image headers, its segments, its data source name and its own metadata\n")
+
     try:
+        # ---- phase 1: the listing --------------------------------------------------------------------------------------------
         with open(os.path.join(out_dir, "members.tsv"), "w", encoding="utf-8", newline="\n") as w, \
                 open(os.path.join(out_dir, "attributes.tsv"), "w", encoding="utf-8", newline="\n") as a:
             w.write("\t".join(COLUMNS) + "\n")
             a.write("n\tcategory\tkey\tlabel\ttext\n")
             escapes = set()
-            # Past the content deadline an item is still listed (its digests are then not checked); the listing has a later
-            # clock of its own, and an item budget, because a hostile image can make one item cost a metadata chain's worth.
+            # An item is listed whatever the content clock says (its digests are phase 2's); the listing has a clock of its own, and an
+            # item budget, because a hostile image can make one item cost a metadata chain's worth.
             written_chains, attr_cost, attr_stopped = {}, 0, None
             holds = sum(img.actual)      # the bytes of data the image has (its last segment is shorter than its header says)
             walked_all = False
             for item in img.walk():
                 if cov["items"] >= MAX_ITEMS:
                     cov["limits_hit"].append("items: the listing stopped after %d items; every item after it in the image's order is not listed" % cov["items"])
+                    read["listing_cut"] = True
                     break
                 if cov["items"] and time.monotonic() > list_deadline:
                     cov["limits_hit"].append("seconds: the listing stopped after %d items; every item after it in the image's order is not listed" % cov["items"])
+                    read["listing_cut"] = True
                     break
-                row_of(img, item, w, deadline, cov, escapes)
+                row_of(img, item, w, list_deadline, cov, escapes)
                 # attributes.tsv: a metadata chain is written once, for the first item that has it; an item sharing the whole
                 # chain gets one row naming that item. The text written is held to the bytes the image holds: entries that
                 # sit at their own addresses cannot add up to more, so a total above it means chains that overlap.
@@ -1350,8 +1517,10 @@ def run(target, paths, out_dir):
                         a.write("%d\t%d\t0x%x\t%s\t%s\n" % (item["n"], cat, key, label(key), esc(text)))
                 cov["items"] += 1
             else:
+                read["ended"] = True
                 walked_all = not img.walk_errors
         cov["errors"] += img.walk_errors
+        read["broken_items"] = len(img.walk_errors)
         if walked_all and not cov["limits_hit"]:
             # The data nothing led to is read to its end under the listing's clock; the gaps that hold non-zero bytes or were not read
             # to their end are all in unreferenced-gaps.jsonl (at most GAPS_FILE_MAX of them), the first AD1_GAPS_LISTED in the coverage.
@@ -1389,18 +1558,48 @@ def run(target, paths, out_dir):
                    "logical_image": {"version": img.version, "chunk_size": img.chunk_size, "first_item": img.first_item, "metadata": img.meta_addr},
                    "data_source_name": esc(img.source_name), "metadata": own,
                    "items": cov["items"], "files": cov["files"], "folders": cov["folders"]}, indent=2, ensure_ascii=False)
+        # The listing is on disk, whole and closed: every output of the generation but the digests. The record says so before a byte of
+        # content is inflated, so a reader of the directory (and a job service that publishes it) has the list while the digests run.
+        listing_seconds = round(time.monotonic() - began, 1)
+        listing_status = "complete" if listing_whole() else "partial" if cov["items"] else "failed"
+        read["pending_listed"] = cov["digests_pending"]
+        cov["phase"] = "listing %s; digests pending" % listing_status
+        cov["phases"] = {"listing": {"status": listing_status, "seconds": listing_seconds,
+                                     "files": ["members.tsv", "attributes.tsv", "image.json", "index.tsv"]},
+                         "digests": {"status": "pending", "files_pending": cov["digests_pending"]}}
+        write_index()
+        if phase_arg == "listing" or not cov["digests_pending"]:
+            if cov["digests_pending"]:
+                cov["phases"]["digests"]["status"] = "not_run"
+                cov["digests_pending_why"] = "the run was asked for the listing alone (RECIPE_PHASE=listing); run the recipe again without it for the digests"
+            else:
+                cov["phase"] = "listing %s; digests complete" % listing_status
+                cov["phases"]["digests"] = {"status": "complete", "seconds": 0.0, "files_pending": 0}
+        else:
+            cov["status"] = "partial"
+            cov["status_basis"] = ("the listing phase is done (%d items in %.1f s; members.tsv, attributes.tsv, image.json and index.tsv are whole); "
+                                   "the digest pass is running: no file's content has been compared with its recorded digests yet (check pending)"
+                                   % (cov["items"], listing_seconds))
+            cov["covered"] = covered_words(cov, whole_tree())
+            cov["not_covered"] = not_covered_words(cov, read["listing_cut"], read["broken_items"])
+            cov["integrity_status"] = "unverified"
+            write_cov()
+            del cov["integrity_status"]
+            # ---- phase 2: the digests ----------------------------------------------------------------------------------------
+            digests_began = time.monotonic()
+            read["in_digests"] = True
+            digest_pass(img, out_dir, cov, deadline)
+            read["in_digests"] = False
+            digests_status = "partial" if cov["unread_at_limit"] or cov["files"] - cov["checked"] > 0 else "complete"
+            cov["phase"] = "listing %s; digests %s" % (listing_status, digests_status)
+            cov["phases"]["digests"] = {"status": digests_status, "seconds": round(time.monotonic() - digests_began, 1),
+                                        "files_pending": cov["digests_pending"]}
+            if cov["unread_at_limit"]:
+                cov["limits_hit"].append("seconds: past the limit, the content of %d file(s) was not inflated, so their digests were not checked (check not-read); every item is still listed" % cov["unread_at_limit"])
+            write_index()
     finally:
-        img_source = img.source_name
         img.close()
-    if cov["unread_at_limit"]:
-        cov["limits_hit"].append("seconds: past the limit, the content of %d file(s) was not inflated, so their digests were not checked (check not-read); every item is still listed" % cov["unread_at_limit"])
-    with open(os.path.join(out_dir, "index.tsv"), "w", encoding="utf-8") as fh:
-        mism = len(cov["mismatches"])
-        fh.write("members.tsv\tAD1 item list (%d items: %d files, %d folders), paths under the data source name %s: n, type, path, path_b64, size, packed, mtime, tz, mode, uid, gid, link, locator, flags, atime, btime, md5, sha1, sha256, check, class; ad1_extract takes n or the locator%s\n"
-                 % (cov["items"], cov["files"], cov["folders"], esc(img_source) or "(none recorded)", "; %d file(s) whose content does not match the digests the image records (check mismatch)" % mism if mism else ""))
-        fh.write("attributes.tsv\tevery metadata entry of every item (a chain several items share is written once, then a same-chain row names the item): n, category, key, label, text\n")
-        fh.write("image.json\tthe AD1 segment and logical image headers, its segments, its data source name and its own metadata\n")
-    status = "complete" if not cov["limits_hit"] and not cov["errors"] else ("partial" if cov["items"] else "failed")
+    status = "complete" if not cov["limits_hit"] and not cov["errors"] and not cov["digests_pending"] else ("partial" if cov["items"] else "failed")
     return finish(status, 0 if status in ("complete", "partial") else 2)
 
 

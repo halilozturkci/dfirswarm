@@ -334,8 +334,12 @@ test("a review names the answer's parts by id and may add one the answer leaves 
   const f2 = ok(await rec(c.a0, { kind: "finding", ...F, value: "a tool", source: "the disk", evidence: "a key", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry.seq;
   const plain = ok(await rec(c.a1, { kind: "answer", section: "question:2", value: "a tool", reasoning: `E-${f2}`, ...HIGH, result: "established" })).entry;
   await covers(c.a0, "2");
-  refused(await P.attestEntry(c.a2, { seq: plain.seq, how: "re-read", ...review([{ id: "a", part: "the question", established: true, why: "w" }]) }), /carries no parts: answer_review\.parts\[\]\.id names an answer's part \(a\)/);
-  assert.ok((await P.attestEntry(c.a2, { seq: plain.seq, how: "re-read", ...ESTABLISHED })).ok);
+  // The id is left out and said: the part is weighed as written (it was a refusal that asked only for the id to be left out).
+  const idless = await P.attestEntry(c.a2, { seq: plain.seq, how: "re-read", ...review([{ id: "a", part: "the question", established: true, why: "w" }]) });
+  assert.ok(idless.ok, (idless as { reason?: string }).reason);
+  assert.match(String((idless as { note?: string }).note), /#\d+ carries no parts, so the ids in answer_review\.parts \(a\) name nothing: each part is weighed as you wrote it, without an id/);
+  assert.equal((idless as { line: P.LedgerAttestation }).line.answer_review?.parts[0]?.id, undefined);
+  assert.ok((await P.attestEntry(c.a3, { seq: plain.seq, how: "re-read", ...ESTABLISHED })).ok);
 });
 
 test("an open part the question does not ask: a review marks it not_asked, which caps nothing; the partial answer whose every other part is established is warned to be recorded established with it among its limitations, and never promoted", async () => {

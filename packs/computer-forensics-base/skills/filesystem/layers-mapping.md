@@ -2,6 +2,7 @@
 id: filesystem/layers-mapping
 title: Mapping layers and APFS
 when: mmls names the slot but fsstat cannot read it.
+card: A layer_describe descriptor lists the volumes fsstat read; a slot it shows unreadable inside LVM, a dynamic disk, a Storage Space or RAID needs a reader that rebuilds the layer from its metadata and every member. A signature inside a member is a candidate, not the extent mapping; a missing member is a limitation. Does not show: that a volume a reader opened is the one the system used.
 needs: []
 tools: [layer_describe]
 requires_host: [mmls, fsstat, fsapfsinfo, target-query]

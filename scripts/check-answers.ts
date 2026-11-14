@@ -65,6 +65,7 @@ import {
   answerSection,
   answerReviews,
   briefQuestions,
+  carriedCoverage,
   heldAsBestCandidate,
   ledgerGate,
   negativeReview,
@@ -449,8 +450,10 @@ export async function checkLedgerAnswers(sandbox: string, wanted: string[], exis
       continue;
     }
     // What the question's answer stands on: an entry naming it whose refs resolve now.
-    const naming = [...(a.support ?? []), ...(a.limitations ?? [])]
+    // A coverage record revised for the same questions and coverage stands in for the one cited (carriedCoverage).
+    const naming = [...new Set([...(a.support ?? []), ...(a.limitations ?? [])]
       .map((x) => bySeq.get(x.seq))
+      .map((e) => (e && replaced.has(e.seq) ? (carriedCoverage(e, bySeq, replaced) ?? undefined) : e)))]
       .filter((e): e is LedgerEntry => Boolean(e) && !replaced.has((e as LedgerEntry).seq) && ((e as LedgerEntry).answers ?? []).some((x) => sectionKey(x) === id));
     const why: string[] = [];
     let rests: string | null = null;

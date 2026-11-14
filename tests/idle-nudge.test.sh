@@ -210,6 +210,33 @@ HERDR_BIN="$TMP/bin/herdr" bash "$ROOT/scripts/idle-nudge.sh" --sandbox "$WS" --
 grep '^w0	' "$PROMPT_LOG" | grep -q 'You ended your turn 6 minutes ago' || fail "the echo of a prompt counted as the agent's activity: $(cat "$PROMPT_LOG")"
 pass "the echo of a nudge (hub_prompt) does not count as the agent's activity"
 
+# --- a seat silent in one long call --------------------------------------------
+# Run s082123: a seat sat in one shell call for 178 minutes. Herdr said working,
+# so it was never nudged, and nobody was told.
+LS="$TMP/longcall"
+mkdir -p "$LS"/{traces,done/agents,threads/main,inbox/l0,.pi-sessions/l0,locks}
+printf '{"swarm_id":"l","n":1,"agents":[{"id":"l0","role":"worker"}]}\n' > "$LS/team.json"
+printf '{"main": 0}\n' > "$LS/inbox/l0/cursors.json"
+: > "$LS/.pi-sessions/l0/session.jsonl"
+touch -t "$(date -v-3000S +%Y%m%d%H%M.%S 2>/dev/null || date -d '3000 seconds ago' +%Y%m%d%H%M.%S)" "$LS/.pi-sessions/l0/session.jsonl"
+{ row l0 post 3100 '{"tag":"result"}'; row l0 read 3000; } > "$LS/traces/events.jsonl"
+call_once() { HERDR_BIN="$TMP/bin/herdr-working" bash "$ROOT/scripts/idle-nudge.sh" --sandbox "$LS" --once --idle-sec 180 "$@" >/dev/null 2>&1; }
+: > "$PROMPT_LOG"
+call_once --call-stall-sec 3600
+ls "$LS"/threads/main/*.md >/dev/null 2>&1 && fail "a call inside --call-stall-sec was reported"
+call_once --call-stall-sec 2400
+post="$(cat "$LS"/threads/main/*.md 2>/dev/null || true)"
+grep -q "SEAT SILENT: l0 has been in one call for 50 minutes with nothing on its session or the trace" <<<"$post" || fail "a seat silent past --call-stall-sec was not said on the board: $post"
+grep -q '^tag: hold' <<<"$post" || fail "the report is not a hold post: $post"
+grep -q '"tool":"call_stalled","args":{"agent":"l0","by":"watchdog","limit_ms":2400000},"result":{"ok":true,"silent_seconds":' <<<"$(trace_of "$LS")" \
+  || fail "the silent seat is not on the trace: $(trace_of "$LS" | grep call_stalled)"
+call_once --call-stall-sec 2400
+[[ "$(ls "$LS"/threads/main/*.md | wc -l | tr -d ' ')" == 1 ]] || fail "the silent seat was reported twice in one silence"
+[[ "$(grep -c '^l0	' "$PROMPT_LOG")" -eq 0 ]] || fail "a working seat was prompted"
+call_once --call-stall-sec 0
+[[ "$(ls "$LS"/threads/main/*.md | wc -l | tr -d ' ')" == 1 ]] || fail "--call-stall-sec 0 should report nothing"
+pass "a seat working with nothing on its session or trace past --call-stall-sec is said once, on the board and the trace, and not prompted"
+
 # --- a seat whose compaction runs ---------------------------------------------
 # Pi refuses every prompt while a hand-off's compaction runs. On s6895a8 the
 # watchdog spent three nudges on s6895a803 there, and when the compaction never
@@ -239,8 +266,11 @@ comp_once --compact-stall-sec 300
 pass "a compaction open past --compact-stall-sec is said once, on the board and the trace, and the seat is not nudged"
 row k0 compact_done 100 '{"reason":"manual","via":"self"}' >> "$CS/traces/events.jsonl"
 comp_once --compact-stall-sec 300
+[[ "$(grep -c '^k0	' "$PROMPT_LOG")" -eq 0 ]] || fail "a seat 100 s out of its compaction was told it had ended its turn: $(cat "$PROMPT_LOG")"
+pass "a seat just out of a compaction is not told it ended its turn: its hand-off is on its way (--compact-grace-sec, 300 by default)"
+comp_once --compact-stall-sec 300 --compact-grace-sec 60
 [[ "$(grep -c '^k0	' "$PROMPT_LOG")" -eq 1 ]] || fail "a seat whose compaction ended is not watched again"
-pass "once the compaction ends the seat is watched like any other"
+pass "once the compaction ends and the grace is over the seat is watched like any other"
 
 # --- a local model's first turn ---------------------------------------------
 # The LM Studio seat on BelkaCTF #6 took about four minutes to answer its
@@ -457,5 +487,91 @@ nudge="$(grep '^a00	' "$PROMPT_LOG" | tail -1)"
 grep -q 'The ready lead the register ranks first is L-1 "Open the encrypted container"' <<<"$nudge" || fail "the nudge does not name the ready lead: $nudge"
 grep -q 'Questions nobody holds a lead for: question:1, question:2 (open: L-1)' <<<"$nudge" || fail "the nudge does not name the uncovered questions: $nudge"
 pass "an idle agent's nudge names the ready lead the register ranks first and the questions nobody holds"
+
+# --- a stop in progress ------------------------------------------------------
+# swarm.sh stop marks the hub directory first. On s17fdfe the watchdog went on
+# for a quarter of an hour of the stop: 28 prompts and a regroup to seats whose
+# VMs were gone.
+STOP_HUB="$TMP/stophub"; mkdir -p "$STOP_HUB"; : > "$STOP_HUB/.stop"
+: > "$PROMPT_LOG"
+touch -t "$old" "$CS/.pi-sessions/k0/session.jsonl"
+out="$(SWARM_HUB_DIR="$STOP_HUB" HERDR_BIN="$TMP/bin/herdr" bash "$ROOT/scripts/idle-nudge.sh" --sandbox "$CS" --once --idle-sec 30 --compact-grace-sec 1 2>&1)"; rc=$?
+[[ "$rc" -eq 0 ]] || fail "the watchdog did not exit cleanly when a stop had begun (exit $rc): $out"
+[[ "$(grep -c '^k0	' "$PROMPT_LOG")" -eq 0 ]] || fail "a seat was nudged while the run was being stopped"
+pass "once a stop has begun the watchdog exits and nudges nobody"
+
+# --- a seat whose process has ended --------------------------------------------
+# On s5d814f every seat's link closed after a 76 MB message and nothing started
+# them again. The watchdog says a seat is down, sets a session with a line too
+# large to load aside, starts the seat again in its pane, and after the tries
+# are spent records it dead; when all are, the run says so.
+DS="$TMP/down"; DH="$TMP/downhub"
+mkdir -p "$DS"/{traces,done/agents,threads/main,inbox/d0,inbox/d1,.pi-sessions/d0,.pi-sessions/d1,locks} "$DH"
+printf '{"swarm_id":"d","n":2,"agents":[{"id":"d0","role":"worker"},{"id":"d1","role":"worker"}]}\n' > "$DS/team.json"
+printf '{"n":2,"panes":["wD:p1","wD:p2"]}\n' > "$DS/layout.json"
+printf '{"main": 0}\n' > "$DS/inbox/d0/cursors.json"; printf '{"main": 0}\n' > "$DS/inbox/d1/cursors.json"
+: > "$DS/traces/events.jsonl"
+printf '#!/bin/sh\n' > "$DH/launch-d0.sh"; printf '#!/bin/sh\n' > "$DH/launch-d1.sh"
+printf '{"agents":{"d0":{"connected":false,"state":"gone"},"d1":{"connected":true,"state":"working"}}}\n' > "$DH/status.json"
+printf '{"type":"message","message":{"role":"user"}}\n' > "$DS/.pi-sessions/d0/s.jsonl"
+head -c 3000 /dev/zero | tr '\0' 'x' >> "$DS/.pi-sessions/d0/s.jsonl"; printf '\n' >> "$DS/.pi-sessions/d0/s.jsonl"
+printf '{"type":"message"}\n' > "$DS/.pi-sessions/d1/s.jsonl"
+PANE_LOG="$TMP/pane.log"; : > "$PANE_LOG"
+cat > "$TMP/bin/herdr-down" <<SH
+#!/bin/sh
+if [ "\$1" = pane ] && [ "\$2" = run ]; then printf '%s\t%s\n' "\$3" "\$4" >> "$PANE_LOG"; exit 0; fi
+exit 0
+SH
+chmod +x "$TMP/bin/herdr-down"
+down_once() { SWARM_HUB_DIR="$DH" SWARM_HUB_STATUS="$DH/status.json" SWARM_SEAT_DOWN_SEC="${1:-0}" SWARM_SEAT_LINE_MAX_BYTES=2000 SWARM_SEAT_RELAUNCH_MAX=2 HERDR_BIN="$TMP/bin/herdr-down" bash "$ROOT/scripts/idle-nudge.sh" --sandbox "$DS" --once --idle-sec 100000 2>&1; }
+out="$(down_once 100000)"
+[[ ! -s "$PANE_LOG" ]] || fail "a seat whose link had just gone down was started again at once: $(cat "$PANE_LOG")"
+grep -q '^d0 ' "$DS/traces/seat-down.state" || fail "the seat's link going down was not noted: $out"
+out="$(down_once 0)"
+grep -q "^wD:p1	sh $DH/launch-d0.sh$" "$PANE_LOG" || fail "the seat was not started again in its own pane: $(cat "$PANE_LOG") / $out"
+grep -q 'wD:p2' "$PANE_LOG" && fail "a seat whose link is up was started again"
+ls "$DS"/.pi-sessions/d0/retired-*/s.jsonl >/dev/null 2>&1 || fail "the session with a line too large to load was not set aside: $(ls -R "$DS/.pi-sessions/d0")"
+[[ -z "$(ls "$DS"/.pi-sessions/d0/*.jsonl 2>/dev/null)" ]] || fail "the oversized session is still the seat's newest"
+[[ -f "$DS/.pi-sessions/d1/s.jsonl" ]] || fail "another seat's session was touched"
+grep -q 'started d0 again in wD:p1 (attempt 1 of 2, with a fresh session' <<<"$out" || fail "the relaunch was not said: $out"
+pass "a seat whose link stays down is said and started again in its pane, with a fresh session when the old one cannot be loaded"
+out="$(down_once 0)"; out="$(down_once 0)"
+[[ -f "$DS/done/agents/d0.dead" ]] || fail "a seat that did not come back after its relaunches is not recorded dead: $out / $(cat "$DS/traces/seat-down.state")"
+[[ "$(grep -c 'launch-d0.sh' "$PANE_LOG")" -eq 2 ]] || fail "the seat was started $(grep -c 'launch-d0.sh' "$PANE_LOG") times, not the 2 it is allowed"
+[[ ! -e "$DS/done/ALL_AGENTS_DEAD" ]] || fail "the run was called dead while a seat is up"
+printf '{"agents":{"d0":{"connected":false},"d1":{"connected":true}}}\n' > "$DH/status.json"
+: > "$DS/done/agents/d1.done"
+out="$(down_once 0)"
+[[ -f "$DS/done/ALL_AGENTS_DEAD" ]] || fail "every seat is done or dead and the run does not say so: $out"
+pass "after its relaunches a seat is recorded dead, and a run whose seats are all done or dead says so"
+printf '{"agents":{"d0":{"connected":true},"d1":{"connected":true}}}\n' > "$DH/status.json"
+rm -f "$DS/done/agents/d0.dead" "$DS/done/ALL_AGENTS_DEAD" "$DS/done/agents/d1.done"; printf 'd0 1 1 1\n' > "$DS/traces/seat-down.state"
+out="$(down_once 0)"
+grep -q '^d0 ' "$DS/traces/seat-down.state" && fail "a seat that came back is still counted down"
+pass "a seat whose link came back is no longer counted"
+
+# --- the log says when --------------------------------------------------------
+: > "$PROMPT_LOG"
+out="$(SWARM_LOG_TS=1 HERDR_BIN="$TMP/bin/herdr" bash "$ROOT/scripts/idle-nudge.sh" --sandbox "$CS" --once --idle-sec 30 --compact-grace-sec 1 2>&1)"
+grep -Eq '^20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z idle-nudge: ' <<<"$out" || fail "a log line carries no time with SWARM_LOG_TS=1: $out"
+pass "each log line carries its time when the kickoff starts the watchdog (SWARM_LOG_TS=1)"
+
+# --- the launcher reads its last command before it runs it --------------------
+tail -1 "$ROOT/scripts/swarm.sh" | grep -qx 'main "\$@"; exit "\$?"' || fail "swarm.sh does not end with main and its exit on one line: $(tail -1 "$ROOT/scripts/swarm.sh")"
+EDIT="$TMP/edit.sh"
+printf '%s\n' 'main() { sleep 1; return 0; }' 'main "$@"; exit "$?"' > "$EDIT"
+bash "$EDIT" & edit_pid=$!
+sleep 0.3; printf '%s\n' ';; this is not shell' >> "$EDIT"; sed -i.bak '1s/^/# a line added while it runs\n/' "$EDIT" 2>/dev/null || true
+wait "$edit_pid"; rc=$?
+[[ "$rc" -eq 0 ]] || fail "a script edited while it ran ended with exit $rc"
+pass "a launcher edited while a command runs still ends with that command's exit status"
+
+# --- stop --ask-first: the seats are asked what they hold before the run is put away -----
+out="$(bash "$ROOT/scripts/swarm.sh" stop nosuch --ask-first 99 2>&1)" && fail "--ask-first 99 was taken: $out"
+grep -q 'stop: --ask-first takes minutes, 1 to 30' <<<"$out" || fail "$out"
+out="$(bash "$ROOT/scripts/swarm.sh" stop nosuch --ask-first 2 2>&1)" && fail "an unknown run was stopped: $out"
+grep -q 'Unknown swarm id: nosuch' <<<"$out" || fail "--ask-first 2 was not taken as an option: $out"
+grep -q 'THE RUN STOPS IN ${ask_first} MINUTE(S)' "$ROOT/scripts/swarm.sh" || fail "the stop does not tell the seats to record what they hold"
+pass "stop --ask-first N takes 1 to 30 minutes and tells the seats to record what they hold before the stop"
 
 echo "idle-nudge.test.sh: all checks passed"

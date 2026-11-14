@@ -3,6 +3,7 @@ id: capabilities/mapping
 title: Static capabilities and the evidence behind them
 when: You must assess what a sample could do without claiming it ran.
 needs: [triage/quarantine]
+card: Before capa, read what pe_info ({"path": "<sample>"}) says it did not read (managed code, delay imports): an unsupported input is a result, not a clean file. A capa match is a capability hypothesis about code, never that it ran; an ATT&CK label does not show the technique occurred. Keep the whole capa -j output with version and rule set; run it with secret_output: true and cite rule names and addresses, not matched strings. Few or no matches: write "no matches under this tool, rule set and scope"; neither "harmless" nor "packed" follows. Imports, strings and capa output are not independent evidence. Does not show: execution, reachability, intent.
 tools: [pe_info]
 requires_host: [capa, r2]
 ---

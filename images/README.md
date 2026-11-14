@@ -487,8 +487,12 @@ had: `steghide` (the base pack, so in every image), `aeskeyfind` (memory),
 `gcc` and `make` (memory and re: a C scanner over a memory image Python cannot
 hold, a decoder for a format no library reads; the compiler stays in the image,
 unlike the one a pip build installs and removes), and Pillow (the base pack's
-`requires/python.txt`). Left out on purpose: wordlist front ends for
-steganography, ImageMagick, ffmpeg and OpenCV (large, with
+`requires/python.txt`). From base pack 1.17.0 its `requires/host.json` also
+names ffmpeg (with ffprobe) and tesseract with one font set, each optional: a
+video's frames and a line of text in a picture had no reader in any image, and
+`frame_survey` and `glyph_strip` say so when the program is absent. They enter
+an image when it is next built. Left out on purpose: wordlist front ends for
+steganography, ImageMagick and OpenCV (large, with
 codecs and delegates and a policy of their own), and anything that reads
 credential artefacts out of Windows memory, which is decided separately.
 

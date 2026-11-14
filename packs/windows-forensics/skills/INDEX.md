@@ -4,6 +4,8 @@ Fetch a body with `skill("<id>")`. A body may name others; fetch those the same 
 
 Router: `windows/router`
 
+Core: `registry/clock`, `execution/prefetch`
+
 - `accounts/logons` Accounts, SIDs, groups: Account map; read a SID, RID or group.
 - `accounts/sessions` Account, session, person: Tie activity to an account or session.
 - `antiforensics/controls` Controls changed: Exclusion, disabled protection, deleted VM disk.
@@ -17,7 +19,7 @@ Router: `windows/router`
 - `artifacts/shellbags` ShellBags: Read BagMRU, RecentDocs, OpenSavePidlMRU.
 - `browser/artefacts` Browser profiles: Navigation, apart from sync.
 - `browser/downloads` Download provenance: Source of a file; did it finish?
-- `browser/strings` URL strings, SQLite: URL text in raw bytes; read a SQLite file.
+- `browser/strings` URL strings, SQLite, logins: Raw URL text; a SQLite file; saved passwords.
 - `browser/webcache` WebCache, index.dat: WebCacheV01.dat or index.dat files.
 - `execution/amcache` Amcache: Identify a file by path or hash.
 - `execution/esedb` ESE databases: Export tables from SRUDB.dat and others.

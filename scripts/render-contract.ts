@@ -1,6 +1,6 @@
 /**
  * The contract (SWARM.md) rendered from the template, the goal and what the
- * kickoff measured: the inputs, the evidence catalog, the programs, the
+ * kickoff measured: the inputs and the dumps at their top, the evidence catalog, the programs, the
  * pack and seeded tools, this host's guards, the tool jobs and job images,
  * the case line, the goal with how its checks are run, and the caps and
  * bail-out by the run's stop policy. Called by swarm.sh (render_contract)
@@ -21,6 +21,7 @@
 import { existsSync, lstatSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { kickoffDumpsNote, type KickoffDump, type MemoryPackDecision } from "./dump-members.ts";
 
 type Obj = Record<string, unknown>;
 const env = (k: string): string | undefined => process.env[k];
@@ -212,6 +213,19 @@ function inputsSection(sandbox: string): string {
   return `${lines.join("\n")}\n\n`;
 }
 
+/** The dumps the kickoff found at the top of the inputs (kickoff-dumps.json, swarm.sh kickoff_add_memory_pack), or nothing. */
+function dumpsSection(sandbox: string): string {
+  const file = join(sandbox, "kickoff-dumps.json");
+  if (!(isFile(file) && !isLink(file))) return "";
+  try {
+    const k = readJson(file) as { total?: number; bytes?: number; dumps?: KickoffDump[]; whole?: boolean; readers?: string[]; decision?: MemoryPackDecision };
+    const found = { total: Number(k.total) || 0, bytes: Number(k.bytes) || 0, dumps: Array.isArray(k.dumps) ? k.dumps : [], whole: k.whole !== false };
+    return kickoffDumpsNote(found, Array.isArray(k.readers) ? k.readers.map(String) : [], k.decision ?? "named") ?? "";
+  } catch {
+    return "";
+  }
+}
+
 function catalogSection(sandbox: string): string {
   const readme = join(sandbox, "catalog", "README.md");
   // A regular file only: never a link out of the run, never a FIFO.
@@ -231,7 +245,10 @@ function catalogSection(sandbox: string): string {
       ? "The inputs marked planned are being catalogued now, as jobs in worker VMs, while you work: you need not wait " +
         "for them. Each result is a generation under `catalog/gen/`, each change a new revision " +
         "(`catalog/revisions/<n>/index.md`), announced on the board; `catalog_search` reads the newest and says which " +
-        "revision it read. A disk's file list is also at `catalog/<input>/` once its generation is in.\n\n"
+        "revision it read. A disk's file list is also at `catalog/<input>/` once its generation is in. A large logical " +
+        "image is catalogued in two steps: its listing first (every member's path, size and times, within about a " +
+        "minute, posted as \"the listing\"), then the same catalogue with each member's digest, as a later revision. " +
+        "The listing is enough to find a member and name it to a tool: do not walk the image for a list of your own.\n\n"
       : "") +
     (growing && derivedOn
       ? "An archive or disk image a job makes, or a file you seal with `job_run import=`, is catalogued the same way on " +
@@ -274,6 +291,18 @@ function toolboxSection(sandbox: string): string {
       for (const t of (get(tb, "present", []) as Obj[])) lines.push(`| \`${pyStr(t.name)}\` | ${pyStr(get(t, "version", ""))} | ${pyStr(get(t, "use", ""))} |`);
       for (const t of (get(tb, "missing", []) as Obj[])) lines.push(`| \`${pyStr(t.name)}\` | missing | ${pyStr(get(t, "use", ""))} — install: \`${pyStr(get(t, "install", ""))}\` |`);
       section = `${lines.join("\n")}\n\n`;
+    }
+    // What the case requires done (the goal's requires: or --requires), and whether the check found a program that does it.
+    const req = get(tb, "requires", []) as Obj[];
+    if (Array.isArray(req) && req.length) {
+      const rows = ["The case requires these done; checked at kickoff where you run:", "", "| Capability | Met by | Use |", "| --- | --- | --- |"];
+      for (const r of req) {
+        const by = (get(r, "by", []) as unknown[]).map((b) => `\`${pyStr(b)}\``).join(", ");
+        const failed = (get(r, "present_but_failed_probe", []) as unknown[]).map((b) => `\`${pyStr(b)}\``).join(", ");
+        rows.push(`| ${pyStr(r.capability)} | ${get(r, "met") === true ? by : `not met${failed ? ` (${failed} is there and failed a test input)` : ` (none of ${(get(r, "wanted", []) as unknown[]).map((b) => `\`${pyStr(b)}\``).join(", ")})`}`} | ${pyStr(get(r, "use", ""))} |`);
+      }
+      if (req.some((r) => get(r, "met") !== true)) rows.push("", "A capability not met is not a reason to stop at not determinable: a program the operator supplies runs in a job (`job_run` with `programs`), and asking for one is an acquisition ask.");
+      section += `${rows.join("\n")}\n\n`;
     }
   }
   // In a VM the install paragraph is the host section's; this one describes the host's shared toolchain.
@@ -489,6 +518,9 @@ function hostSection(): string {
         "writes only its own $OUT, sealed into store/jobs/<id>/out/. It has the image's programs " +
         "(/etc/dfirswarm/tools.md) and nothing installed in an agent's own VM; with network=allowlist it reaches " +
         `${hosts}. An exit status of 0 is not the work's success: read what the job wrote, and its stderr. ` +
+        "A program the operator supplies (posted on the board as `TOOL SUPPLIED as import:mat-<n>`) runs in a job that " +
+        'names it in `programs: ["import:mat-<n>"]`: it is copied into an executable directory in the worker, its bin/ on ' +
+        "PATH and its lib/ on LD_LIBRARY_PATH; nothing runs where it stands in store/ or $OUT. " +
         "A file you made in your own VM is not an object of the run until it is sealed: `job_run import=work/<you>/<file>` " +
         "copies it into the store as it is now, and a finding then cites it as job:<id>/<file> in its refs. A whole " +
         "output the harness kept for you under tool-output/<you>/ is cited as `tool:<you>/<file>` (one line of the " +
@@ -562,7 +594,7 @@ export function renderContract(argv: string[]): void {
     ["{{SWARM_ID}}", swarmId],
   ] as const)
     text = replaceAll(text, token, value);
-  text = replaceAll(text, "{{INPUTS}}\n\n", inputsSection(sandbox));
+  text = replaceAll(text, "{{INPUTS}}\n\n", inputsSection(sandbox) + dumpsSection(sandbox));
   // Nobody is given a job here: the swarm divides the work itself.
   text = replaceAll(text, "{{SEATS}}\n\n", "");
   text = replaceAll(text, "{{CATALOG}}\n\n", catalogSection(sandbox));

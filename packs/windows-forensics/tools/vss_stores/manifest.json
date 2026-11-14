@@ -21,8 +21,14 @@
   "example": "{\"image\": \"inputs/disk.raw\", \"offset\": 1048576}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 14,
-  "sha256": "f46a228484826832eccd41630a59562f64c81078d8ae9cf7da81457b1ebca539",
+  "not_for": [
+    {
+      "what": "copying files out of a shadow copy",
+      "use": "vss_materialise"
+    }
+  ],
+  "version": 16,
+  "sha256": "5ef0f582291e26fff86aa03cc3f1c2bd46def32dbc40b999e9bb3a34eeb02106",
   "needs": [
     "fuse"
   ],

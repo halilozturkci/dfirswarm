@@ -249,7 +249,8 @@ test("with the real qpdf: an encryption filter qpdf does not support is said by 
     const r = await run(cwd, bin, "real.pdf", UNSUPPORTED_FILTER, { second_reading: true }, { PATH: process.env.PATH ?? "" });
     const sr = r.a.second_reading;
     assert.equal(sr.program, "qpdf");
-    assert.match(sr.version_output, /^qpdf version 11\.3\./);
+    // The image carries Debian 12's qpdf 11.3.0 (requires/host.json); the tool takes any release's version line, and Homebrew's 12.4.2 says the same here.
+    assert.match(sr.version_output, /^qpdf version \d+\.\d+\./);
     assert.equal(sr.status, "unsupported_by_the_program");
     assert.equal(sr.result.program_says, "unsupported_encryption_filter");
   });

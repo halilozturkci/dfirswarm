@@ -1,17 +1,36 @@
 #!/usr/bin/env python3
-"""ad1_extract: write the files and folders of an AccessData AD1 logical image
-out as a tree, each file inflated, hashed and checked against the digests the
-image records, with a manifest of what went where.
+"""ad1_extract: list, or write out as a tree, the files and folders of an
+AccessData AD1 logical image, each file inflated, hashed and checked against
+the digests the image records, with a manifest of what went where.
 
 Args, JSON on stdin:
   image     the image's first segment (.ad1); its further segments are
             looked for beside it (x.ad2, x.ad3, ...)
-  members   items from the catalogue's members.tsv for this image (the
-            ad1-items recipe): their numbers (n), or their locators
-            (ad1:item=<address>); a folder takes its subtree. Default: every
-            item. A listing that was partial (a segment missing, an item it
-            could not read) numbers the items after a break otherwise than a
-            whole read does; a locator names the same item in both
+  list      true: nothing of the image is written out. Every item (or, with
+            a selection, every item the same call without `list` would
+            write) is a row of out_dir/ad1_list.tsv:
+
+                n  locator  type  size  path
+
+            and the first `show` rows (default 50) are in the answer
+  members   items by their numbers (n), or their locators
+            (ad1:item=<address>), from a list or from the catalogue's
+            members.tsv for this image (the ad1-items recipe); a folder takes
+            its subtree. A listing that was partial (a segment missing, an
+            item it could not read) numbers the items after a break otherwise
+            than a whole read does; a locator names the same item in both. A
+            string of digits is taken as the number it spells, and said
+  members_file, column
+            the same selectors from a file: one a line, or a tab-separated
+            table whose `locator` column (else its `n` column, else the one
+            `column` names by header or by number from 1) holds them
+  paths     patterns matched against an item's whole path, letter case
+            aside: * is any run of characters ("/" included), ? is one
+  whole     true: every item. Without it, a call that names no members,
+            members_file or paths writes the tree of a small image, and for
+            one past whole_guard_items items (50,000) or whole_guard_bytes of
+            content (2 GiB) answers with the list and says the tree was not
+            written
   out_dir   where the tree goes, a new or empty directory. Default: in a job
             ($OUT set) $OUT/<image name less .ad1>, and in a job it must be
             inside $OUT; called directly, work/<AGENT_ID>/ad1/<image name
@@ -21,7 +40,10 @@ Args, JSON on stdin:
             written, wall clock): defaults 5,000,000, 5,000,000, 256 GiB and
             1500 s. A call that reaches one stops, keeps what it wrote, and
             says it was partial. What is held while it walks is the depth of
-            the tree, not the number of items
+            the tree, not the number of items. One over its ceiling is held
+            to the ceiling; in a job max_bytes is held to the room free where
+            $OUT is (less 64 MiB) and a relative out_dir is taken under $OUT:
+            each is said in the answer's adjusted
 
 Run it as a job (job_run tool=ad1_extract): what it writes is then sealed
 into the store, citable as job:<id>/<path>, and the derived catalogue offers
@@ -45,6 +67,30 @@ as <name>.partial, holding what was written, and says so: no truncated file
 keeps its own name, and the name it is kept under is one no other item
 of that directory holds, partial or whole. Nothing is written outside
 out_dir, under inputs/, or outside the run directory (in a job, its $OUT).
+
+The walk stops early. The image has no index: an item is found by walking
+the tree in its order. A call that names files by number or locator stops
+once every one of them is written; what comes after in the image's order is
+not looked at, and the image-wide checks (the tree read to its end, the data
+no item leads to) are not run. `walk`, `image_status` (not_checked) and
+`unreferenced_check` (not_run) say so. A call that takes a subtree (a folder
+that was named, an item with children) is walked to the end and checked: a
+subtree is whole only if the tree is, and a zeroed pointer cuts one with no
+error.
+
+The selection and the image are judged apart. `selection` (and `status` and
+`processing_status`, which are the same word) is of the items asked for;
+`image_status` (complete, partial, not_checked) is of the image. For items
+named one by one (files, by number or locator), what is wrong elsewhere in
+the image is in `image_status` and `image_errors` and leaves the selection
+complete, unless it may have cut what was asked for (an item that cannot be
+read right after one that was taken). For a folder's subtree, `paths`, the
+whole tree and a list, the image's errors are the call's: a list cannot be
+whole unless the tree is.
+
+In a job the answer names what it wrote as the store will cite it,
+job:<id>/<path under $OUT>, never by the staging path, which is gone once
+the job is sealed.
 
 Two statuses, kept apart. `processing_status` says whether every item asked
 for was written (complete), some were not (partial: a budget, an item that
@@ -220,6 +266,7 @@ import hashlib
 import json
 import os
 import sys
+import shutil
 import time
 import unicodedata
 from pathlib import Path
@@ -494,8 +541,18 @@ ITEMS_DEFAULT, ITEMS_CEILING = 5_000_000, 100_000_000
 WALK_DEFAULT, WALK_CEILING = 5_000_000, 100_000_000       # items looked at, taken or not
 BYTES_DEFAULT, BYTES_CEILING = 256 * 1024 ** 3, 1024 ** 4
 SECONDS_DEFAULT, SECONDS_CEILING = 1500, 1700          # the ceiling is inside the manifest's own 1800-second limit
+DISK_MARGIN = 64 * 1024 ** 2                           # left free where $OUT is, in a job
 RATIO_DEFAULT, RATIO_CEILING = 1000, 1_000_000         # bytes written per byte of the image's content read (the max_ratio archive_extract has)
 RATIO_SLACK = 1 << 20                                  # a file may expand this much past the ratio before it counts (a tiny image)
+LIST = "ad1_list.tsv"                                  # list: true, and a whole-tree call the guard answered with the list
+LIST_COLUMNS = ("n", "locator", "type", "size", "path")
+SHOWN_DEFAULT, SHOWN_CEILING = 50, 500                 # rows of the list given in the answer itself; every row is in the file
+GUARD_ITEMS_DEFAULT, GUARD_ITEMS_CEILING = 50_000, 100_000_000        # past either, a call that names nothing lists and asks for whole: true
+GUARD_BYTES_DEFAULT, GUARD_BYTES_CEILING = 2 * 1024 ** 3, 1024 ** 5
+MEMBERS_FILE_BYTES = 64 << 20                          # a members_file larger than this is refused
+GLOBS_MAX, GLOB_LENGTH = 64, 1024                      # patterns in paths, and the length of one
+GLOB_SLOW_PATH = 1024                                  # a pattern with ? costs its length times the path's: it is not tried on a longer path, and that is said
+HINTS = 16                                             # selectors that named nothing for which a "did you mean" is kept
 
 
 # --- AD1 reader ---------------------------------------------------------------
@@ -558,6 +615,7 @@ AD1_FOLD_AT = 1 << 16             # reached-range entries held before they are m
 AD1_SLACK = 0                     # non-zero bytes of the data nothing may lead to before the walk is not called whole
 AD1_GAP_BLOCK = 1 << 20            # bytes of unreached data read at a time: the clock is looked at before each block
 AD1_GAPS_LISTED = 20              # gaps named one by one in the report: those with non-zero bytes, or not read to their end
+AD1_AHEAD = 4096                  # bytes taken at once for a small read: an item's header, name and metadata entries lie one after the other
 AD1_GUID_TABLES = (b"ATTRGUID", b"LOCSGUID")   # the two tables FTK Imager leaves after the items; the header points at them
 
 
@@ -645,6 +703,7 @@ class AD1:
         self._reached, self._lo, self._hi = _array.array("Q"), _array.array("Q"), _array.array("Q")
         self._chains, self._chains_held = {}, 0
         self.packed_read = 0          # compressed bytes of content read so far, for a ratio against what is written
+        self._ahead = (0, b"")        # the last small read, with the bytes after it: (address, bytes)
         self.gap_report = None
         if self.read(0, 14) != AD1_LOGICAL_MAGIC:
             raise AD1Error("no ADLOGICALIMAGE header at the start of the image's data")
@@ -687,6 +746,20 @@ class AD1:
         """n bytes of the image's data from addr, across segments."""
         if addr < 0 or n < 0 or addr + n > self.end:
             raise AD1Error("address %d (+%d) is outside the image's data" % (addr, n))
+        if n <= AD1_AHEAD:
+            # A small read is answered from the last one when it lies inside it, and else takes AD1_AHEAD bytes in one read of the one
+            # segment it starts in: the same bytes, a twelfth of the reads (a walk of 400,000 items made 13 million). Anything that read
+            # cannot answer whole (a segment that is not there, the end of a segment, a file cut short) is left to the exact read below,
+            # which names it.
+            at, held = self._ahead
+            if at <= addr and addr + n <= at + len(held):
+                return held[addr - at:addr - at + n]
+            k = _bisect.bisect_right(self.starts, addr) - 1
+            if self.paths[k] is not None:
+                got = _os.pread(self._fh(k).fileno(), min(AD1_AHEAD, self.starts[k + 1] - addr), self.margins[k] + addr - self.starts[k])
+                if len(got) >= n:
+                    self._ahead = (addr, got)
+                    return got[:n]
         out = bytearray()
         while len(out) < n:
             at = addr + len(out)
@@ -847,11 +920,15 @@ class AD1:
         children, then its next sibling), numbered from 0, with its path
         (names joined by "/"). A node that cannot be read ends its chain,
         and is named in walk_errors: a numbering after it is not the
-        numbering of a whole read, and an item's address (locator) is."""
+        numbering of a whole read, and an item's address (locator) is.
+        FTK Imager writes the address of the item's parent folder (0 for a
+        top-level item) as 8 bytes after its name: those count as reached
+        when they hold that address, and are left to the unreferenced-data
+        check (non-zero bytes nothing accounts for) when they do not."""
         seen, n = set(), 0
-        stack = [(self.first_item, b"", None, 0)] if self.first_item else []
+        stack = [(self.first_item, b"", None, 0, 0)] if self.first_item else []
         while stack:
-            addr, parent, parent_n, depth = stack.pop()
+            addr, parent, parent_n, depth, parent_addr = stack.pop()
             if addr in seen:
                 self.walk_errors.append("the tree loops back to item address %d under %s: not followed" % (addr, ad1_where(parent)))
                 continue
@@ -866,6 +943,8 @@ class AD1:
                 name = self.read(addr + 48, name_len)
                 meta = self.metadata(meta)
                 self._reach(addr, 48 + name_len)
+                if addr + 56 + name_len <= self.end and _struct.unpack("<Q", self.read(addr + 48 + name_len, 8))[0] == parent_addr:
+                    self._reach(addr + 48 + name_len, 8)
                 if table:
                     self._reach_table(table, size)
             except AD1Error as e:
@@ -876,9 +955,9 @@ class AD1:
                     "size": size, "table": table, "meta": meta}
             n += 1
             if nxt:
-                stack.append((nxt, parent, parent_n, depth))
+                stack.append((nxt, parent, parent_n, depth, parent_addr))
             if child:
-                stack.append((child, path, item["n"], depth + 1))
+                stack.append((child, path, item["n"], depth + 1, addr))
             yield item
 
     def chunks(self, item):
@@ -1027,24 +1106,25 @@ def esc(raw):
     return "".join(out)
 
 
-def resolve_output(out):
+def resolve_output(out, said):
     """Where `out` really lands, links resolved first: in a job, inside its
     $OUT (the one place a job writes); called directly, inside the run
-    directory (not the run directory itself); never under inputs/."""
+    directory (not the run directory itself); never under inputs/. `said` is
+    what a refusal calls it: the caller's words, never a staging path."""
     root = Path.cwd().resolve()
     try:
         dest = Path(out).resolve() if Path(out).is_absolute() else (root / out).resolve()
     except (OSError, RuntimeError, ValueError) as exc:     # a symlink loop, a name too long, a lone surrogate
-        fail("out_dir cannot be resolved: %s" % (exc.__class__.__name__ if not getattr(exc, "strerror", None) else exc.strerror), out_dir=str(out))
+        fail("out_dir cannot be resolved: %s" % (exc.__class__.__name__ if not getattr(exc, "strerror", None) else exc.strerror), out_dir=said)
     if os.environ.get("OUT") and os.environ.get("JOB_ID"):
         job_out = Path(os.environ["OUT"]).resolve()
         if dest != job_out and job_out not in dest.parents:
-            fail("in a job out_dir must be inside $OUT, the one place a job writes ({OUT}/<name>)", out_dir=str(out))
+            fail("in a job out_dir must be inside $OUT, the one place a job writes ({OUT}/<name>)", out_dir=said)
     elif dest == root or root not in dest.parents:
-        fail("out_dir must be inside the run directory, not the run directory itself", out_dir=str(out))
+        fail("out_dir must be inside the run directory, not the run directory itself", out_dir=said)
     inputs = root / "inputs"
     if dest == inputs or inputs in dest.parents:
-        fail("out_dir cannot be under inputs/", out_dir=str(out))
+        fail("out_dir cannot be under inputs/", out_dir=said)
     return dest
 
 
@@ -1085,21 +1165,279 @@ def unique(used, name, n):
     return cand
 
 
-def parse_members(members):
-    """The item numbers and the item addresses a members list names."""
+def selector(text):
+    """("n", number) or ("addr", address) for a selector written as text, or None: a locator (ad1:item=<address>) or a string of digits."""
+    if not isinstance(text, str) or len(text) > 40 or not text.isascii():
+        return None
+    if text.startswith("ad1:item=") and text[9:].isdecimal():
+        return "addr", int(text[9:])
+    if text.isdecimal():
+        return "n", int(text)
+    return None
+
+
+def parse_members(members, adjusted):
+    """The item numbers and the item addresses a members list names. A string of digits ("52330") is taken as the item number it spells,
+    and said in `adjusted`: it was refused, and a seat sent the same call again with the number (the runs of one case, eight jobs)."""
     if members is None:
-        return None, None
+        return set(), set()
     if not isinstance(members, list) or not members:
-        fail("members is a non-empty list of item numbers (n) or locators (ad1:item=<address>) from the catalogue's members.tsv; leave it out to take every item")
-    ns, addrs = set(), set()
+        fail("members is a non-empty list of item numbers (n) or locators (ad1:item=<address>) from the catalogue's members.tsv or from a list: true call; "
+             "leave it out and name paths or members_file, or pass whole: true for every item")
+    ns, addrs, quoted = set(), set(), []
     for m in members:
         if isinstance(m, int) and not isinstance(m, bool) and m >= 0:
             ns.add(m)
-        elif isinstance(m, str) and m.startswith("ad1:item=") and m[9:].isascii() and m[9:].isdecimal() and len(m) <= 40:
-            addrs.add(int(m[9:]))
+            continue
+        got = selector(m)
+        if got is None:
+            fail("members holds %s: an item number (n, as a number: 1234) or a locator (the text ad1:item=<address>) from members.tsv or from a list: true call" % json.dumps(m)[:200])
+        if got[0] == "n":
+            quoted.append(m)
+            ns.add(got[1])
         else:
-            fail("members holds %s: an item number (n) or a locator (ad1:item=<address>) from members.tsv" % json.dumps(m))
+            addrs.add(got[1])
+    if quoted:
+        adjusted.append("%d member(s) were given as text made of digits (%s%s): each was taken as an item number (n), as the number itself is; an item's address is written ad1:item=<address>"
+                        % (len(quoted), ", ".join(json.dumps(q) for q in quoted[:5]), ", ..." if len(quoted) > 5 else ""))
     return ns, addrs
+
+
+def read_members_file(path, column):
+    """(numbers, addresses, what was read) of a members file: one selector a line, or a tab-separated table one of whose columns holds them
+    (a members.tsv, an ad1_list.tsv, a catalog_search result). `column` is a header's name or a column's number from 1; without it the
+    column named locator is taken, else the one named n, else the only column there is. Lines that are empty or start with # are passed
+    over. Every value must be a locator or a number: one that is neither is named with its line, and nothing is extracted."""
+    if not isinstance(path, str) or not path or "\0" in path:
+        fail("members_file is the path of a file of selectors: one a line, or a tab-separated table (name its column with column)")
+    if column is not None and (isinstance(column, bool) or not isinstance(column, (str, int)) or column == "" or (isinstance(column, int) and column < 1)):
+        fail("column is a header's name (locator, n) or a column's number from 1", column=str(column)[:100])
+    try:
+        with open_regular(path) as fh:
+            if os.fstat(fh.fileno()).st_size > MEMBERS_FILE_BYTES:
+                fail("members_file is larger than %d bytes: name fewer items, or a folder (it takes its subtree)" % MEMBERS_FILE_BYTES, members_file=path)
+            data = fh.read(MEMBERS_FILE_BYTES + 1)
+    except OSError as e:
+        fail("members_file cannot be read: %s" % (e.strerror or e), members_file=path)
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        fail("members_file is not UTF-8 text", members_file=path)
+    rows = [(k, line) for k, line in enumerate(text.split("\n"), 1) if line.strip() and not line.lstrip().startswith("#")]
+    if not rows:
+        fail("members_file holds no selector: every line is empty or a comment", members_file=path)
+    first = [c.strip() for c in rows[0][1].rstrip("\r").split("\t")]
+    header = None
+    if isinstance(column, str) and column not in first and column.isascii() and column.isdecimal() and int(column) >= 1:
+        column = int(column)               # "2", where no header is named 2: the second column
+    if isinstance(column, str):
+        if column not in first:
+            fail("members_file has no column named %s in its first line (it has: %s)" % (json.dumps(column), ", ".join(json.dumps(c) for c in first[:30])), members_file=path)
+        at, header = first.index(column), column
+    elif isinstance(column, int):
+        at = column - 1
+        if at >= len(first):
+            fail("members_file has %d column(s) in its first line, and column %d was asked for" % (len(first), column), members_file=path)
+        header = first[at] if selector(first[at]) is None else None
+    elif "locator" in first:
+        at, header = first.index("locator"), "locator"
+    elif "n" in first:
+        at, header = first.index("n"), "n"
+    elif len(first) == 1:
+        at, header = 0, (first[0] if selector(first[0]) is None else None)
+    else:
+        fail("members_file has %d columns and none is named locator or n: name the one that holds the selectors (column: a header's name, or its number from 1)" % len(first), members_file=path)
+    ns, addrs, bad = set(), set(), []
+    for k, line in rows[1:] if header is not None else rows:
+        cells = line.rstrip("\r").split("\t")
+        got = selector(cells[at].strip()) if at < len(cells) else None
+        if got is None:
+            if len(bad) < 5:
+                bad.append("line %d: %s" % (k, json.dumps(cells[at].strip() if at < len(cells) else "")[:80]))
+            continue
+        (ns if got[0] == "n" else addrs).add(got[1])
+    if bad:
+        fail("members_file holds values that are neither a locator (ad1:item=<address>) nor an item number: %s; nothing was extracted" % "; ".join(bad), members_file=path)
+    if not ns and not addrs:
+        fail("members_file holds a header and no selector under it", members_file=path)
+    return ns, addrs, {"path": path, "column": header if header is not None else at + 1, "locators": len(addrs), "numbers": len(ns)}
+
+
+def _wild(pat, text):
+    """Whether `text` matches `pat`, where * is any run of characters and ? is one: one pass with a step back to the last *, so the cost
+    is at most the two lengths multiplied, whatever the pattern."""
+    p = t = mark = 0
+    star = -1
+    while t < len(text):
+        if p < len(pat) and (pat[p] == "?" or pat[p] == text[t]):
+            p += 1
+            t += 1
+        elif p < len(pat) and pat[p] == "*":
+            star, mark = p, t
+            p += 1
+        elif star != -1:
+            p = star + 1
+            mark += 1
+            t = mark
+        else:
+            return False
+    while p < len(pat) and pat[p] == "*":
+        p += 1
+    return p == len(pat)
+
+
+def compile_glob(pattern):
+    """A test of a path (already folded) against one pattern of `paths`: * is any run of characters, "/" included, ? is one character,
+    letter case is not told apart, and the whole path must match. No regular expression is built: a pattern cannot cost more than
+    its length times the path's."""
+    pat = pattern.casefold()
+    if "?" in pat:
+        return lambda text: _wild(pat, text)
+    parts = pat.split("*")
+    if len(parts) == 1:
+        return lambda text: text == pat
+    first, last, middle = parts[0], parts[-1], [p for p in parts[1:-1] if p]
+
+    def match(text):
+        if len(text) < len(first) + len(last) or not text.startswith(first) or not text.endswith(last):
+            return False
+        pos, end = len(first), len(text) - len(last)
+        for m in middle:
+            i = text.find(m, pos, end)
+            if i < 0:
+                return False
+            pos = i + len(m)
+        return True
+    return match
+
+
+def parse_paths(paths):
+    if paths is None:
+        return []
+    if not isinstance(paths, list) or not paths or len(paths) > GLOBS_MAX or not all(isinstance(p, str) and p and len(p) <= GLOB_LENGTH and "\0" not in p for p in paths):
+        fail("paths is a list of 1 to %d patterns of at most %d characters, matched against an item's whole path as the list shows it (* any run of characters, ? one; letter case aside): "
+             "[\"*/Users/*/NTUSER.DAT\", \"*.evtx\"]" % (GLOBS_MAX, GLOB_LENGTH))
+    return paths
+
+
+class Selection:
+    """What a call asked for: item numbers, item addresses, path patterns. look() says whether an item is named by one of them, and keeps
+    what an answer about a selector that names nothing needs: the addresses either side of a locator, the item whose number a locator's
+    value is, the item whose address a number is (HINTS of each at most). A selection of numbers and addresses alone is explicit: once
+    every one of them was met, nothing later in the image's order can belong to it but the subtree of the last, so the walk can stop."""
+
+    def __init__(self, ns, addrs, patterns):
+        self.ns, self.addrs, self.patterns = ns, addrs, patterns
+        self.globs = [compile_glob(p) for p in patterns]
+        self.slow = ["?" in p for p in patterns]
+        self.not_tried = 0         # items whose path was too long for a pattern with ? to be tried on it
+        self.any = bool(ns or addrs or patterns)
+        self.explicit = bool(ns or addrs) and not patterns
+        self.seen_n, self.seen_addr, self.glob_hits = set(), set(), [0] * len(patterns)
+        self.near = {a: [None, None] for a in sorted(addrs)[:HINTS]}
+        self.number_of = {}        # a wanted address X that is also an item's number: X -> that item's path
+        self.address_of = {}       # a wanted number X that is also an item's address: X -> (that item's number, its path)
+
+    def look(self, item):
+        n, x, named = item["n"], item["addr"], False
+        if n in self.ns:
+            self.seen_n.add(n)
+            named = True
+        if x in self.addrs:
+            self.seen_addr.add(x)
+            named = True
+        if n in self.addrs and len(self.number_of) < HINTS:
+            self.number_of[n] = esc(item["path"])
+        if x in self.ns and len(self.address_of) < HINTS:
+            self.address_of[x] = (n, esc(item["path"]))
+        # The addresses either side of each locator asked for, for one the image does not hold (two numbers each).
+        for a, v in self.near.items():
+            if x < a and (v[0] is None or x > v[0]):
+                v[0] = x
+            elif x > a and (v[1] is None or x < v[1]):
+                v[1] = x
+        if self.globs:
+            text = esc(item["path"]).casefold()
+            if len(text) > GLOB_SLOW_PATH and any(self.slow):
+                self.not_tried += 1
+            for i, g in enumerate(self.globs):
+                if self.slow[i] and len(text) > GLOB_SLOW_PATH:
+                    continue
+                if g(text):
+                    self.glob_hits[i] += 1
+                    named = True
+        return named
+
+    def done(self):
+        return self.explicit and len(self.seen_n) == len(self.ns) and len(self.seen_addr) == len(self.addrs)
+
+    def missing(self, to_end, walked):
+        """(errors, how many of them are only a stop's): the selectors that named nothing. After a stop the walk did not reach the end
+        of the image: an item not seen is not an item that is not there, and is not claimed to be absent."""
+        errors, soft = [], 0
+        absent, gone = sorted(self.ns - self.seen_n), sorted(self.addrs - self.seen_addr)
+        if absent:
+            soft += 0 if to_end else 1
+            hint = ""
+            if to_end:
+                hint = ". A bare number is an item number (n), counted from 0 in the image's order (the n column of members.tsv or of a list: true call)"
+                also = [(a, self.address_of[a]) for a in absent if a in self.address_of]
+                if also:
+                    hint += "; " + "; ".join("%d is the address of item number %d (%s): did you mean the locator \"ad1:item=%d\"?" % (a, n, p, a) for a, (n, p) in also[:HINTS])
+            errors.append(("no item %s in this read of the image (it listed %d items)" + hint if to_end else
+                           "item %s was not reached before the call stopped (it had looked at %d items): it is not claimed absent") % (", ".join(map(str, absent[:50])) + (" and %d more" % (len(absent) - 50) if len(absent) > 50 else ""), walked))
+        if gone:
+            soft += 0 if to_end else 1
+            # A locator is an item's address as the catalogue's members.tsv lists it, not an offset in a segment file (a seat of the run
+            # s68ce47 worked one out from a raw offset) and not the item's number (six jobs of the run s5d814f gave ad1:item=<n>): the item
+            # whose number the value is, and the nearest addresses the walk met, are named.
+            near = ""
+            if to_end:
+                meant = [(a, self.number_of[a]) for a in gone if a in self.number_of]
+                if meant:
+                    near += "; " + "; ".join("%d is a valid item number: did you mean item number %d (%s)? Pass it as the number %d, not as a locator" % (a, a, p, a) for a, p in meant[:HINTS])
+                picks = sorted({x for a in gone if a in self.near for x in self.near[a] if x is not None})
+                near += ("; the nearest items this read holds are at %s" % ", ".join("ad1:item=%d" % x for x in picks) if picks else "") + \
+                    ". A locator is an item's address as the ad1-items generation's members.tsv lists it (catalog_search which=members) or as a list: true call does, not an item number and not an offset in a segment file"
+            shown = ", ".join("ad1:item=%d" % a for a in gone[:50]) + (" and %d more" % (len(gone) - 50) if len(gone) > 50 else "")
+            errors.append(("no item at %s in this read of the image" + near if to_end else "the item at %s was not reached before the call stopped: it is not claimed absent") % shown)
+        # A pattern with ? that was not tried on every path is not said to match nothing: what it was not tried on is said below.
+        empty = [self.patterns[i] for i, hits in enumerate(self.glob_hits) if not hits and not (self.slow[i] and self.not_tried)]
+        if empty:
+            soft += 0 if to_end else 1
+            shown = ", ".join(json.dumps(p) for p in empty[:10]) + (" and %d more" % (len(empty) - 10) if len(empty) > 10 else "")
+            errors.append(("no item's path matches %s in this read of the image (it listed %d items); a pattern is matched against the whole path as the list shows it, letter case aside: "
+                           "* is any run of characters, / included, and ? is one" if to_end else
+                           "nothing had matched %s when the call stopped (it had looked at %d items): it is not claimed to match nothing") % (shown, walked))
+        if self.not_tried:
+            errors.append("%d item(s) have a path longer than %d characters, on which the pattern(s) with ? were not tried (a pattern of * alone is tried on every path): "
+                          "they are not claimed not to match; name them by number or locator" % (self.not_tried, GLOB_SLOW_PATH))
+        return errors, soft
+
+    def counts(self):
+        out = {"numbers": len(self.ns), "locators": len(self.addrs), "paths": len(self.patterns), "numbers_found": len(self.seen_n), "locators_found": len(self.seen_addr)}
+        if self.patterns:
+            out["paths_matched"] = {p: h for p, h in list(zip(self.patterns, self.glob_hits))[:GLOBS_MAX]}
+        return out
+
+
+def kind_of(item):
+    return "dir" if item["type"] == AD1_FOLDER else "file" if item["type"] in (AD1_FILE, AD1_UNKNOWN_FILE, AD1_DELETED) else "other:%d" % item["type"]
+
+
+def image_size_class(img, most_items, most_bytes, deadline):
+    """Whether the image is small enough to be written out whole without being asked twice: "small" (the tree ended within both
+    thresholds), "large" (it went past one: the walk stops there) or "unknown" (the clock ran out first). Nothing is written."""
+    items = size = 0
+    for item in img.walk():
+        items += 1
+        if item["type"] != AD1_FOLDER:
+            size += item["size"]
+        if items > most_items or size > most_bytes:
+            return "large"
+        if time.monotonic() > deadline:       # at every item: one item of a hostile image can cost a metadata chain's worth of reads
+            return "unknown"
+    return "small"
 
 
 class Budget(Exception):
@@ -1186,52 +1524,140 @@ def main():
     image = args.get("image")
     if not isinstance(image, str) or not image or "\0" in image:
         fail("image is required: the AD1 image's first segment (.ad1)")
-    want_n, want_addr = parse_members(args.get("members"))
+    for key in ("list", "whole"):
+        if args.get(key) is not None and not isinstance(args.get(key), bool):
+            fail("%s is true or false" % key, **{key: str(args.get(key))[:100]})
+    list_mode, whole = args.get("list") is True, args.get("whole") is True
+    # What the call took otherwise than it was asked, and why: said in the answer (adjusted), never silent.
+    adjusted = []
+    want_n, want_addr = parse_members(args.get("members"), adjusted)
+    members_file = None
+    if args.get("members_file") is not None:
+        file_n, file_addr, members_file = read_members_file(args.get("members_file"), args.get("column"))
+        want_n, want_addr = want_n | file_n, want_addr | file_addr
+    elif args.get("column") is not None:
+        fail("column goes with members_file: it names the column of that file that holds the selectors")
+    sel = Selection(want_n, want_addr, parse_paths(args.get("paths")))
     budgets = {}
-    for key, default, ceiling in (("max_items", ITEMS_DEFAULT, ITEMS_CEILING), ("max_walk", WALK_DEFAULT, WALK_CEILING), ("max_bytes", BYTES_DEFAULT, BYTES_CEILING), ("max_ratio", RATIO_DEFAULT, RATIO_CEILING), ("max_seconds", SECONDS_DEFAULT, SECONDS_CEILING)):
+    for key, default, ceiling in (("max_items", ITEMS_DEFAULT, ITEMS_CEILING), ("max_walk", WALK_DEFAULT, WALK_CEILING), ("max_bytes", BYTES_DEFAULT, BYTES_CEILING), ("max_ratio", RATIO_DEFAULT, RATIO_CEILING), ("max_seconds", SECONDS_DEFAULT, SECONDS_CEILING),
+                                  ("show", SHOWN_DEFAULT, SHOWN_CEILING), ("whole_guard_items", GUARD_ITEMS_DEFAULT, GUARD_ITEMS_CEILING), ("whole_guard_bytes", GUARD_BYTES_DEFAULT, GUARD_BYTES_CEILING)):
         v = args.get(key, default)
+        # Over the ceiling is held to it and said: a seat that asked for 3000 seconds was refused and sent the call again (the run s571aaa).
+        if isinstance(v, int) and not isinstance(v, bool) and v > ceiling:
+            adjusted.append("%s %d is over this tool's ceiling of %d: held to %d" % (key, v, ceiling, ceiling))
+            v = ceiling
         if not isinstance(v, int) or isinstance(v, bool) or not 1 <= v <= ceiling:
             fail("%s is a whole number from 1 to %d" % (key, ceiling), **{key: v})
         budgets[key] = v
+    show, guard_items, guard_bytes = budgets.pop("show"), budgets.pop("whole_guard_items"), budgets.pop("whole_guard_bytes")
     started = time.monotonic()
     deadline = started + budgets["max_seconds"]
     stem = os.path.basename(image)
     if stem.lower().endswith(".ad1"):
         stem = stem[:-4]
     in_job = bool(os.environ.get("OUT") and os.environ.get("JOB_ID"))
-    out_arg = args.get("out_dir") or (os.path.join(os.environ["OUT"], stem) if in_job else os.path.join("work", os.environ.get("AGENT_ID") or "ad1", "ad1", stem))
+    given = args.get("out_dir")
+    out_arg = given or (os.path.join(os.environ["OUT"], stem) if in_job else os.path.join("work", os.environ.get("AGENT_ID") or "ad1", "ad1", stem))
     if not isinstance(out_arg, str) or "\0" in out_arg:
         fail("out_dir is a string without a NUL byte: a new or empty directory", out_dir=str(out_arg)[:200])
+    # What an answer calls the directory before it is resolved: the caller's own words, or the default by its name ($OUT is a staging
+    # directory that is gone once the job is sealed, so its path is never printed).
+    out_said = given if given else ("$OUT/%s" % stem if in_job else out_arg)
+    # In a job a relative out_dir ("tree") is taken under $OUT, the one place a job writes, and said (it was refused, on the run s571aaa).
+    if in_job and not os.path.isabs(out_arg):
+        adjusted.append("out_dir %r is relative: in a job it is taken under $OUT, as $OUT/%s (job:%s/%s once the job is sealed)" % (out_arg, out_arg, os.environ["JOB_ID"], out_arg))
+        out_arg = os.path.join(os.environ["OUT"], out_arg)
+    # In a job the bytes written are held to the room where $OUT is, less a margin: a whole-image call that ran into a full disk
+    # stopped part way through a file with an error (three jobs of the runs of one case); held here it stops by its budget, between
+    # items, keeping what it wrote, and says so.
+    if in_job:
+        try:
+            room = shutil.disk_usage(os.environ["OUT"]).free - DISK_MARGIN
+        except OSError:
+            room = None
+        if room is not None and budgets["max_bytes"] > max(room, 1):
+            adjusted.append("max_bytes %d is more than the %d bytes free where $OUT is, less a margin of %d: held to %d, so the call stops by its budget instead of filling the disk; name fewer members to take the rest in another job"
+                            % (budgets["max_bytes"], room + DISK_MARGIN, DISK_MARGIN, max(room, 1)))
+            budgets["max_bytes"] = max(room, 1)
     try:
-        out = resolve_output(out_arg)
+        out = resolve_output(out_arg, out_said)
         holds_something = out.exists() and (not out.is_dir() or any(out.iterdir()))
     except OSError as e:
-        fail("out_dir cannot be used: %s" % (e.strerror or e), out_dir=out_arg[:200])
+        fail("out_dir cannot be used: %s" % (e.strerror or e), out_dir=out_said[:200])
     if holds_something:
-        fail("out_dir already holds something: name a new or empty directory", out_dir=str(out_arg))
+        fail("out_dir already holds something: name a new or empty directory", out_dir=out_said)
+    # How the answer names what it wrote. In a job the files are sealed into the store and cited as job:<id>/<path under $OUT>: that
+    # form is printed, never the staging path, which no longer exists when the answer is read (the runs s8be1c2 and s5d814f). Called
+    # directly, the path as the caller gave it.
+    if in_job:
+        under = out.relative_to(Path(os.environ["OUT"]).resolve()).as_posix()
+        out_shown = "job:%s" % os.environ["JOB_ID"] + ("" if under == "." else "/" + under)
+        out_relative = "" if under == "." else under
+    else:
+        out_shown, out_relative = str(out_arg), None
+
+    def where(name):
+        return out_shown + "/" + name if in_job else os.path.join(out_shown, name)
+
     try:
         img = AD1(image)
     except AD1Error as e:
         fail("not an AD1 image this tool reads: %s" % e, image=image)
     except OSError as e:
         fail("cannot read %s: %s" % (image, e.strerror or e))
-    errors = list(img.errors)
+    # A call that names nothing would write every item. On a small image it does; on a large one (more than whole_guard_items items or
+    # whole_guard_bytes bytes of content) that is hours and the image's size again on disk, asked for by leaving a parameter out: the
+    # call answers with the list instead, and says that whole: true writes the tree (the runs of one case: six seats each walked and
+    # wrote the whole 400,000-item image).
+    guarded = None
+    if not sel.any and not list_mode and not whole:
+        try:
+            size_class = image_size_class(img, guard_items, guard_bytes, deadline)
+        finally:
+            img.close()
+        if size_class != "small":
+            list_mode = True
+            guarded = ("the image holds more than %d items or %d bytes of content" % (guard_items, guard_bytes) if size_class == "large" else
+                       "the image could not be sized within the time budget of %d seconds" % budgets["max_seconds"]) + \
+                ", and the call named no members, paths or members_file: nothing was extracted and the image's items are listed instead. Take what you need by members, paths or members_file; " \
+                "whole: true writes the whole tree (whole_guard_items and whole_guard_bytes set where this answer begins)"
+        try:
+            img = AD1(image)              # the walk begins again, with nothing counted twice
+        except (AD1Error, OSError) as e:
+            fail("cannot read %s a second time: %s" % (image, getattr(e, "strerror", None) or e))
+    head = list(img.errors)                # what is wrong with the image as a whole, before any item
     soft = [0]         # errors that are only a budget's stop: the answer is valid for what was examined, and says where it stopped
     if img.missing:
         names = img.missing if len(img.missing) <= 5 else img.missing[:2] + ["...", img.missing[-1]]
-        errors.append("the image has %d segments and %d of them (%s) %s not there, beside the first or in this job's view (declare every segment in inputs): what lies in them is not read"
-                      % (img.segment["count"], len(img.missing), ", ".join(names), "is" if len(img.missing) == 1 else "are"))
+        head.append("the image has %d segments and %d of them (%s) %s not there, beside the first or in this job's view (declare every segment in inputs): what lies in them is not read"
+                    % (img.segment["count"], len(img.missing), ", ".join(names), "is" if len(img.missing) == 1 else "are"))
+    errors = []        # what went wrong with the items asked for
     # The names and places of the directories the walk is inside, and nothing else: the walk is depth first, so when it leaves a
     # subtree that subtree's state is dropped, and what is held is the depth of the tree, not the number of items.
     chain = []         # [{n, selected, placed_rel, dir_of, children_dir, is_dir}], the ancestors of the item being looked at
     # The manifest's own names, at the top of out_dir, are not an item's.
-    taken = {"": {fold(MANIFEST), fold(ERRORS), fold(COVERAGE), fold(GAPS)}}  # directory (relative) -> folded names already used there
+    taken = {"": {fold(MANIFEST), fold(ERRORS), fold(COVERAGE), fold(GAPS), fold(LIST)}}  # directory (relative) -> folded names already used there
     walked = 0
-    seen_n, seen_addr = set(), set()       # the wanted numbers and addresses that were met, not every item's
     counts = {"items": 0, "files": 0, "folders": 0, "bytes": 0, "renamed": 0, "mismatches": 0, "checked": 0}
     tally = {"no_stored_hash": 0, "not_read": 0}
     reached = [None]                      # the budget that stopped the call, if one did
+    early = [None]                        # (n, path) of the item the walk stopped at because every item named had been written
+    # Whether the call took a subtree: a folder that was named, or an item taken through its parent. A subtree is whole only if the
+    # tree under it is (a zeroed child or next pointer cuts it with no error), which only the walk to the end and the check of the
+    # data nothing leads to can say: such a call is walked to the end and judged as a whole-tree call is. A call for files alone,
+    # each found by its number or address and checked against its digests, needs neither: it stops early and is judged for them.
+    subtree = [False]
+    broke = [0]                           # items that broke or could not be written, a budget's cut aside
     this_file = [0]
+    # Which of the walk's errors (an item that cannot be read ends its chain) may have cut something that was asked for: those met
+    # right after an item that was taken (its children, or its siblings inside a folder that was taken). The rest are the image's.
+    walk_seen, walk_sel, last_taken = [0], set(), [False]
+
+    def note_walk_errors():
+        if len(img.walk_errors) > walk_seen[0]:
+            if last_taken[0]:
+                walk_sel.update(range(walk_seen[0], len(img.walk_errors)))
+            walk_seen[0] = len(img.walk_errors)
 
     def stop(nbytes):
         """Why the call must stop, or None: the time budget, or the bytes budget with this block counted."""
@@ -1246,7 +1672,7 @@ def main():
         return reached[0]
 
     def coverage(status, extra=None):
-        doc = {"tool": "ad1_extract", "image": image, "processing_status": status, "budgets": budgets, **counts, **tally,
+        doc = {"tool": "ad1_extract", "image": image, "mode": "list" if list_mode else "extract", "processing_status": status, "budgets": budgets, **counts, **tally,
                "elapsed_seconds": round(time.monotonic() - started, 1), **(extra or {})}
         tmp = out / (COVERAGE + ".tmp")
         temp_hold(tmp)
@@ -1264,10 +1690,10 @@ def main():
             raise
     try:
         out.mkdir(parents=True, exist_ok=True)
-        man = open(out / MANIFEST, "x", encoding="utf-8", newline="\n")
+        man = open(out / (LIST if list_mode else MANIFEST), "x", encoding="utf-8", newline="\n")
     except OSError as e:
         img.close()
-        fail("cannot write in out_dir: %s" % (e.strerror or e), out_dir=str(out_arg))
+        fail("cannot write in out_dir: %s" % (e.strerror or e), out_dir=out_said)
     stopped = None
 
     writing = [None]                      # the file being written, so that a stop can keep it under a name that says it is not whole
@@ -1291,10 +1717,16 @@ def main():
                 os.rename(writing[0], kept)
             except OSError:
                 kept = None
-        coverage("partial", {"integrity_status": "unverified", "interrupted": True, "signal": signum})
+        coverage("partial", {"integrity_status": "not_applicable" if list_mode else "unverified", "interrupted": True, "signal": signum})
+        if list_mode:
+            print(json.dumps({"ok": False, "mode": "list", "status": "partial", "processing_status": "partial", "integrity_status": "not_applicable", "interrupted": True, "signal": signum,
+                              "image": image, "out_dir": out_shown, "list": where(LIST), "coverage": where(COVERAGE), "items_looked_at": walked, "rows_total": counts["items"],
+                              "status_basis": "the tool was stopped by signal %d: the list holds the items met before the stop (its last line may be cut), nothing was extracted, "
+                                              "and nothing is claimed about the rest of the image" % signum}), flush=True)
+            return
         print(json.dumps({"ok": False, "status": "partial", "processing_status": "partial", "integrity_status": "unverified", "interrupted": True, "signal": signum,
-                          "image": image, "out_dir": str(out_arg), "manifest": os.path.join(str(out_arg), MANIFEST), "coverage": os.path.join(str(out_arg), COVERAGE),
-                          **counts, "partial_file": os.path.relpath(kept, str(out_arg)) if kept else None,
+                          "image": image, "out_dir": out_shown, "manifest": where(MANIFEST), "coverage": where(COVERAGE),
+                          **counts, "partial_file": os.path.relpath(kept, str(out)) if kept else None,
                           "status_basis": "the tool was stopped by signal %d: what was written is in out_dir (the file being written is kept under a .partial name, and is not the item), "
                                           "the manifest lists the items before the stop, and nothing is claimed about the rest" % signum}), flush=True)
     install_signal_handlers(_stopped)
@@ -1310,13 +1742,15 @@ def main():
             try:
                 fh.close()
             except OSError as exc:
-                close_error.append("stopped: %s; the manifest does not hold everything that was written" % (exc.strerror or exc))
+                close_error.append("stopped: %s; the %s does not hold everything that was %s" % (exc.strerror or exc, "list" if list_mode else "manifest", "listed" if list_mode else "written"))
 
+    rows = []                             # list mode: the first `show` rows, for the answer
     with closing_manifest(man):
         try:
-            man.write("n\ttype\tpath\tpath_b64\tlocator\twritten\tsize\tsha256\tcheck\tnote\n")
+            man.write("\t".join(LIST_COLUMNS) + "\n" if list_mode else "n\ttype\tpath\tpath_b64\tlocator\twritten\tsize\tsha256\tcheck\tnote\n")
             for item in img.walk():
                 n = item["n"]
+                note_walk_errors()
                 if time.monotonic() > deadline and not reached[0]:
                     reached[0] = "the time budget of %d seconds was reached" % budgets["max_seconds"]
                 if reached[0]:
@@ -1330,32 +1764,58 @@ def main():
                     errors.append("stopped: %s; item %d (%s) and every item after it in the image's order were not examined" % (reached[0], n, esc(item["path"])))
                     soft[0] += 1
                     break
-                if want_n is not None and n in want_n:
-                    seen_n.add(n)
-                if want_addr is not None and item["addr"] in want_addr:
-                    seen_addr.add(item["addr"])
+                named = sel.look(item) if sel.any else True
                 # Leaving a subtree: the chain is cut back to this item's parent, and the state of what was left goes with it.
                 while chain and chain[-1]["n"] != item["parent"]:
                     left = chain.pop()
                     if left["children_dir"] is not None and left["children_dir"] != "":
                         taken.pop(left["children_dir"], None)
+                take = named or (item["parent"] is not None and chain[-1]["selected"])
+                is_dir = item["type"] == AD1_FOLDER
+                last_taken[0] = take
+                if take and sel.explicit and (is_dir or not named):
+                    subtree[0] = True
+                if list_mode:
+                    # Nothing is written but the list: no name is made safe, no directory is reserved.
+                    chain.append({"n": n, "selected": take, "children_dir": None})
+                    if not take:
+                        if sel.done() and not subtree[0]:
+                            early[0] = (n, esc(item["path"]))
+                            break
+                        continue
+                    if counts["items"] >= budgets["max_items"]:
+                        reached[0] = "the item budget of %d items was reached" % budgets["max_items"]
+                        errors.append("stopped: %s; item %d (%s) and every item after it in the image's order were not listed" % (reached[0], n, esc(item["path"])))
+                        soft[0] += 1
+                        break
+                    row = (n, "ad1:item=%d" % item["addr"], kind_of(item), item["size"], esc(item["path"]))
+                    man.write("%d\t%s\t%s\t%d\t%s\n" % row)
+                    if len(rows) < show:
+                        rows.append(dict(zip(LIST_COLUMNS, row)))
+                    counts["items"] += 1
+                    counts["folders" if is_dir else "files"] += 1
+                    counts["bytes"] += 0 if is_dir else item["size"]
+                    continue
                 if item["parent"] is None:
-                    parent_dir, parent_selected = "", False
+                    parent_dir = ""
                 else:
                     owner = chain[-1]
                     if owner["children_dir"] is None:
                         # A file's children (a stream, say) go beside it, in a directory of their own, named when the first one arrives.
                         owner["children_dir"] = os.path.join(owner["dir_of"], unique(taken[owner["dir_of"]], owner["placed"] + ".ad1-children", owner["n"]))
-                    parent_dir, parent_selected = owner["children_dir"], owner["selected"]
+                    parent_dir = owner["children_dir"]
                 used = taken.setdefault(parent_dir, set())
                 name, changed = safe_name(item["name"])
                 placed = unique(used, name, n)
                 changed = changed or placed != name
                 rel = os.path.join(parent_dir, placed) if parent_dir else placed
-                is_dir = item["type"] == AD1_FOLDER
-                take = (want_n is None or n in want_n or item["addr"] in want_addr or (item["parent"] is not None and parent_selected))
                 chain.append({"n": n, "selected": take, "placed": placed, "dir_of": parent_dir, "children_dir": rel if is_dir else None})
                 if not take:
+                    if sel.done() and not subtree[0]:
+                        # Every item named was met and written, and none of them has a subtree: nothing after this item in the image's
+                        # order was asked for. The walk stops here (a one-member call walked all 399,836 items of the one case image).
+                        early[0] = (n, esc(item["path"]))
+                        break
                     continue
                 if counts["items"] >= budgets["max_items"]:
                     reached[0] = "the item budget of %d items was reached" % budgets["max_items"]
@@ -1375,19 +1835,19 @@ def main():
                 counts["items"] += 1
                 counts["renamed"] += changed
                 dest = out / rel
-                head = "%d\t%s\t%s\t%s\t%s\t" % (n, "dir" if is_dir else "file" if item["type"] in (AD1_FILE, AD1_UNKNOWN_FILE, AD1_DELETED) else "other:%d" % item["type"],
-                                               esc(raw_path), base64.b64encode(raw_path).decode(), locator)
+                head_row = "%d\t%s\t%s\t%s\t%s\t" % (n, kind_of(item), esc(raw_path), base64.b64encode(raw_path).decode(), locator)
                 try:
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     if is_dir:
                         dest.mkdir(exist_ok=True)
                 except OSError as e:
                     errors.append("item %d (%s, %s): cannot be written at %s: %s" % (n, esc(raw_path), locator, esc(rel.encode()), e.strerror or e))
-                    man.write(head + "\t\t\tnot-written\t%s\n" % ",".join(notes + ["cannot be written"]))
+                    broke[0] += 1
+                    man.write(head_row + "\t\t\tnot-written\t%s\n" % ",".join(notes + ["cannot be written"]))
                     continue
                 if is_dir:
                     counts["folders"] += 1
-                    man.write(head + "%s\t\t\t\t%s\n" % (esc(rel.encode()), ",".join(notes)))
+                    man.write(head_row + "%s\t\t\t\t%s\n" % (esc(rel.encode()), ",".join(notes)))
                     continue
                 md5 = (ad1_text(item["meta"], 0x5001) or b"").strip().decode("ascii", "replace").lower()
                 sha1 = (ad1_text(item["meta"], 0x5002) or b"").strip().decode("ascii", "replace").lower()
@@ -1399,9 +1859,11 @@ def main():
                     errors.append("item %d (%s, %s): %s" % (n, esc(raw_path), locator, why))
                     if reached[0] and why == reached[0]:
                         soft[0] += 1                          # the item was cut by the budget: the budget's stop is said once more below
+                    else:
+                        broke[0] += 1
                     written = esc(os.path.join(os.path.dirname(rel), kept).encode()) if kept else ""
                     # The sha256 of a partial row is of the bytes kept, not of the item.
-                    man.write(head + "%s\t%d\t%s\t%s\t%s\n" % (written, size, kept_hash, check, ",".join(notes)))
+                    man.write(head_row + "%s\t%d\t%s\t%s\t%s\n" % (written, size, kept_hash, check, ",".join(notes)))
                     counts["files"] += 1
                     counts["bytes"] += size
                     tally["not_read"] += 1
@@ -1421,35 +1883,24 @@ def main():
                 counts["checked"] += 1
                 counts["files"] += 1
                 counts["bytes"] += size
-                man.write(head + "%s\t%d\t%s\t%s\t%s\n" % (esc(rel.encode()), size, hs[2].hexdigest(), check, ",".join(notes)))
+                man.write(head_row + "%s\t%d\t%s\t%s\t%s\n" % (esc(rel.encode()), size, hs[2].hexdigest(), check, ",".join(notes)))
         except OSError as e:
             # The manifest itself could not be written (a full disk): stop, say so.
-            stopped = "stopped: %s; the manifest lists what was written before" % (e.strerror or e)
+            stopped = "stopped: %s; the %s" % (e.strerror or e, "list holds the items listed before" if list_mode else "manifest lists what was written before")
         finally:
             img.close()
     if close_error:
         stopped = stopped or close_error[0]
-    errors += img.walk_errors
-    absent = sorted(want_n - seen_n) if want_n is not None else []
-    gone = sorted(want_addr - seen_addr) if want_addr is not None else []
-    # After a stop (a budget, a manifest that could not be written) the walk did not reach the end of the image: an item not
-    # seen is not an item that is not there, and is not claimed to be absent.
-    walked_all = not (reached[0] or stopped)
-    if absent:
-        soft[0] += 0 if walked_all else 1
-        errors.append(("no item %s in this read of the image (it listed %d items)" if walked_all else
-                       "item %s was not reached before the call stopped (it had looked at %d items): it is not claimed absent") % (", ".join(map(str, absent)), walked))
-    if gone:
-        soft[0] += 0 if walked_all else 1
-        errors.append(("no item at %s in this read of the image" if walked_all else
-                       "the item at %s was not reached before the call stopped: it is not claimed absent") % ", ".join("ad1:item=%d" % a for a in gone))
-    if stopped:
-        errors.insert(0, stopped)
+    note_walk_errors()
+    # After a stop (a budget, a manifest that could not be written, every named item written) the walk did not reach the end of the image.
+    to_end = not (reached[0] or stopped or early[0])
+    missing, missing_soft = sel.missing(to_end, walked)
+    soft[0] += missing_soft
     # A walk that reached the end of the tree says what of the image's data nothing led to (a zeroed next pointer ends a chain
     # with no error): it cannot call the list whole, nor the digests it checked the image's.
     unaccounted = None
     gaps = None
-    if walked_all and not img.walk_errors:
+    if to_end and not img.walk_errors:
         # Read to its end under the call's clock; the gaps with non-zero bytes, or not read to their end, are all in ad1_extract.gaps.jsonl
         # (at most GAPS_FILE_MAX of them), the first AD1_GAPS_LISTED in the answer.
         gaps = GapFile(str(out / GAPS))
@@ -1458,16 +1909,51 @@ def main():
             unaccounted = ad1_unaccounted(img, deadline, gaps.add)
         finally:
             gaps.close()
-        if unaccounted:
-            errors.append(unaccounted)
-            if img.gap_report["stopped_at"] is not None:
-                reached[0] = reached[0] or "the time budget of %d seconds was reached while the data nothing led to was being read" % budgets["max_seconds"]
-    processing = "complete" if not errors else ("partial" if counts["files"] or counts["folders"] else "failed")
-    if counts["mismatches"]:
+        if unaccounted and img.gap_report["stopped_at"] is not None:
+            reached[0] = reached[0] or "the time budget of %d seconds was reached while the data nothing led to was being read" % budgets["max_seconds"]
+    # Two things are judged apart. The selection: were the items asked for written. The image: was its tree walked to its end, every
+    # item of it read, and does the tree account for the image's data. A call that names files (numbers, locators) is answered for
+    # those files: what is wrong elsewhere in the image is said in image_status and image_errors, and does not make their extraction
+    # partial (six calls of the run s01a4f4 answered partial with every file asked for written). A call for the whole tree, for a
+    # folder's subtree or by path patterns cannot be whole unless the list is: there the image's errors are the call's.
+    exact = sel.explicit and not subtree[0]          # files named one by one: the selection is judged without the image
+    walk_all = list(img.walk_errors)
+    walk_own = [e for i, e in enumerate(walk_all) if i in walk_sel]
+    image_errors = head + [e for i, e in enumerate(walk_all) if not (exact and i in walk_sel)] + ([unaccounted] if unaccounted else [])
+    if exact:
+        errors = errors + walk_own + missing
+    else:
+        errors = head + errors + walk_all + missing + ([unaccounted] if unaccounted else [])
+    if stopped:
+        errors.insert(0, stopped)
+    check_ran = gaps is not None
+    if early[0]:
+        image_status = "not_checked"
+        image_basis = ("the walk stopped at item %d (%s), once every item named had been %s: the items after it in the image's order were not looked at, and the image-wide checks "
+                       "(the tree read to its end, the data no item leads to) were not run" % (early[0][0], early[0][1], "listed" if list_mode else "written"))
+    elif not to_end:
+        image_status = "not_checked"
+        image_basis = "the walk stopped before the end of the tree (%s), after %d items: the image-wide checks (the tree read to its end, the data no item leads to) were not run" % (
+            reached[0] or "the %s could not be written" % ("list" if list_mode else "manifest"), walked)
+    elif image_errors:
+        image_status = "partial"
+        image_basis = "the tree was walked to its end (%d items) and %s (see %s)" % (walked, "; ".join(
+            ([("%d segment(s) are not there" % len(img.missing))] if img.missing else []) +
+            (["%d item(s) of the tree could not be read, so the check of the data no item leads to was not run" % len(walk_all)] if walk_all else []) +
+            (["the tree does not account for all of the image's data"] if unaccounted else []) +
+            (["the image's header names something that could not be read"] if img.errors else [])), "image_errors" if exact else "errors")
+    else:
+        image_status = "complete"
+        image_basis = "the tree was walked to its end (%d items), every item of it was read, and the data the tree leads to accounts for the image's" % walked
+    done_something = counts["items"] if list_mode else (counts["files"] or counts["folders"])
+    processing = "complete" if not errors else ("partial" if done_something else "failed")
+    if list_mode:
+        integrity = "not_applicable"
+    elif counts["mismatches"]:
         integrity = "mismatch"
     elif counts["files"] == 0:
         integrity = "not_applicable"
-    elif tally["no_stored_hash"] or tally["not_read"] or unaccounted:
+    elif tally["no_stored_hash"] or tally["not_read"] or (unaccounted and not exact):
         integrity = "unverified"
     else:
         integrity = "verified"
@@ -1478,31 +1964,100 @@ def main():
                         "gaps_with_nonzero_bytes": r["gaps_with_nonzero_bytes"], "gaps_not_read_to_the_end": r["gaps_not_read_to_the_end"],
                         "stopped_at": r["stopped_at"], "listed": r["listed"]}
         if gaps.written or gaps.error:
-            unreferenced["file"] = os.path.join(str(out_arg), GAPS) if gaps.written else None
+            unreferenced["file"] = where(GAPS) if gaps.written else None
             unreferenced["file_rows"] = gaps.written
             unreferenced["file_note"] = "every gap with non-zero bytes or not read to its end, one JSON line each (listed has the first %d)%s" % (
                 AD1_GAPS_LISTED, "; cut at %d rows" % GAPS_FILE_MAX if gaps.cut else "")
             if gaps.error:
                 unreferenced["file_error"] = gaps.error
-    if not coverage(processing, {"integrity_status": integrity, **({"unreferenced_data": unreferenced} if unreferenced else {})}):
+    selection = {"by": "members" if sel.explicit else "paths" if sel.any else "list of the whole tree" if list_mode else "whole", **(sel.counts() if sel.any else {}),
+                 "items": counts["items"]}
+    walk_said = {"items_looked_at": walked, "to_end": to_end, **({"stopped_early_at": {"n": early[0][0], "path": early[0][1]}} if early[0] else {})}
+    if not coverage(processing, {"integrity_status": integrity, "selection": processing, "selected": selection, "image_status": image_status, "image_basis": image_basis, "walk": walk_said,
+                                 "unreferenced_check": "run" if check_ran else "not_run", **({"unreferenced_data": unreferenced} if unreferenced else {})}):
         errors.append("%s could not be written whole (the earlier one, which says incomplete, stands)" % COVERAGE)
         if processing == "complete":
             processing = "partial"
+    # status_basis names the causes that applied, each once, never a list of everything that could have.
+    did = "listed" if list_mode else "written"
+    if processing == "complete":
+        if exact:
+            basis = ("every item named (%d) was found and %s" % (len(sel.ns) + len(sel.addrs), did)) + (
+                "; the walk stopped there, at item %d of the image's order, so the rest of the image was not looked at and the image-wide checks were not run (image_status)" % early[0][0] if early[0] else
+                "; the walk reached the end of the tree, and image_status says what the image-wide checks found")
+        elif list_mode:
+            basis = "the tree was walked to its end, every item %s was listed (%d), and the data the tree leads to accounts for the image's; nothing was extracted" % (
+                "a pattern matched, with its subtree," if sel.any else "of it", counts["items"])
+        else:
+            basis = "the tree was walked to its end, every item selected was written%s, and the data the tree leads to accounts for the image's" % (
+                " (%d named, with the subtree of each: %d items)" % (len(sel.ns) + len(sel.addrs), counts["items"]) if sel.explicit else "")
+    else:
+        causes = []
+        if reached[0]:
+            causes.append("a budget stopped the call (%s)" % reached[0])
+        if stopped:
+            causes.append("the %s could not be written whole" % ("list" if list_mode else "manifest"))
+        if broke[0]:
+            causes.append("%d item(s) broke or could not be written" % broke[0])
+        if missing:
+            unmet = len(sel.ns - sel.seen_n) + len(sel.addrs - sel.seen_addr) + sum(1 for i, h in enumerate(sel.glob_hits) if not h and not (sel.slow[i] and sel.not_tried))
+            if unmet:
+                causes.append("%d selector(s) named no item that was %s" % (unmet, "met" if to_end else "reached before the stop"))
+            if sel.not_tried:
+                causes.append("%d item(s) have a path too long for a pattern with ? to be tried on" % sel.not_tried)
+        if walk_own and exact:
+            causes.append("%d item(s) inside or right after what was taken could not be read, so a subtree may be cut" % len(walk_own))
+        if not exact:
+            if img.missing:
+                causes.append("%d segment(s) of the image are not there" % len(img.missing))
+            if img.errors:
+                causes.append("the image's header names something that could not be read")
+            if walk_all:
+                causes.append("%d item(s) of the tree could not be read" % len(walk_all))
+            if unaccounted:
+                causes.append("the tree does not account for all of the image's data")
+        if any(e.startswith(COVERAGE) for e in errors):
+            causes.append("%s could not be written whole" % COVERAGE)
+        basis = ("; ".join(causes) or "see errors") + (" (see errors)" if causes else "") + ("" if done_something else ": no item was %s" % did)
     result = {"ok": processing == "complete" and integrity != "mismatch", "processing_status": processing, "integrity_status": integrity,
-              "status": processing,
-              "status_basis": {"complete": "the tree was walked to its end, every item selected was written, and the data the tree leads to accounts for the image's",
-                               "partial": "a budget stopped the walk, an item broke or could not be written, a segment is not there, or the tree does not account for all of the image's data (see errors)",
-                               "failed": "no item could be written (see errors)"}[processing],
-              "image": image, "out_dir": str(out_arg), "manifest": os.path.join(str(out_arg), MANIFEST), "coverage": os.path.join(str(out_arg), COVERAGE),
-              **counts, **tally, "segments_missing": img.missing, "budgets": budgets}
+              "status": processing, "status_basis": basis,
+              "selection": processing, "selected": selection, "image_status": image_status, "image_basis": image_basis, "walk": walk_said,
+              "unreferenced_check": "run" if check_ran else "not_run",
+              "image": image, "out_dir": out_shown}
+    if out_relative is not None:
+        result["out_relative"] = out_relative
+    if list_mode:
+        result.update({"mode": "list", "list": where(LIST), "columns": list(LIST_COLUMNS), "rows_total": counts["items"], "rows": rows, "shown": len(rows),
+                       "truncated": counts["items"] > len(rows), "files": counts["files"], "folders": counts["folders"], "content_bytes": counts["bytes"],
+                       "coverage": where(COVERAGE), "segments_missing": img.missing, "budgets": budgets,
+                       "note": ("rows holds the first %d of %d: every row is in list (n, locator, type, size, path; tab-separated, a path escaped as members.tsv escapes it). " % (len(rows), counts["items"]) if counts["items"] > len(rows) else "") +
+                               "Nothing was extracted. Take items with members (n as a number, or the locator text), with members_file (this list or a cut of it: column locator or n) or with paths"})
+        if guarded:
+            result["whole_not_written"] = guarded
+    else:
+        result.update({"mode": "extract", "manifest": where(MANIFEST), "coverage": where(COVERAGE), **counts, **tally, "segments_missing": img.missing, "budgets": budgets})
+    if members_file:
+        result["members_file"] = members_file
+    if adjusted:
+        result["adjusted"] = adjusted
     if unreferenced:
         result["unreferenced_data"] = unreferenced
+    if exact and image_errors:
+        result["image_errors"] = image_errors[:SHOWN_ERRORS]
+        result["image_errors_total"] = len(image_errors)
+    # What the digests do and do not say. verified is of the files written; whether the image holds items the tree does not lead to is
+    # the unreferenced-data check's to say, and a call that did not run it says so beside verified (the run s8be1c2, three jobs).
+    unchecked = "" if check_ran else ("; the unreferenced-data check did not run (%s), so nothing is said of whether the image holds items the tree does not lead to" % (
+        "the walk stopped once every item named was written" if early[0] else "a budget stopped the walk" if reached[0] else "the walk did not reach the end of the tree whole"))
     if integrity == "mismatch":
         result["integrity_note"] = ("%d file(s) were written whose content does not match the digests the image records (check mismatch in the manifest). "
-                                    "The files were written; the exit status is 0 for a complete extraction, so read integrity_status" % counts["mismatches"])
+                                    "The files were written; the exit status is 0 for a complete extraction, so read integrity_status" % counts["mismatches"]) + unchecked
     elif integrity == "unverified":
         result["integrity_note"] = ("%d file(s) have no stored digest and %d were not read: their content is not checked against the image" % (tally["no_stored_hash"], tally["not_read"])
-                                    + ("; and the tree does not account for all of the image's data, so items may be missing from the list" if unaccounted else ""))
+                                    + ("; and the tree does not account for all of the image's data, so items may be missing from the list" if unaccounted else "")) + unchecked
+    elif integrity == "verified":
+        result["integrity_note"] = ("verified is of the %d file(s) written: each matches the MD5 and SHA-1 the image records for it" % counts["files"]) + (
+            unchecked or ("; the tree does not account for all of the image's data (image_status), which is a finding about the image and not about these files" if unaccounted else ""))
     if reached[0]:
         result["stopped_by_budget"] = reached[0]
     if errors:
@@ -1512,11 +2067,12 @@ def main():
             try:
                 with open(out / ERRORS, "x", encoding="utf-8") as fh:
                     fh.write("\n".join(errors) + "\n")
-                result["errors_file"] = os.path.join(str(out_arg), ERRORS)
+                result["errors_file"] = where(ERRORS)
             except OSError as e:
                 result["errors_file_error"] = "the whole list could not be written: %s" % (e.strerror or e)
     if not in_job:
-        result["note"] = "written where you called it, not sealed: run it as a job (job_run tool=ad1_extract) to have the files sealed into the store, citable as job:<id>/<path>, and catalogued by the derived catalogue"
+        result["note"] = (result["note"] + ". " if "note" in result else "") + \
+            "written where you called it, not sealed: run it as a job (job_run tool=ad1_extract) to have the files sealed into the store, citable as job:<id>/<path>, and catalogued by the derived catalogue"
     print_answer(result)
     # Exit 0 means the tool ran and what it examined is whole or said not to be: complete, or partial only because a budget stopped it
     # between items (processing_status says partial and stopped_by_budget says which). An item that broke or could not be written, a

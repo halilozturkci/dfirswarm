@@ -65,7 +65,7 @@ const SECOND: Record<string, string> = {
 // Leaves added after the router that need no new tool: each is a decision leaf of its own that the router names.
 const TOP_LEAVES_ADDED = [
   "triage/address-spaces", "triage/coverage", "symbols/macos", "timeline/memory", "processes/kernel-integrity",
-  "triage/memprocfs", "symbols/linux", "artifacts/reconstruction",
+  "triage/memprocfs", "symbols/linux", "artifacts/reconstruction", "triage/process-dumps",
 ];
 
 test("every skill is a leaf within the budget, opens with Use when ... Not for ..., and has a short index entry", async () => {

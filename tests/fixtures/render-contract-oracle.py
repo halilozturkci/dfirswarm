@@ -130,7 +130,10 @@ if os.path.isfile(catalog_readme) and not os.path.islink(catalog_readme):
         + ("The inputs marked planned are being catalogued now, as jobs in worker VMs, while you work: you need not wait "
            "for them. Each result is a generation under `catalog/gen/`, each change a new revision "
            "(`catalog/revisions/<n>/index.md`), announced on the board; `catalog_search` reads the newest and says which "
-           "revision it read. A disk's file list is also at `catalog/<input>/` once its generation is in.\n\n" if growing else "")
+           "revision it read. A disk's file list is also at `catalog/<input>/` once its generation is in. A large logical "
+           "image is catalogued in two steps: its listing first (every member's path, size and times, within about a "
+           "minute, posted as \"the listing\"), then the same catalogue with each member's digest, as a later revision. "
+           "The listing is enough to find a member and name it to a tool: do not walk the image for a list of your own.\n\n" if growing else "")
         + ("An archive or disk image a job makes, or a file you seal with `job_run import=`, is catalogued the same way on "
            "its own, in a lane that never holds up your jobs: a complete catalogue of it is posted to everyone, a partial one "
            "to whoever made it, with why. `catalog_search which=generations` lists every generation, what it covers, and, for "
@@ -181,6 +184,19 @@ if os.path.isfile(toolbox_path):
         for t in tb.get("missing", []):
             lines.append(f"| `{t['name']}` | missing | {t.get('use', '')} — install: `{t.get('install', '')}` |")
         toolbox_section = "\n".join(lines) + "\n\n"
+    # What the case requires done (the goal's requires: or --requires), and whether the check found a program that does it.
+    req = tb.get("requires", [])
+    if isinstance(req, list) and req:
+        rows = ["The case requires these done; checked at kickoff where you run:", "", "| Capability | Met by | Use |", "| --- | --- | --- |"]
+        for r in req:
+            by = ", ".join(f"`{b}`" for b in r.get("by", []))
+            failed = ", ".join(f"`{b}`" for b in r.get("present_but_failed_probe", []))
+            wanted = ", ".join(f"`{b}`" for b in r.get("wanted", []))
+            met = by if r.get("met") is True else ("not met" + (f" ({failed} is there and failed a test input)" if failed else f" (none of {wanted})"))
+            rows.append(f"| {r.get('capability')} | {met} | {r.get('use', '')} |")
+        if any(r.get("met") is not True for r in req):
+            rows += ["", "A capability not met is not a reason to stop at not determinable: a program the operator supplies runs in a job (`job_run` with `programs`), and asking for one is an acquisition ask."]
+        toolbox_section += "\n".join(rows) + "\n\n"
 # A case can need a library this host does not have — the BelkaCTF #6 run met a
 # BitLocker volume with the recovery key in hand and no reader on the machine,
 # and spent its remaining half hour on it. When the operator has allowed it,
@@ -387,6 +403,9 @@ if caps:
                 "writes only its own $OUT, sealed into store/jobs/<id>/out/. It has the image's programs "
                 "(/etc/dfirswarm/tools.md) and nothing installed in an agent's own VM; with network=allowlist it reaches "
                 f"{hosts}. An exit status of 0 is not the work's success: read what the job wrote, and its stderr. "
+                "A program the operator supplies (posted on the board as `TOOL SUPPLIED as import:mat-<n>`) runs in a job that "
+                'names it in `programs: ["import:mat-<n>"]`: it is copied into an executable directory in the worker, its bin/ on '
+                "PATH and its lib/ on LD_LIBRARY_PATH; nothing runs where it stands in store/ or $OUT. "
                 "A file you made in your own VM is not an object of the run until it is sealed: `job_run import=work/<you>/<file>` "
                 "copies it into the store as it is now, and a finding then cites it as job:<id>/<file> in its refs. A whole "
                 "output the harness kept for you under tool-output/<you>/ is cited as `tool:<you>/<file>` (one line of the "

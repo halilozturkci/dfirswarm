@@ -21,6 +21,16 @@
   "example": "{\"path\": \"inputs/disk.raw\", \"offset\": 1048576}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 9,
-  "sha256": "a5fef1ff4e73625778260abbdd25d2c1fa06924b1d0a455668913992a8b51730"
+  "not_for": [
+    {
+      "what": "the full metadata of a volume, through the program that reads it",
+      "use": "crypto_metadata"
+    },
+    {
+      "what": "reading a VeraCrypt or TrueCrypt header with a candidate password",
+      "use": "tcrypt_header"
+    }
+  ],
+  "version": 11,
+  "sha256": "ed49a14e01d36de7fcb3b9e9bb146b87289dcdbfbc94dbcdf6cdb60321ba2934"
 }

@@ -3,6 +3,7 @@ id: containers/runtime-orchestration
 title: containerd, Podman and Kubernetes nodes
 when: Correlating a container across runtime stores, node logs and a control plane.
 needs: []
+card: container_inventory {"root": "<extracted root>"} reads Docker, Podman and CRI logs; containerd's database is listed as unsupported, which is no statement that nothing ran under it. Pass storage_roots for a moved data root. container_layers is partial where a layer is missing. Count CRI log rotations before calling a log complete. Does not show: that a container ran what its configuration says, or which workload requested it.
 tools: [container_inventory, container_layers]
 requires_host: []
 ---

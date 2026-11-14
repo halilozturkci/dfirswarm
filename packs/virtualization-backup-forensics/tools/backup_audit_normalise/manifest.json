@@ -90,7 +90,7 @@
   "example": "{\"path\": \"work/extracted/pve/tasks/index\", \"format\": \"pve_task_index\"}",
   "by": "maintainer",
   "at": "2026-10-15T09:00:00.000Z",
-  "version": 14,
+  "version": 16,
   "use": {
     "names": [
       "UPID:*",
@@ -100,5 +100,5 @@
       "*jobs*.csv"
     ]
   },
-  "sha256": "da161e9c58442a61a915c4214415381369fe7fffa9a8b6be51f6bfdb4c0e1e06"
+  "sha256": "48d40e5d7f524e6773c18d9294b992d268eb9950ee156cab58549748efb8b02a"
 }

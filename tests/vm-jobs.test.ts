@@ -179,7 +179,8 @@ await new Promise(() => {});
   child.kill("SIGKILL");
   const svc = service(S, run);
   await svc.start();
-  const job = svc.jobs.get("j000001")!;
+  // Recovery removes the worker and queues the seal of what it left (the seal stage); the commit follows, and is waited for.
+  const job = await until(svc, "j000001");
   assert.equal(job.state, "committed");
   assert.equal(job.status, "interrupted", "a job with network is not run again on its own");
   assert.deepEqual(workerNames(run), [], "the dead hub's worker was removed before its output was sealed");

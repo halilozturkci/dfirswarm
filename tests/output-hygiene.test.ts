@@ -358,7 +358,7 @@ test("a cancelled job's kept output cited later is a defect until the citing ent
   assert.ok(fixed.ok, (fixed as { reason?: string }).reason);
   assert.ok(!(await checkLedgerAnswers(S, ["summary"])).defects.some((x) => x.code === "partial_output"), "the correction says how it treats it");
   // A search recorded partial is its own disposition.
-  assert.deepEqual([...P.partialOutputCites([{ v: 4, seq: 1, kind: "absence", value: "v", completion: "partial", refs: ["job:j000007/rows.csv"], by: "a", authors: ["a"], at: "t" } as P.LedgerEntry], () => ({ job: "j000007", status: "cancelled" })).keys()], []);
+  assert.deepEqual([...P.partialOutputCites([{ v: 4, seq: 1, kind: "absence", value: "v", completion: "partial", refs: ["job:j000007/rows.csv"], control: [{ ref: "job:j000007/rows.csv", found: "the same search finds a planted row" }], by: "a", authors: ["a"], at: "t" } as P.LedgerEntry], () => ({ job: "j000007", status: "cancelled" })).keys()], []);
 
   // The same partial output cited by its bare digest is caught too.
   const rowsSha = JSON.parse(await readFile(join(storePaths(S).jobs, "j000007", "manifest.json"), "utf8")).files[0].sha256;

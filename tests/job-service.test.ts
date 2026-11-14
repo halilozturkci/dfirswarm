@@ -13,7 +13,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlink
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { boundInputSets, copyInputsManifest, DERIVED, JOB_INPUTS_MANIFEST, JOB_INPUTS_MANIFEST_MAX, JobService, missingOf, SHORT_JOB_SECONDS, type JobServiceOptions } from "../scripts/job-service.ts";
+import { boundInputSets, copyInputsManifest, DERIVED, describe, JOB_INPUTS_MANIFEST, JOB_INPUTS_MANIFEST_MAX, JobService, jobView, missingOf, SHORT_JOB_SECONDS, type JobServiceOptions } from "../scripts/job-service.ts";
 import { storePaths, verifyJournalText } from "../scripts/evidence-store.ts";
 import { listInputs, localWorker, mountedWorker } from "./job-service-worker.ts";
 import type { WorkerSpec } from "../scripts/vm.ts";
@@ -110,7 +110,7 @@ test("a command job is accepted before it runs, its output sealed and every step
   const acc = started.accessible as Array<{ path: string; access: string }>;
   assert.ok(acc.some((a) => a.path === join(S, "inputs") && a.access === "read-only, no-exec"), `the accessible scope names the evidence, read-only and no-exec: ${JSON.stringify(acc)}`);
   assert.ok(acc.some((a) => a.path === join(S, "work") && a.access.startsWith("read-only;") && a.access.includes("may change")), "all of work/, read-only, said to be live");
-  assert.ok(acc.some((a) => a.path === join(S, ".jobs", job.id) && a.access === "read-write, no-exec"), "its own $OUT, the one writable place");
+  assert.ok(acc.some((a) => a.path === join(S, ".jobs", job.id) && /^read-write, no-exec, writes up to \d+ MiB$/.test(a.access)), "its own $OUT, the one writable place, with its write quota");
   // By the run's own directories, not by a word in a path (the harness's checkout may be named anything).
   assert.ok(!acc.some((a) => a.path.startsWith(`${S}/`) && /^(threads|inbox|ledger|\.pi-sessions)(\/|$)/.test(a.path.slice(S.length + 1))), "never the board, the ledger or the sessions");
   assert.equal(started.network, "none");
@@ -179,6 +179,30 @@ test("a pack or forged tool runs sealed, its arguments checked against its manif
   await svc.stop("test over");
 });
 
+test("a tool is given the path of a job reference in its arguments, $OUT is its directory, and a reference that names nothing is refused", async () => {
+  const S = sandbox();
+  tool(S, "copier", "import json,sys,os\nd=json.load(sys.stdin)\nos.makedirs(os.path.dirname(d['output']), exist_ok=True)\nopen(d['output'],'w').write(open(d['source']).read() if d.get('source') else d.get('text',''))\nprint(json.dumps({'ok': True, 'source': d.get('source')}))\n", { output: { type: "string", required: true }, source: { type: "string" }, text: { type: "string" } });
+  const { svc } = service(S);
+  await svc.start();
+  const first = await svc.submit("a1", { kind: "tool", tool: "copier", args: { output: "$OUT/a dir/one.txt", text: "carved" }, inputs: [] });
+  assert.ok(first.ok, !first.ok ? first.reason : "");
+  const j1 = await until(svc, first.job.id);
+  assert.equal(readFileSync(join(storePaths(S).jobs, j1.id, "out", "a dir", "one.txt"), "utf8"), "carved", "$OUT at an argument's head is the job's directory");
+  // The reference a seat cites the file by, given as the path argument, with a declared scope that does not name the job.
+  const second = await svc.submit("a1", { kind: "tool", tool: "copier", args: { output: "${OUT}/two.txt", source: `job:${j1.id}/a dir/one.txt` }, inputs: [] });
+  assert.ok(second.ok, !second.ok ? second.reason : "");
+  assert.deepEqual(second.job.spec.args_resolved, [{ at: "source", from: `job:${j1.id}/a dir/one.txt`, to: `store/jobs/${j1.id}/out/a dir/one.txt`, object: `job:${j1.id}` }]);
+  assert.ok(second.job.spec.inputs.includes(`job:${j1.id}/a dir/one.txt`), "the declared scope is given what the argument names");
+  const j2 = await until(svc, second.job.id);
+  assert.equal(j2.status, "ok", readFileSync(join(storePaths(S).jobs, j2.id, "stderr.log"), "utf8"));
+  assert.equal(readFileSync(join(storePaths(S).jobs, j2.id, "out", "two.txt"), "utf8"), "carved");
+  assert.match(describe(j2), /The tool was given the path of the reference in its arguments \(source: job:j\d{6}\/a dir\/one\.txt is store\/jobs\/j\d{6}\/out\/a dir\/one\.txt\)\./);
+  const bad = await svc.submit("a1", { kind: "tool", tool: "copier", args: { output: "$OUT/x", source: `job:${j1.id}/nope.txt` }, inputs: [] });
+  assert.equal(bad.ok, false);
+  assert.match(!bad.ok ? bad.reason : "", /tool copier: source names job:j\d{6}\/nope\.txt, and job j\d{6} has no nope\.txt/);
+  await svc.stop("test over");
+});
+
 test("a failed job keeps what it wrote, a timed-out one says so, and a peer cannot cancel someone else's job", async () => {
   const S = sandbox();
   const { svc, posts } = service(S, { workers: 1 });
@@ -192,17 +216,30 @@ test("a failed job keeps what it wrote, a timed-out one says so, and a peer cann
   const slow = await svc.submit("a1", { kind: "command", command: "exit 124", inputs: [] });
   assert.ok(slow.ok);
   assert.equal((await until(svc, slow.job.id)).status, "timed_out");
+  // Exit 137 long before the limit is a kill, not a timeout: the reason says so and never names the limit as what stopped it.
+  const killed = await svc.submit("a1", { kind: "command", command: "exit 137", inputs: [] });
+  assert.ok(killed.ok);
+  const k = await until(svc, killed.job.id);
+  assert.equal(k.status, "failed");
+  assert.match(k.reason ?? "", /killed \(signal 9\) after \d+s, before its limit/);
+  assert.doesNotMatch(k.reason ?? "", /stopped at its limit/);
   // A queued job: the worker is busy with a long one.
   const long = await svc.submit("a1", { kind: "command", command: "sleep 1", inputs: [] });
   const queued = await svc.submit("a1", { kind: "command", command: "echo never", inputs: [] });
   assert.ok(long.ok && queued.ok);
+  // Why it waits, in words: queued behind a busy worker; and a job that finished and waits for its seal says that, never "running".
+  assert.match(svc.waitWords(queued.job) ?? "", /^queued, not started: 0 job\(s\) ahead of it, and all 1 workers are busy/);
+  const sealing = { ...queued.job, state: "finished" as const, exit: 0, finished_at: "2026-01-01T00:00:00.000Z" };
+  assert.match(svc.waitWords(sealing) ?? "", /^finished \(exit 0\) at 2026-01-01T00:00:00.000Z, waiting to be sealed into the store: 0 job\(s\) ahead of it\. .*running it again or cancelling it gains nothing/);
+  assert.equal((await jobView(S, sealing, { waiting: svc.waitWords(sealing) })).waiting, svc.waitWords(sealing));
   const other = await svc.status("a2", queued.job.id, { cancel: true });
   assert.equal(other.ok, false, "only the requester cancels");
   const mine = await svc.status("a1", queued.job.id, { cancel: true });
   assert.ok(mine.ok);
   assert.equal(mine.ok && mine.job.state, "cancelled", "the answer to the cancel says so");
   assert.equal((await until(svc, queued.job.id)).state, "cancelled");
-  await until(svc, long.job.id);
+  const done = await until(svc, long.job.id);
+  assert.equal(svc.waitWords(done), undefined, "a job that is done waits for nothing");
   assert.ok(!posts.some(([, body]) => body.includes(`Job ${queued.job.id} `)), "the agent that cancelled it is not told again by post");
   await svc.stop("test over");
 });
@@ -419,7 +456,8 @@ await new Promise((r) => setTimeout(r, 20000));
   assert.equal(c.status, 99, c.stderr);
   const { svc } = service(S, { packDirs: [] });
   await svc.start();
-  const job = svc.jobs.get("j000001")!;
+  // Its seal is queued by the recovery, not waited for by the start.
+  const job = await until(svc, "j000001");
   assert.equal(job.state, "committed");
   assert.equal(job.status, "interrupted", "kept as interrupted, not retried");
   await svc.stop("over");

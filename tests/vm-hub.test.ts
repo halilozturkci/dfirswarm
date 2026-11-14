@@ -1004,7 +1004,7 @@ test("a seat that is done while the swarm goes on has its VM put away a grace pe
   await probe.hub.stop();
   const { hub } = await setup({ extra: { run: "t1", vmCli: fake.cli, seatLeaveMs: 50 } });
   await board.callBoard(hub.socketFor("a0"), "markDone", [null, { reason: "agent_cap", outputFile: "work/a0.md", createSentinel: false }]);
-  await until(() => existsSync(fake.log), "the seat's VM is put away", 5000);
+  await until(() => existsSync(fake.log) && readFileSync(fake.log, "utf8").endsWith("\n"), "the seat's VM is put away", 5000);
   const calls = (await readFile(fake.log, "utf8")).trim().split("\n").map((l) => JSON.parse(l) as string[]);
   assert.ok(calls.some((c) => c.includes("--agent") && c[c.indexOf("--agent") + 1] === "a0"), JSON.stringify(calls));
   assert.ok(!calls.some((c) => c.includes("--agent") && c[c.indexOf("--agent") + 1] === "a1"), "and no other seat's");
@@ -1664,6 +1664,9 @@ test("a seat past its file-history quota still has every revision recorded, by i
   await writeFile(f, "another\n");
   const r3 = (await vm(() => board.recordFileVersion(sandbox, "work/a0/notes.md", "a0"))) as { stored?: false };
   assert.equal(r3.stored, false);
+  // Told the quota is spent, the seat sends a revision's hash, not its bytes (the run s082123 sent a hundred 11 MB files whole after it).
+  const told0 = await board.ownFileWire(sandbox, "work/a0/notes.md", "a0", 0);
+  assert.deepEqual(Object.keys(told0 ?? {}), ["hash_only"]);
   await until(() => lines.some((l) => l.tool === "history_quota"), "the quota on the trace");
   assert.equal(lines.filter((l) => l.tool === "history_quota").length, 1, "said once");
   const told = (await readdir(join(sandbox, "threads", "main"))).filter((n) => n.endsWith("-system.md"));
@@ -1691,7 +1694,8 @@ test("a seat that said done before a hub restart still has its VM put away when 
   const again = new Hub({ sandbox, dir, agents, tokens: hub.cfg.tokens, collector: hub.cfg.collector, backstop: false, quiet: true, settleMs: 0, herdrBin: "/usr/bin/false", run: "t1", vmCli: fake.cli, seatLeaveMs: 60_000 });
   await again.start();
   cleanups.push(async () => again.stop());
-  await until(() => existsSync(fake.log), "the seat's VM is put away after the restart", 5000);
+  // A whole line, not only the file: the fake CLI creates it and then writes it.
+  await until(() => existsSync(fake.log) && readFileSync(fake.log, "utf8").endsWith("\n"), "the seat's VM is put away after the restart", 5000);
   const calls = (await readFile(fake.log, "utf8")).trim().split("\n").map((l) => JSON.parse(l) as string[]);
   assert.ok(calls.some((c) => c.includes("--agent") && c[c.indexOf("--agent") + 1] === "a0"), "at the time it was due, not a grace period after the restart");
   await until(() => {

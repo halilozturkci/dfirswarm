@@ -3,6 +3,7 @@ id: ios/knowledgec-activity
 title: KnowledgeC on iOS, and what its events support
 when: An activity question depends on an iOS knowledgeC.db or its streams.
 needs: []
+card: Take knowledgeC.db with its -wal, -shm and -journal as one set. Validate the schema with sqlite_query on a copy first, then knowledgec_query {"db": "<copy>"} (macOS pack, if loaded) for streams and counts; do not carry its presence, retention or stream meanings to iOS. Streams differ by build: a missing legacy stream is not "no activity". Start, end and creation times differ; creation is when the system recorded it. Foreground is not human, and the source can be a synced device. Keep apart not retained, not acquired, unsupported, and searched with no match. Does not show: user actions, presence, or activity outside the retained window.
 tools: [knowledgec_query, sqlite_query]
 requires_host: []
 ---

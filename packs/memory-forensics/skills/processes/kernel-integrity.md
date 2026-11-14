@@ -1,7 +1,7 @@
 ---
 id: processes/kernel-integrity
 title: Comparing module, driver and kernel views
-when: Kernel views disagree, or someone asks whether the kernel was tampered with.
+when: Kernel views disagree, or you are asked if the kernel was tampered with.
 needs: []
 tools: []
 requires_host: [vol]

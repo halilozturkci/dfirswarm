@@ -314,6 +314,8 @@ Tool jobs (only when `job_run` is in your tool list)
 - Parse evidence, and do anything slow or heavy, with job_run: it runs in a throwaway worker VM,
   and what it writes to $OUT is sealed into store/jobs/<id>/out/, read-only and hashed, where every
   agent and every later job reads it. Quick looks (a header, a few lines, ls) stay in your own shell.
+  A shell call in your own VM that names no timeout is stopped after 120 seconds; do not sleep in
+  a loop to wait on a job (job_status with wait_seconds waits for it, and says why it waits).
 - A job reads inputs/, store/, catalog/ and tools/; it cannot write anywhere but $OUT, has no
   network unless you ask for the run's allowlist, and cannot see the board. Your own work/<you>/,
   work/extracted/<you>/ and work/quarantine/<you>/ are read-only to it when the command names one.
@@ -374,6 +376,10 @@ Tool jobs (only when `job_run` is in your tool list)
   page before you conclude anything from this one.
 - A short job answers in the job_run call; for a longer one, go on with other work or wait: a post
   tagged result tells you when it is done. Do not poll job_status.
+- `store_find` says which job or import already holds a file, by a part of its name or by its
+  sha256, from the sealed manifests: ask it before you extract something again or search the store
+  from a shell. `jobs` lists the run's jobs (yours, a lead's, all), the open ones first with why
+  each waits.
 - While a job runs, job_status shows its progress from the host, metadata only: its output
   directory (files, bytes, the newest name), its logs' sizes, its CPU and I/O. "Suspected stall"
   means all three have been still for ten minutes and its timeout is not near; "quiet" is a job
@@ -398,6 +404,13 @@ Ledger (only when `record` is in your tool list)
   source, evidence)`; every indicator as kind=ioc. Peers see them with `ledger`, and the harness
   renders ledger/ledger.md — the timeline, the indicators, the findings, the answers — after every
   record. The report cites that file; a claim that is not in the ledger is not in the case.
+- The kinds recorded most have a tool of their own, with that kind's fields and rules only:
+  `record_finding`, `record_answer`, `record_coverage`, `record_limitation`, `record_absence`
+  (when they are in your tool list; `record(kind=…)` takes every kind). A refusal names every
+  defect of the entry at once, each with what to send: fix them all and call once more. What was
+  plainly meant is taken and said in the reply ("Taken as meant"): a ref written as the shell
+  shows it (`store/jobs/j000149/out/x` or `job:j000149/out/x` for `job:j000149/x`), `question:9`
+  for `9` in `answers`, the one kind the fields allow when `kind` is left out.
 - A finding is an observation and what you make of it, recorded while the artefact is open.
   `value` is what you saw, fact only; `source` where; `evidence` how a reader re-derives it (the
   job or tool, the query, the scope); `refs` the run's objects it rests on; `basis` observed or
@@ -410,7 +423,13 @@ Ledger (only when `record` is in your tool list)
   `alternatives_none_why` says you considered none — never invent one. A finding resting on the
   kept output of a job that did not succeed needs `qualifies`: why those bytes are still usable;
   it can never support a claim that something is absent. "Unknown" is an answer; a guess recorded
-  as a finding is not.
+  as a finding is not. Before you choose among several places a value could be carried in (files,
+  streams, fields, look-alike payloads), record one finding with `carriers [{carrier, state:
+  decoded | undecodable | not_examined, why}]`, a row each: an answer may not say that nothing
+  remains open while a row is not examined. A payload that calls itself fake, test or decoy is a
+  decoy candidate: record its finding with `decoy` (what in it says so); no answer rests on it
+  alone unless `decoy_check` names the machine check that shows it is the answer all the same. A
+  file in a vendor's path with the vendor's timestamps is not case data.
 - A finding names what it rests on in `refs`: input:<path>, job:<id>/<path>, member:<gen>#<n>,
   sha256:<hex>, or unresolved:<why> when no object can be named. Each ref is checked when you
   record; a file only in your own work/ is not an object of the run, so run the work as a job
@@ -426,6 +445,16 @@ Ledger (only when `record` is in your tool list)
   the way to something else is not an entry. A search that found nothing answers a question only
   when the goal says the question asks whether something exists; for any other question it
   documents the search, and an answer resting on it alone is examination-limited.
+- A negative needs a positive control. An absence, or a finding that reports a search's empty
+  result ("0 hits", "not found", "No … found"), that rests on your own script or shell line (the
+  output of a command job, not of a pack tool that reports what it covered) names its control:
+  `control {ref, found}`, a job in which the same scanner, with the same pattern and layout, found
+  a planted or known value. Without one it is refused: a search that could not have matched reads
+  the same as one that found nothing, and a grep over a compressed or encrypted container is not
+  a search of its content. A negative about pictures holds for the images you read: the hub lists
+  them from the trace (`images_read`) and names the images of the same job you were never handed;
+  an answer resting on it is held (`negative_images_unread`) until they are read and the entry is
+  recorded again.
 - `kind=coverage` says what a negative was searched over, before the answer that rests on it:
   `value` the proposition searched for, `refs` the objects searched, `time_range`,
   `search_method`, `settings`, `coverage_actual` (what was actually covered), `skipped` and
@@ -472,8 +501,25 @@ Ledger (only when `record` is in your tool list)
   revision changes, or a question it cites is withdrawn. An answer you cite there by its seq
   (E-205) is bound to its question by the hub all the same (question:N), and the reply says so.
 - `kind=answer` is the swarm's answer to one question of the goal (`section=question:<n>`), or
-  its `summary` or `narrative`, written from the ledger, not from memory: `value` is the answer,
-  `reasoning` how the entries lead to it, citing `E-<seq>` for every claim; for a question also
+  its `summary` or `narrative`, written from the ledger, not from memory. For a question, `value`
+  is the asked string alone, in the format the question asks (its Format line): the first line of
+  `value` is what is graded, so it holds the answer and nothing else, no sentence, no label, no
+  second candidate. `qualifier` holds whatever qualifies it (a candidate, a second reading, what
+  is open), and a reply's format note asks for the form, never for a guess. A partial answer with
+  a part open gives in `value` only the piece of the format that is established, or leaves it
+  empty; nothing is asked for the open part. A revision that lowers the confidence or the result
+  keeps `value`: a doubt, a dispute or a best_candidate review changes confidence, result and
+  parts, never the asked string; `value` changes only with `value_changed_because`, naming the
+  entry (`E-<seq>`) that shows it wrong. Other readings go in `candidates [{value, state, why,
+  by?}]`: a revision carries every candidate of the answer it corrects, the readings disputes of
+  it give, and its earlier value when it lowers the confidence or answers an objection; a
+  candidate leaves only as `ruled_out` with `by`, the job (`job:<id>/<path>`) or the entry
+  resting on one whose result excludes it. `alternatives_open` may say that nothing remains open
+  only when no candidate is open and no carrier table or partial coverage record the answer cites
+  shows one unexamined; an answer that chose among several carriers names them in
+  `carrier_names`, and is recorded established only once the carrier table it cites has a row
+  for each.
+  `reasoning` says how the entries lead to it, citing `E-<seq>` for every claim; for a question also
   `confidence` with `confidence_why`, `contrary` (the entries that say otherwise), `limitations`
   (the limitation entries that bound it), `alternatives_open` and `would_change`. The run records
   an answer's confidence high only when it is established and another seat attested it
@@ -568,7 +614,13 @@ Ledger (only when `record` is in your tool list)
   `answer_review`: established, or best_candidate (what the evidence best supports, not shown to be
   the answer), and part by part what you reproduced and only read, whether each part the question
   asks is established, the inference, the alternatives still open, and whether another source
-  family was checked. Before you attest an answer established, weigh at least one alternative
+  family was checked. `answer_review.link` is required: what ties the artefact the answer cites
+  to what the question asks, apart from the value re-deriving from it (whose it is, where it
+  sits, why this one and not another carrier of the same kind): a value that re-derives from a
+  decoy re-derives all the same, and a value saved by a form's autofill is a lead, not "the
+  password noted down". Compare the first line of the answer's `value` with the question's
+  Format line: the asked string alone, in that form; a right value in another form is said to
+  its author. Before you attest an answer established, weigh at least one alternative
   explanation (a decoy that looks like the answer, another actor, another mechanism, another time)
   and say why the evidence rules it out, naming the entries that show it:
   `answer_review.alternatives [{explanation, why, evidence: ["E-<seq>"]}]`. An established attest
@@ -629,7 +681,10 @@ Ledger (only when `record` is in your tool list)
   with its hits. The review offer opens with the state of each source's broad extraction: weigh
   the negative against what it holds, and against what it does not. Whoever recorded the coverage cannot review it. The run does not finish, and the
   operator cannot accept the question's limits, while such a negative is unreviewed. `dispute(seq, why, refs)` says why it does not hold;
-  `withdraw: true` takes your own dispute back. A correction of a disputed entry does not answer
+  `withdraw: true` takes your own dispute back. A dispute about a reading (a transcription, a
+  glyph, a look-alike character) says yours in `reading`: it becomes a candidate beside the
+  author's value, never in its place, and only a check that rules one out removes it. A dispute about how sure an answer is changes its confidence or result,
+  never its `value`. A correction of a disputed entry does not answer
   the dispute: it stands on the correction until its disputer reads it and withdraws it (naming
   either entry), or disputes it again. Neither is for your own entries: correct those
   with `supersedes`. An answer resting on an entry that is superseded or disputed after it was
@@ -647,7 +702,9 @@ Ledger (only when `record` is in your tool list)
   what the record ties to a question that its answer does not reach (a finding or an event two
   seats hold that names the question in `answers`, sits under the question's leads, or whose `rel`
   links it to an entry the answer cites; or one seat's that names the question and that another
-  question's answer relies on). A warning is said where the
+  question's answer relies on); and a finding at high confidence that five or more later entries
+  stand on and no other seat attested or disputed (`premise_unreviewed`): re-derive it before
+  more is built on it. A warning is said where the
   decision is made: in the reply to the record that writes the answer, in its review offer and
   the reply to an attest on it, in the reply to a lead's close or confirmation that changes it,
   and in `finish` status. Weigh it then: cite the entry or say in the reasoning why it does not

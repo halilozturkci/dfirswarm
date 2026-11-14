@@ -7,7 +7,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-export type SkillSpec = { title: string; when: string; needs?: string[]; tools?: string[]; body: string; router?: boolean };
+export type SkillSpec = { title: string; when: string; needs?: string[]; tools?: string[]; body: string; router?: boolean; card?: string };
 
 /** A pack directory as pack.sh seals one: front matter per skill, INDEX.md generated from it. */
 export async function writePack(root: string, id: string, version: string, skills: Record<string, SkillSpec>): Promise<string> {
@@ -22,7 +22,7 @@ export async function writePack(root: string, id: string, version: string, skill
     await mkdir(dirname(file), { recursive: true });
     await writeFile(
       file,
-      `---\nid: ${skillId}\ntitle: ${spec.title}\nwhen: ${spec.when}\nneeds: [${(spec.needs ?? []).join(", ")}]\ntools: [${(spec.tools ?? []).join(", ")}]\nrequires_host: []\n${spec.router ? "router: true\n" : ""}---\n\n${spec.body}\n`,
+      `---\nid: ${skillId}\ntitle: ${spec.title}\nwhen: ${spec.when}\nneeds: [${(spec.needs ?? []).join(", ")}]\ntools: [${(spec.tools ?? []).join(", ")}]\nrequires_host: []\n${spec.router ? "router: true\n" : ""}${spec.card ? `card: ${spec.card}\n` : ""}---\n\n${spec.body}\n`,
     );
     lines.push(`- \`${skillId}\` ${spec.title}: ${spec.when}`);
   }

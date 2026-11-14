@@ -1,0 +1,60 @@
+{
+  "name": "dpapi_masterkey",
+  "description": "SENSITIVE: verify a Windows DPAPI master key from the user's password or hash, and decrypt a DPAPI blob with a verified master key. RULES: (1) a v10 secret needs the profile key; (2) look where the user keeps secrets (notes, exports, password files, backups) before attacking DPAPI: a key found there is given as a file; (3) a negative from your own crypto counts only after the tool's self-test passed (selftest: true, and self_test in every answer). Every job of this tool is run as secret output (`secret_output: \"required\"`); outside such a job (SECRET_OUTPUT=1, JOB_ID, OUT) it refuses as JSON before it reads or creates anything. MASTER KEYS: masterkey names a master key file, several, or a user's Protect/<SID> directory (AppData/Roaming/Microsoft/Protect/<SID>/<GUID>; the files named by a GUID are taken, at most 64), sid the user's SID (or the name of that directory), and one of password_file, hash_file and empty_password the secret; a masterkey path that does not exist is refused as that, not as a missing SID. Per file the answer gives what the header says (guid with guid_from: the header's GUID, or the file's name where the header's field is not a GUID, so that a key that verifies still opens the blobs that name it; version, policy, flags, rounds, hash_algorithm, cipher_algorithm, the sizes of the backup key, credential history link and domain key, which are measured and not read), supported, attempted, derivations_tried, and verified with verified_with: verified is true ONLY when the master key block's own HMAC matched, so a wrong password is an answer (verified false), never a wrong key and never an exception. Not verified means: not this secret for this SID, or a key the secret does not open by itself (a key under an older password behind the credential history, a domain key). BLOB: blob_file names a DPAPI blob (raw, after the five bytes 'DPAPI', in base64, or a Chromium Local State, whose os_crypt.encrypted_key is read); it is decrypted with each verified master key of the GUID it names in turn (two master key files can carry one GUID, each with a key of its own; blob.masterkeys_of_guid counts them and masterkeys_tried says how many were tried; the signature is checked before a byte is decrypted), from this call's masterkey or from keys_file (the sealed keys of an earlier call), with entropy_file where the blob was made with an optional entropy; decrypted is true only when the blob's signature verified, and blob.why_not says otherwise (no verified key of that GUID, the signature did not verify). STATUS: complete when every file named was read and tried with every derivation and the blob, if one was named, was tried; partial when a file was malformed, unsupported or not tried for time (the tool's clock is 45 s of the manifest's 60), or the blob could not be tried; a file the clock stopped between its derivations says not_tried_for_time with the derivations_tried, and is neither verified nor refused; status_basis says how many verified. WHERE THE VALUES ARE: dpapi_masterkey-keys.jsonl (one line per verified master key FILE: guid, sid, file, verified_with, key_hex; two files that carry one GUID give a line each, with the key each holds, and each says the other in masterkeys[].same_guid_as and the status_basis; the same file named twice gives one line) and dpapi_masterkey-plaintext.jsonl (the blob's clear text as hexadecimal, and as UTF-8 where it is text) under $OUT, mode 0600, created exclusively before anything is read and never replaced (a file already there refuses the call; with nothing verified they stay empty and written is 0). blob_file, entropy_file and keys_file are read before a master key is tried, so a blob file this tool refuses (no blob in it, or JSON nested past what the parser descends) is refused before a key is verified and written; a failed answer made after the values files exist names them in secret_values with the lines each holds. The answer holds no key, no clear text, no fragment and no digest of one: secret_values names the files and counts the lines, and plaintext_bytes is a length. SELF-TEST: every call first runs every primitive against a known answer and a wrong key against each (AES-256 by FIPS 197, AES-256-GCM by the GCM specification's test cases 14 and 16, MD4 by RFC 1320 and a known NT hash, a DPAPI master key by its SHA-1 and by its NT pre-key, a DPAPI blob, a Chromium v10 value); a failed check refuses the call (status failed), because a negative from a reader that does not reproduce its known answers is not a finding. selftest: true alone prints the checks and runs anywhere (it reads no evidence). The primitives are in the standard library alone (no cryptography module is needed) and were compared with the cryptography library's AES-CBC and AES-GCM on random inputs where the tests have it. DPAPI as read here: the pre-key is HMAC-SHA1 over the SID in UTF-16LE with its terminator, keyed by the SHA-1 of the password in UTF-16LE, by its NT hash, and by the NT hash through PBKDF2-SHA256 (10,000 rounds, then one; the newer domain scheme); PBKDF2 with the file's own salt and rounds gives the AES key and IV; a master key is verified only when its own HMAC matches, a blob's clear text returned only when its signature verifies. ONLY SHA-512 (0x800E) with AES-256 (0x6610) is read, what Windows 10 and 11 write: a master key or a blob of other algorithm ids (3DES with SHA-1 of Windows 7 and earlier) answers supported false with the ids and is not attempted, a file that declares more than 1,000,000 PBKDF2 rounds is not attempted, and neither is a blob whose cipher text is over 256 KiB (this AES is Python's). NOT read: the domain backup key, the credential history file (a key under an older password), a machine (SYSTEM) master key, DPAPI-NG. NOT CHECKED AGAINST WINDOWS: the derivation was checked against vectors made by forward implementations written apart from the reader (one with the cryptography library, one with node:crypto in the tests), and the layout of a real Windows 10 master key file and a real Local State blob was read (sizes, GUIDs, algorithm ids, 8,000 rounds), but no real master key was opened with its known password. SECRETS ARE FILES: a password (password_file: UTF-8, one trailing line break dropped), a hash (hash_file: the SHA-1 of the password in UTF-16LE as 20 bytes or 40 hexadecimal digits, or its NT hash as 16 bytes or 32 digits), a key and the keys of an earlier job are named as files of at most 4096 bytes (regular files; a link, a pipe or a device is refused), never given as values: the arguments are recorded in the trace. empty_password: true stands for an account with no password. It never guesses, recovers or cracks a password: it tries the one secret it is given. SIGTERM, SIGINT and SIGHUP end it with one JSON document (status failed, interrupted true, exit 128 plus the signal). A wrong-type or unknown argument is refused as JSON.",
+  "params": {
+    "masterkey": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "The master key file(s) (AppData/Roaming/Microsoft/Protect/<SID>/<GUID>), or the Protect/<SID> directory; one path may be given as a string. At most 64 files"
+    },
+    "sid": {
+      "type": "string",
+      "description": "The user's SID (S-1-5-21-...-RID). Taken from the name of the directory the master key file is in when not given. Exactly the SID: a space or a line break before or after it is refused, not dropped (the SID is part of the key derivation)"
+    },
+    "password_file": {
+      "type": "string",
+      "description": "A file holding the user's Windows password (UTF-8; one trailing line break is dropped). Never a value given inline"
+    },
+    "hash_file": {
+      "type": "string",
+      "description": "A file holding the SHA-1 of the password in UTF-16LE (20 bytes or 40 hexadecimal digits) or its NT hash (16 bytes or 32 digits)"
+    },
+    "empty_password": {
+      "type": "boolean",
+      "description": "true for an account with no password (the empty password is tried); default false"
+    },
+    "blob_file": {
+      "type": "string",
+      "description": "A DPAPI blob to decrypt: raw, after 'DPAPI', in base64, or a Chromium Local State (its os_crypt.encrypted_key)"
+    },
+    "keys_file": {
+      "type": "string",
+      "description": "The sealed dpapi_masterkey-keys.jsonl of an earlier call, to decrypt blob_file without the password again"
+    },
+    "entropy_file": {
+      "type": "string",
+      "description": "The optional entropy the blob was made with, as a file of its raw bytes (at most 4096)"
+    },
+    "selftest": {
+      "type": "boolean",
+      "description": "true alone: run the known-answer checks and print them (no evidence is read; runs outside a job). Every other call runs them first too"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 60,
+  "example": "{\"masterkey\": [\"work/extracted/Protect/S-1-5-21-1111111111-2222222222-3333333333-1001\"], \"password_file\": \"store/jobs/j000012/out/password.txt\", \"blob_file\": \"work/extracted/Local State\"}",
+  "by": "maintainer",
+  "at": "2026-11-13T12:00:00.000Z",
+  "version": 3,
+  "use": {
+    "names": [
+      "Preferred"
+    ]
+  },
+  "requires": [],
+  "secret_output": "required",
+  "sha256": "f0d0b7e10a0941288e04073182588bf86eaf4ee4a11ebf54897e14fba4cd8957"
+}

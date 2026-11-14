@@ -3,6 +3,7 @@ id: antiforensics/wiping
 title: Wiping leads
 when: Overwritten files; a wiping tool appears.
 needs: [antiforensics/traces]
+card: prefetch_mam {"path": "<utility>.pf"} and amcache_apps {"hive": "<Amcache.hve>"} give leads, not an overwrite: Prefetch shows a launch under that name (the hash in its file name is of the path), Amcache that the file was inventoried (sha1_raw is the hash as stored: a match is a lead, a mismatch no exclusion). Identify a renamed utility by the recovered file's content, not its name. Neither says which files were overwritten: separate with record reuse and sequence numbers (mft_records {"path": "<$MFT>", "deleted_only": true}) and usn_journal records for the names. Keep deletion, reuse, overwrite, TRIM and missing coverage apart. Does not show: that a file's bytes are gone.
 tools: [prefetch_mam, amcache_apps, mft_records, usn_journal]
 requires_host: []
 ---

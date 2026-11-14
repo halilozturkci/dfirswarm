@@ -43,6 +43,11 @@ test("refs are checked when written, and a typo is refused with the nearest name
   assert.match((input as { reason: string }).reason, /not in inputs\.json; nearest: input:disk\.E01/);
   const job = await recordEntry(a0, { kind: "finding", ...F, value: "Another", source: "s", evidence: "e", refs: ["job:j000002/report/out.txt"] });
   assert.match((job as { reason: string }).reason, /has no sealed manifest; nearest: job:j000001/);
+  // A job that finished and waits for its seal is said to be that, so the seat waits for its result post instead of running it again.
+  await mkdir(join(storePaths(root).jobs, "j000003"), { recursive: true });
+  await writeFile(join(storePaths(root).jobs, "j000003", "job.json"), JSON.stringify({ id: "j000003", state: "finished" }));
+  const unsealed = await recordEntry(a0, { kind: "finding", ...F, value: "Another", source: "s", evidence: "e", refs: ["job:j000003/x.txt"] });
+  assert.match((unsealed as { reason: string }).reason, /job j000003 has no sealed manifest: it has finished and its output is waiting to be sealed into the store \(state finished\); cite it again after its result post/);
   assert.equal((await recordEntry(a0, { kind: "finding", ...F, value: "Another", source: "s", evidence: "e", refs: ["unresolved:"] })).ok, false, "unresolved: needs its why");
   assert.equal((await recordEntry(a0, { kind: "finding", ...F, value: "Another", source: "s", evidence: "e", refs: Array.from({ length: 21 }, (_, i) => `unresolved:${i}`) })).ok, false, "at most 20 refs");
   // A job's sealed log, and the path as the store shows it (out/…), are refs too.

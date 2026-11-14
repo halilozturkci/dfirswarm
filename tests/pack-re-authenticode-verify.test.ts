@@ -538,7 +538,10 @@ test("names out of a certificate are withheld by shape: canaries of every shape 
 // ---- the real program --------------------------------------------------------------------------------------------------------------
 
 const real = have("osslsigncode") && have("openssl");
-const SKIP = real ? false : "osslsigncode and openssl are not both installed on this machine";
+// The image carries Debian 12's osslsigncode 2.5, the release whose words the tool was checked against; any other release is `unsupported`.
+const OSSL_RELEASE = real ? /^osslsigncode (\d+\.\d+)/.exec(spawnSync("osslsigncode", ["--version"], { encoding: "utf8" }).stdout ?? "")?.[1] ?? "unknown" : "";
+const SKIP = !real ? "osslsigncode and openssl are not both installed on this machine"
+  : OSSL_RELEASE !== "2.5" ? `osslsigncode here is ${OSSL_RELEASE}, not 2.5: the case below holds that it is unsupported` : false;
 
 function sh(cwd: string, cmd: string): string {
   const r = spawnSync("sh", ["-c", cmd], { cwd, encoding: "utf8" });
@@ -640,6 +643,18 @@ test("with the real osslsigncode and a local time-stamp authority: the counter-s
     const bad = body(await tool(AV, cwd, { path: "stamped.exe", trust_ca: "ca.pem", tsa_ca: "other.pem" }));
     assert.equal(bad.signatures[0].timestamp.status, "failed");
     assert.equal(bad.verification, "failed");
+  });
+});
+
+test("with a real osslsigncode of another release than 2.5: nothing is verified, and the answer is unsupported and names the release", { skip: !real ? "osslsigncode and openssl are not both installed on this machine" : OSSL_RELEASE === "2.5" ? "osslsigncode here is 2.5: the cases above read it" : false }, async () => {
+  await withCwd(async (cwd) => {
+    await authority(cwd);
+    await writeFile(join(cwd, "plain.exe"), pe({ table: "none" }));
+    sh(cwd, "osslsigncode sign -certs leaf.pem -key leaf.key -h sha256 -in plain.exe -out signed.exe >/dev/null");
+    const a = refused(await tool(AV, cwd, { path: "signed.exe", trust_ca: "ca.pem" }));          // an answer that is not complete or partial exits 1
+    assert.equal(a.status, "unsupported", JSON.stringify(a));
+    assert.ok(a.status_basis.startsWith(`osslsigncode ${OSSL_RELEASE} is not the release this tool's reading of the program's words was checked against (2.5): nothing was verified`), a.status_basis);
+    assert.equal(a.verification, "not_checked");
   });
 });
 

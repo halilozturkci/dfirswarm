@@ -3,6 +3,7 @@ id: symbols/linux
 title: A Linux kernel's symbol table, matched exactly
 when: A Linux capture needs an ISF, or someone offers a nearby kernel's table.
 needs: []
+card: isf_intake {"path": "<image>", "debug": "<vmlinux>", "kind": "elf", "build_identity": "<release>", "symbols_out": "<dir>"} is ready only when the table's banner is exactly one found in the image: a near release is no match, a System.map is never ready, blocked keeps no table. Move a ready table out of $OUT before any report. Does not show: that the examination will work.
 tools: [isf_intake, vol_readiness]
 requires_host: [vol, dwarf2json]
 ---
@@ -24,4 +25,4 @@ A Linux ISF must be made for the exact kernel build, with its architecture. A ne
 Record: the banner (release word only in a post) and its offset, the architecture, the debug material's source, the converter, the table's identity and digest, the verdict of `isf_intake` and of `vol_readiness`.
 **A program that left a process.** A Volatility or dwarf2json that leaves a process running makes `vol_readiness` and `isf_intake` `partial` (`program_group`); `isf_intake` then keeps no table.
 
-Sensitive output: none here; a symbol table is not a secret, but it stays local-only: out of a thread and a report package, and out of a job's output except the one table `isf_intake` writes there (above).
+Sensitive output: none here; a symbol table is not a secret, but it stays local-only (step 4).

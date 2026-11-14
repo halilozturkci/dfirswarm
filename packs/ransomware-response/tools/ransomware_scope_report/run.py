@@ -192,11 +192,12 @@ from pathlib import Path
 PARSER = "ransomware_scope_report/1"
 WORK = "report"
 TOOL = "ransomware_scope_report"
-ACCEPTED = {"censuses": ("encrypted_survey/3",), "extents": ("encryption_extent/1",), "recovery_checks": ("recovery_validate/1",)}
+ACCEPTED = {"censuses": ("encrypted_survey/3", "encrypted_survey/4", "encrypted_survey/5"), "extents": ("encryption_extent/1",), "recovery_checks": ("recovery_validate/1",)}
 KINDS = ("censuses", "extents", "recovery_checks", "timelines", "coverage")
 DEFAULT_SECONDS, MAX_SECONDS = 780, 840    # the manifest allows 900
 MAX_INPUTS = 100000
 MAX_HOSTS = 100000
+MAX_HOST_NAME = 255             # the longest host name taken from a row of a timeline (as for a spec's host and expected_hosts)
 MAX_LINE = 1 << 20
 MAX_KIND = 100
 SAT = 1 << 50                # a byte or run sum is held at most this high (1 PiB); a sum that reaches it is shown as the cap and the answer is partial
@@ -569,6 +570,15 @@ def print_answer(answer, **dumps_kwargs):
 
 install_signal_handlers(lambda signum: interrupted_answer(signum))
 # END SHARED STOP
+
+# The order of the hosts is put together after the reading, and what the reading found is worth ordering: it may run to this many seconds past
+# max_seconds (840 + 20 stays below the manifest's 900). This is outside the shared STOP block, whose out_of_time is the reading's clock.
+ORDER_GRACE = 20
+
+
+def late():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"] + ORDER_GRACE
+
 
 # BEGIN SHARED WITHHOLDING
 # The same text is in every tool that withholds identifier-shaped strings and credentials (the network, base, encrypted-containers,
@@ -1203,6 +1213,8 @@ def cell(value):
 # the copies equal). A path is printed only through shown(): every component is judged, and no directory above a file is exempt.
 # Everything derived from a name that is withheld (an extension, a stem, a length, the place of the name among its siblings) is withheld
 # with it: a name that is withheld is replaced by one constant marker, and the order of a listing never follows the text that was withheld.
+import heapq
+
 WITHHELD = "<identifier-shaped name withheld>"
 WITHHELD_PATHS = [0]              # printed paths that had a component withheld (one per call of shown)
 _IDRUN = re.compile(r"[A-Za-z0-9]{8,}")
@@ -1340,38 +1352,87 @@ def shown(path, values=(), keep_last=False, count=True):
 
 
 _ORDER_SALT = os.urandom(16)
+# A directory is read through listing() and put in order through print_order(), both under the tool's clock (out_of_time of the STOP block, or
+# the clock a caller names): one directory of two million entries was held whole (900 MB) and had every name judged (a minute) past a clock
+# of two seconds, because a walk reads its clock between entries and the listing and the order came before the first.
+MAX_LISTED = 1 << 18              # entries of one directory held at once (an entry with its name and path is a few hundred bytes)
+NAMES_CUT = {"not_judged": 0}     # entries print_order put in order without judging their name, because the clock had run out
 
 
-def print_order(entries, judged, hidden=None):
+def _rank(path):
+    """A keyed hash of a whole path under the salt of this run: an order drawn afresh every run, unrelated to the name and to the listing."""
+    return hashlib.blake2b(path.encode("utf-8", "surrogatepass"), key=_ORDER_SALT, digest_size=8).digest()
+
+
+def listing(it, late=None):
+    """The entries of one directory (`it`, an os.scandir iterator) that a walk examines: read under the clock (`late`, the tool's out_of_time
+    unless given, read for every entry) and at most MAX_LISTED of them held. Past the bound the directory is read on only to be counted, and
+    the entries kept are the MAX_LISTED of the smallest keyed hash of their path (_rank): which entries the bound keeps follows neither a name
+    nor the order the directory lists them in. Returns (entries, not_kept, cut): not_kept is how many entries were read and not kept, and cut
+    is True when the clock ended the reading (the entries after it are not known, not even their number)."""
+    late = late or out_of_time
+    held, heap, read, cut = [], None, 0, False
+    for entry in it:
+        if late():
+            cut = True
+            break
+        read += 1
+        if heap is None:
+            held.append(entry)
+            if len(held) > MAX_LISTED:
+                heap = [(-int.from_bytes(_rank(e.path), "big"), n, e) for n, e in enumerate(held)]
+                held = None
+                heapq.heapify(heap)
+                heapq.heappop(heap)                   # the largest hash goes: the heap keeps the smallest, the largest of them on top
+        else:
+            key = -int.from_bytes(_rank(entry.path), "big")
+            if key > heap[0][0]:
+                heapq.heapreplace(heap, (key, read, entry))
+    if heap is not None:
+        held = [k[2] for k in heap]
+    return held, read - len(held), cut
+
+
+def print_order(entries, judged, hidden=None, late=None):
     """The directory entries in the order an answer prints them: by the text printed for each (the marker for a name that is judged
     and withheld, the name itself otherwise; `judged(entry)` says whether the answer prints the entry's name through the judge;
     `hidden(entry)`, when given, says that a name the first rule lets through is withheld all the same, because the note beneath it holds
     its value: it sorts as the marker does), and the entries that print alike in an order drawn afresh every run (a keyed hash of the whole
     path, the directory above included, under a salt of this run: the same name in two directories has two unrelated ranks). The rank of a
     withheld name among its siblings, the order a directory lists them in and the inode never show in what an answer lists, in the
-    order of its rows, in the numbers it hands out or in which entries a limit keeps."""
-    texts = []
-    for entry in entries:
+    order of its rows, in the numbers it hands out or in which entries a limit keeps. The judging runs under the clock (`late`, the tool's
+    out_of_time unless given), read for every entry: once it has run out, the entries not judged yet come after the judged ones in the order
+    of the keyed hash alone, each is counted in NAMES_CUT["not_judged"], and the caller says so and makes its answer partial (a walk on the
+    same clock examines none of them)."""
+    late = late or out_of_time
+    keyed, rest = [], []
+    for n, entry in enumerate(entries):
+        if rest or late():
+            rest.append((_rank(entry.path), n))
+            continue
         name = entry.name
         try:
             if hidden is not None and hidden(entry):
-                texts.append(WITHHELD)
+                text = WITHHELD
             else:
-                texts.append((_judge(name) or name) if judged(entry) else name)
+                text = (_judge(name) or name) if judged(entry) else name
         except OSError:
-            texts.append(_judge(name) or name)
-    order = sorted(range(len(entries)), key=texts.__getitem__)
+            text = _judge(name) or name
+        keyed.append((text, n))
+    NAMES_CUT["not_judged"] += len(rest)
+    keyed.sort()
     out, i = [], 0
-    while i < len(order):
+    while i < len(keyed):
         j = i + 1
-        while j < len(order) and texts[order[j]] == texts[order[i]]:
+        while j < len(keyed) and keyed[j][0] == keyed[i][0]:
             j += 1
-        group = order[i:j]
+        group = [n for _, n in keyed[i:j]]
         if len(group) > 1:
-            group.sort(key=lambda n: (hashlib.blake2b(entries[n].path.encode("utf-8", "surrogatepass"), key=_ORDER_SALT, digest_size=8).digest(), n))
+            group.sort(key=lambda n: (_rank(entries[n].path), n))
         out.extend(group)
         i = j
-    return [entries[n] for n in out]
+    rest.sort()
+    return [entries[n] for n in out] + [entries[n] for _, n in rest]
 # END SHARED NAMES
 
 
@@ -1859,8 +1920,9 @@ def normal_time(value):
     return m.group(1) + "." + ((m.group(2) or "") + "000000")[:6] + "Z"
 
 
-def stream_rows(path, kind, host, input_no, ctx):
-    """Stream one input into the aggregates; returns its facts. A stop at the clock is recorded, not raised."""
+def stream_rows(path, kind, host, input_no, ctx, host_name=None):
+    """Stream one input into the aggregates; returns its facts. A stop at the clock is recorded, not raised. `host_name` is the host the
+    entry names (None when it names none): a timeline event that carries no host of its own is that host's."""
     index, buffer = ctx["index"], ctx["buffer"]
     facts = {"rows": 0, "skipped": 0, "receipt": None, "parser": None, "receipt_status": None, "stopped_by_clock": False}
     fd, st = open_regular(path)
@@ -1898,8 +1960,12 @@ def stream_rows(path, kind, host, input_no, ctx):
                     continue
                 rec = row.get("record")
                 if kind == "timelines":
-                    h, t, k = row.get("host", host), normal_time(row.get("time")), row.get("kind")
-                    if not isinstance(h, str) or not h or t is None or not isinstance(k, str) or not k or len(k) > MAX_KIND:
+                    h, t, k = row.get("host"), normal_time(row.get("time")), row.get("kind")
+                    if h is None:
+                        h = host_name
+                    # A host named in a row is held to the 255 characters the host of a spec and expected_hosts are: a longer name is a row skipped
+                    # (counted, and the answer is partial), never judged and written for every host the page loop reaches.
+                    if not isinstance(h, str) or not h or len(h) > MAX_HOST_NAME or t is None or not isinstance(k, str) or not k or len(k) > MAX_KIND:
                         facts["skipped"] += 1
                         continue
                     hid_row = host_id(ctx, h)
@@ -2060,7 +2126,7 @@ def main():
                         problems["coverage_unreadable"] += 1
                     declared[hid]["coverage"] += 1
                     continue
-                facts = stream_rows(path, kind, hid, input_no, ctx)
+                facts = stream_rows(path, kind, hid, input_no, ctx, host)
             except (OSError, ValueError) as exc:
                 code, text = why_not_opened(exc)
                 problems["input_not_read:" + code] += 1
@@ -2080,7 +2146,9 @@ def main():
                 stopped["input_cut_by_clock"] = stopped.get("input_cut_by_clock", 0) + 1
 
     # the hosts in the order an answer prints them: by the text printed for each, the withheld ones in an order drawn afresh every run
-    entries = print_order([HostEntry(n) for n in ctx["hosts"]], judged_host)
+    entries = print_order([HostEntry(n) for n in ctx["hosts"]], judged_host, late=late)
+    if NAMES_CUT["not_judged"]:
+        stopped["hosts_ordered_unjudged"] = NAMES_CUT["not_judged"]
     rank = {}
     index.db.execute("BEGIN")
     for r, e in enumerate(entries):
@@ -2094,7 +2162,12 @@ def main():
     total = {"hosts": 0, "hosts_with_census": 0, "hosts_unknown": 0, "hosts_conflict": 0, "hosts_census_partial": 0, "census_files": 0, "census_bytes": 0,
              "candidate_files": 0, "candidate_bytes": 0, "extent_bytes_inspected": 0, "recovery_files_checked": 0}
     db = index.db
-    for e in entries:
+    for written, e in enumerate(entries):
+        # The page loop reads the clock too: it judges and writes a row for every host, which on thousands of long names outlasted the
+        # manifest's timeout. At the clock (and the order's grace) it stops, and the hosts not written are counted and make the answer partial.
+        if late():
+            stopped["hosts_not_written"] = len(entries) - written
+            break
         hid = ctx["hosts"][e.name]
         total["hosts"] += 1
         row = {"host_id": "H%d" % hid, "host": shown(e.name, count=False)}
@@ -2102,10 +2175,19 @@ def main():
         inputs = {k: db.execute("SELECT input, parser, receipt, receipt_status, rows, skipped FROM inputs WHERE kind=? AND host=? ORDER BY input", (k, hid)).fetchall()
                   for k in ("censuses", "extents", "recovery_checks")}
         n_census = len(inputs["censuses"])
-        if n_census == 0:
+        # A census that could not be opened (a named pipe, a missing file) was named but not read: a host whose only census is that one
+        # has no census to count, and is unknown like a host that has none (its not_read entry is shown, and the answer is partial).
+        unread_only = n_census == 1 and inputs["censuses"][0][2] == "not_read"
+        if n_census == 0 or unread_only:
             row["scope"] = "unknown"
-            row["scope_basis"] = "this host has no census: nothing is said about its files, and nothing is extrapolated to it from another host"
+            row["scope_basis"] = ("the census named for this host could not be read (not_read): nothing is said about its files, and nothing is "
+                                  "extrapolated to it from another host" if unread_only else
+                                  "this host has no census: nothing is said about its files, and nothing is extrapolated to it from another host")
             total["hosts_unknown"] += 1
+            if unread_only:
+                inp, parser, receipt, rstatus, rows, skipped = inputs["censuses"][0]
+                row["censuses"] = [{"parser": parser, "receipt": receipt, "receipt_status": rstatus, "rows": rows, "rows_skipped": skipped,
+                                    "files": None, "bytes": None, "by_status": {}}]
         else:
             by_input = {}
             for (inp, status, files, size) in db.execute("SELECT input, key, a, b FROM agg WHERE kind='census' AND host=? ORDER BY input, key", (hid,)):
@@ -2113,8 +2195,10 @@ def main():
             censuses = []
             for (inp, parser, receipt, rstatus, rows, skipped) in inputs["censuses"]:
                 st = by_input.get(inp, {})
+                unread = receipt == "not_read"
                 censuses.append({"parser": parser, "receipt": receipt, "receipt_status": rstatus, "rows": rows, "rows_skipped": skipped,
-                                 "files": sum(v["files"] for v in st.values()), "bytes": sum(v["bytes"] for v in st.values()), "by_status": st})
+                                 "files": None if unread else sum(v["files"] for v in st.values()),
+                                 "bytes": None if unread else sum(v["bytes"] for v in st.values()), "by_status": st})
             row["censuses"] = censuses
             if n_census > 1:
                 row["scope"] = "conflict"
@@ -2186,7 +2270,7 @@ def main():
     OWN_NAMES.update(p["all_results"] for p in pages.values() if p.get("all_results"))
     reasons = []
     if total["hosts_unknown"]:
-        reasons.append("%d hosts have no census and are unknown" % total["hosts_unknown"])
+        reasons.append("%d hosts have no census that was read and are unknown" % total["hosts_unknown"])
     if total["hosts_conflict"]:
         reasons.append("%d hosts have more than one census and are not added to the totals" % total["hosts_conflict"])
     if total["hosts_census_partial"]:
@@ -2197,6 +2281,12 @@ def main():
         reasons.append("the time limit (max_seconds %d) was reached: %d inputs were not read" % (max_seconds, stopped["inputs_not_read"]))
     if stopped.get("input_cut_by_clock"):
         reasons.append("the time limit (max_seconds %d) was reached while %d inputs were being read: the rows after the last one read are not counted" % (max_seconds, stopped["input_cut_by_clock"]))
+    if stopped.get("hosts_ordered_unjudged"):
+        reasons.append("the time limit (max_seconds %d, and %d seconds more for the order of the hosts) was reached while the hosts were put in order: "
+                       "%d host names were not judged for it and come last, in an order drawn by a keyed hash of this run" % (max_seconds, ORDER_GRACE, stopped["hosts_ordered_unjudged"]))
+    if stopped.get("hosts_not_written"):
+        reasons.append("the time limit (max_seconds %d, and %d seconds more) was reached while the host pages were written: %d hosts have no row in the "
+                       "pages and are not in the totals" % (max_seconds, ORDER_GRACE, stopped["hosts_not_written"]))
     if not total["hosts"]:
         reasons.append("no host was found in the inputs")
     capped = db.execute("SELECT COUNT(*) FROM agg WHERE b >= ? OR c >= ? OR d >= ?", (SAT, SAT, SAT)).fetchone()[0]

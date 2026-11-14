@@ -50,7 +50,13 @@
   "example": "{\"root\": \"work/extracted/config\"}",
   "by": "maintainer",
   "at": "2026-10-15T09:00:00.000Z",
-  "version": 9,
+  "not_for": [
+    {
+      "what": "whether a disk's snapshot or backing chain is whole",
+      "use": "snapshot_chain_check"
+    }
+  ],
+  "version": 12,
   "use": {
     "extensions": [
       ".vmx",
@@ -64,5 +70,5 @@
       "storage.cfg"
     ]
   },
-  "sha256": "f528e42a8f5364792750703facf7715c898dd7732aff50e6ff5be521e90be9c2"
+  "sha256": "90fc0c0afe25594859ddd1c90b0416530c3a1cfb0a086fd267fd0619c316908e"
 }

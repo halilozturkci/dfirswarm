@@ -11,6 +11,7 @@ First
 `triage/what-you-have` classify the capture
 `triage/container-details` crash dump, LiME, VMware vmem, offsets
 `triage/paging-files` pagefile, swap, hibernation file
+`triage/process-dumps` one process's dump (a minidump, MDMP)
 `acquire/images` how a capture was made, trusted
 `acquire/avml-and-preserve` Linux live capture, order, what to keep
 

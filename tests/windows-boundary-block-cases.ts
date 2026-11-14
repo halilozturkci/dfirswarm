@@ -126,7 +126,8 @@ for (const name of names) {
     assert.equal(r.stop_late, true, "a seal that starts past the tool's seal stop withholds what is not short and plain");
     assert.equal(r.stop_cleared, true);
     assert.ok(r.seconds < 8, `${r.seconds} s of CPU`);
-    assert.match(r.basis, /^\d+ string\(s\) still held/);
+    // every string replaced here was replaced because the judging time ran out, not found to hold a secret-shaped text: the basis begins with the stop
+    assert.match(r.basis, /^judging the strings stopped at the judg/);
   });
 
   test(`${name}: a contains filter sees the text the answer prints: a true piece of a secret that only the backstop replaces and a wrong one give the same answer`, async () => {

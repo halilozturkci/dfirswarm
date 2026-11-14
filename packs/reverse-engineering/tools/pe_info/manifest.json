@@ -84,6 +84,24 @@
   "example": "{\"path\": \"work/extracted/sample.exe\"}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
+  "not_for": [
+    {
+      "what": "a PE's exports, delay-load imports, TLS callbacks, resources, debug and other data directories",
+      "use": "pe_directories"
+    },
+    {
+      "what": "an ELF's symbol tables, notes and dynamic flags",
+      "use": "elf_directories"
+    },
+    {
+      "what": "a Mach-O's symbol table and bind information",
+      "use": "macho_directories"
+    },
+    {
+      "what": "the CLR metadata of a .NET assembly",
+      "use": "clr_inspect"
+    }
+  ],
   "version": 9,
   "sha256": "89a9435fd7b0cd213bb128d25237ca1f18a5623ccb8171078515bb6324f8dcfe"
 }

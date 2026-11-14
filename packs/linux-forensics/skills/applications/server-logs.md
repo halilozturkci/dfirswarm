@@ -3,6 +3,7 @@ id: applications/server-logs
 title: Web, proxy, application and database logs
 when: Reading web, proxy, application or database server logs from the configuration that wrote them.
 needs: []
+card: linux_triage {"source": "<image or root>", "out_dir": "work/<your id>/<name>", "groups": ["web"]} covers only web servers dissect.target knows: read proxy, application and database logs from the raw files; empty is not absence. Read the server's log format and rotation before a line. A status is the server's answer, not the outcome; behind a proxy the client address is the proxy, and forwarded headers count only from a trusted hop. Does not show: who sent a request, or that an attack succeeded.
 tools: [linux_triage]
 requires_host: []
 ---

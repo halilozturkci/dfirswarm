@@ -3,6 +3,7 @@ id: normalise/inventory
 title: What the census guarantees and what it does not
 when: You quote a file count or say a file is not in the delivery.
 needs: []
+card: Census: collection_index {"root": "<collection dir>"} without contains (contains limits the inline page and the hashing; complete_index holds every object). With census.errors, census.stopped or status partial, a count is of what was read. An archive, image or capture is one file with an object_class, its contents uncounted. It cannot see what the collector or an extraction left out. Run it as a job with secret_output: true. Does not show: that nothing else was delivered.
 tools: [collection_index]
 requires_host: []
 ---
@@ -17,4 +18,4 @@ Use when a statement depends on `collection_index` being complete. Not for sourc
 
 Shows: the objects the tool met below the root and how it met them. Does not show: that nothing else was delivered, or that nothing was lost before the tree reached you.
 Record: the answer's `census`, `hashing` and `status`, the index file named, any filter used, and what you reconciled it against.
-Sensitive output: the index lists every path and the SHA-256 of every file except those whose names mark a credential store (`may_hold_secrets`, a name hint only: a key file under another name is hashed like any file). Run it as a job with `secret_output: true`. Paths are withheld by shape: a secret of another shape in a path is printed (a plain password or passphrase alone, lower-case text of 24 letters: all of them; base36 of 24 to 32 characters: 18% to 26%), while the listed forms come out at 2.5% or less. Never copy the digest of a file that is itself a secret into a post, report or indicator list. `hash_credential_stores` with `write_values` puts those digests in the sealed values file only.
+Sensitive output: the index lists every path and the SHA-256 of every file except those whose names mark a credential store (`may_hold_secrets`, a name hint only: a key file under another name is hashed like any file). Run it as a job with `secret_output: true`. Paths are withheld by shape: another shape in a path is printed (a plain password or passphrase, 24 lower-case letters: all; 24 to 32 base36 characters: 18% to 26%); the listed forms: 2.5% or less. Never copy a secret file's digest into a post, report or indicator list. `hash_credential_stores` with `write_values` puts those digests in the sealed values file only.

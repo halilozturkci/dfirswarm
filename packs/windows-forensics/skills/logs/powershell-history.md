@@ -3,6 +3,7 @@ id: logs/powershell-history
 title: PowerShell history
 when: ConsoleHost_history.txt, -EncodedCommand, engine 2.
 needs: [logs/powershell]
+card: ConsoleHost_history.txt is a per-user text file, not an event log: no per-command times, several sessions in one file, configurable, so a missing line is not a command that was not typed. Its file times (mft_records {"path": "<$MFT>", "name": "ConsoleHost_history"}) do not bracket a session or date a line: put its lines on a timeline only beside a source that carries time, and check every profile. -EncodedCommand is base64 of UTF-16LE: keep the encoded form and record the decoding. EngineVersion 2.0 in event 400 (evtx_query {"path": "<log>.evtx", "event_ids": [400]}) is a request or a start, not absent logging. Does not show: who typed it, or that the code completed.
 tools: [mft_records, evtx_query]
 requires_host: []
 ---

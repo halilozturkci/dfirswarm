@@ -77,6 +77,7 @@ import { execFile, execFileSync, spawn } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { appendFileSync, chmodSync, closeSync, createReadStream, existsSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { stat } from "node:fs/promises";
+import v8 from "node:v8";
 import { connect, createServer, type Server, type Socket } from "node:net";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { jsonlLines } from "../extensions/jsonl-lines.ts";
@@ -93,7 +94,10 @@ import { similarView } from "./job-reuse.ts";
 import { bindJobGrants, checkJobGrants, fetchForSeat, netTick, netViewFor, requestAccess } from "./net-broker.ts";
 import { readCasePolicy } from "./case-policy.ts";
 import { resolveScope, scopeKindOf } from "./job-scope.ts";
-import { commandNames, libraryHint } from "./library-hint.ts";
+import { commandNames, freshCoverage, libraryHint, shortHint, type CoverageHint, type ShortHint } from "./library-hint.ts";
+import { boundRpcAnswer } from "../extensions/reply-bound.ts";
+import { jobsListing, storeFind } from "./store-find.ts";
+import { loopMonitor, recycleDue, sampleHealth, snapshotAt, snapshotDue } from "./hub-health.ts";
 import { sensitiveIndex } from "./output-hygiene.ts";
 import { ACCESS_RULES, apiPageHit, classifyTraceRow, type AccessHit } from "./sensitive-access.ts";
 
@@ -103,10 +107,15 @@ import { ACCESS_RULES, apiPageHit, classifyTraceRow, type AccessHit } from "./se
  * run's library whose manifest `use` (or description) matches the files the
  * job declared, the ones its command already runs left out (library-hint.ts).
  */
-async function admissionHint(S: string, spec: JobSpec): Promise<Awaited<ReturnType<typeof libraryHint>>> {
+/** The tools each seat was last told of, by run and seat: a tool is not named to the same seat again for a while (shortHint). */
+const hintSeen = new Map<string, Map<string, number>>();
+async function admissionHint(S: string, spec: JobSpec, who = ""): Promise<ShortHint | null> {
   const r = await resolveScope(S, spec.inputs, {});
   if (!r.ok) return null;
-  return libraryHint(S, r.objects, { skip: (tool) => commandNames(spec.command ?? "", tool) });
+  const key = `${S}\u0000${who}`;
+  const seen = hintSeen.get(key) ?? new Map<string, number>();
+  hintSeen.set(key, seen);
+  return shortHint(await libraryHint(S, r.objects, { skip: (tool) => commandNames(spec.command ?? "", tool) }), seen);
 }
 
 const NO_JOBS = "this run has no job service (a host run, or --no-jobs): run the work in your own shell";
@@ -410,6 +419,12 @@ type HubState = {
   history_bytes?: Record<string, number>;
 };
 
+/** The hub process's memory, in MB: what status.json and hub_memory_high say. */
+export function hubMemory(): { rss_mb: number; heap_used_mb: number; heap_limit_mb: number } {
+  const mb = (x: number) => Math.round(x / 2 ** 20);
+  return { rss_mb: mb(process.memoryUsage.rss()), heap_used_mb: mb(process.memoryUsage().heapUsed), heap_limit_mb: mb(v8.getHeapStatistics().heap_size_limit) };
+}
+
 /**
  * A Unix socket path the kernel will take: 104 bytes on macOS. The collector
  * binds inside the sandbox's traces/, which under a long home is past that
@@ -611,7 +626,7 @@ export function boardTable(hub: {
   // job's output (a page of stdout, the tail of stderr), a note of that for
   // the access record. Whether the job is sensitive is for the hub to say.
   const shown = async (who: string, fn: string, job: Parameters<typeof jobView>[1], stdout?: { offset: number; bytes: number; total: number; path: string }) => {
-    const view = await jobView(S, job);
+    const view = await jobView(S, job, { waiting: hub.jobs?.()?.waitWords(job) });
     if (hub.accessed) {
       if (stdout) await hub.accessed(who, { fn, job: job.id, part: "stdout", path: stdout.path, offset: stdout.offset, bytes: stdout.bytes, total: stdout.total }).catch(() => undefined);
       const err = view.stderr as { tail?: string; bytes?: number } | undefined;
@@ -916,6 +931,8 @@ export function boardTable(hub: {
         ...(raw.independent === true ? { independent: true } : {}),
         // Every output sensitive at seal time (docs/adr/0016); anything but a boolean is refused by the service.
         ...(raw.secret_output !== undefined ? { secret_output: raw.secret_output as boolean } : {}),
+        // Supplied programs the job runs (job-service.ts programLines); the service checks each.
+        ...(raw.programs !== undefined ? { programs: (Array.isArray(raw.programs) ? raw.programs.map(String) : raw.programs) as string[] } : {}),
       };
       // A job run under a lead: the lead must be the seat's own, checked
       // before the job is accepted, and the job goes on the lead's record.
@@ -930,19 +947,39 @@ export function boardTable(hub: {
       if (!r.ok) return r;
       const attached = r.job.requester.agent === who ? await L.attachJob(S, who, r.job.id, raw.lead).catch(() => null) : null;
       // The coverage hint at admission (A1): who else works these questions or these objects now.
-      const coverage = r.job.requester.agent === who ? await L.jobAdmissionHint(S, who, attached?.ok ? attached.lead : raw.lead, r.job.spec.inputs ?? []).catch(() => null) : null;
+      const coverageAll = r.job.requester.agent === who ? await L.jobAdmissionHint(S, who, attached?.ok ? attached.lead : raw.lead, r.job.spec.inputs ?? []).catch(() => null) : null;
+      // Said once to a seat, not with every job (library-hint.ts freshCoverage).
+      const coverageKey = `${S}\u0000cov\u0000${who}`;
+      const coverageSeen = hintSeen.get(coverageKey) ?? new Map<string, number>();
+      hintSeen.set(coverageKey, coverageSeen);
+      const coverage = freshCoverage(coverageAll as CoverageHint | null, coverageSeen);
       // Library visibility (docs/adr/0016): a command job that declared what it
       // reads is told which library tools say they read that kind of file. A hint.
-      const library = r.job.spec.kind === "command" && scopeKindOf(r.job.spec) === "declared" ? await admissionHint(S, r.job.spec).catch(() => null) : null;
+      const library = r.job.spec.kind === "command" && scopeKindOf(r.job.spec) === "declared" ? await admissionHint(S, r.job.spec, who).catch(() => null) : null;
       return {
         ok: true,
         job: await shown(who, "jobSubmit", r.job),
+        // An identical whole-object call was joined to a job that runs or is committed: say whose it is and why the id is not new.
+        ...((r as { joined?: unknown }).joined ? { joined: (r as { joined?: unknown }).joined } : {}),
         ...(attached?.ok && attached.lead ? { lead: attached.lead } : {}),
         ...(coverage ? { coverage: { ...coverage, note: "a hint: another seat works the same questions or objects now; overlap is not identity, so read what they have (leads, list_team) before you duplicate it" } } : {}),
         // The reuse hint (ADR 0017): other seats' same operation over the same objects, under way or committed.
         ...similarView(r.job.id, r.similar ?? [], r.job.spec.independent === true, r.similar_recorded !== false),
         ...(library ? { library } : {}),
       };
+    },
+    // Which job holds a file, by name or content hash, from the manifests (store-find.ts): never a grep over the store.
+    storeFind: async (_who, a) => {
+      const raw = isObject(a[1]) ? (a[1] as Record<string, unknown>) : {};
+      return storeFind(S, { name: typeof raw.name === "string" ? raw.name : undefined, sha256: typeof raw.sha256 === "string" ? raw.sha256 : undefined, limit: typeof raw.limit === "number" ? raw.limit : undefined, job: typeof raw.job === "string" ? raw.job : undefined });
+    },
+    // The run's jobs for a seat (its own, a lead's, all), the open ones first with why each waits.
+    jobsList: async (who, a) => {
+      const svc = hub.jobs?.();
+      if (!svc) return { ok: false, reason: NO_JOBS };
+      const raw = isObject(a[1]) ? (a[1] as Record<string, unknown>) : {};
+      const snap = await L.leadsSnapshot(S).catch(() => null);
+      return jobsListing([...svc.jobs.values()], { who, scope: typeof raw.scope === "string" ? raw.scope : undefined, lead: typeof raw.lead === "string" ? raw.lead : undefined, limit: typeof raw.limit === "number" ? raw.limit : undefined, leadOf: (id) => snap?.state.jobLead.get(id), waitWords: (j) => svc.waitWords(j as never) });
     },
     jobStatus: async (who, a) => {
       const svc = hub.jobs?.();
@@ -1022,6 +1059,8 @@ export class Hub {
   private told = new Set<string>();
   private lastWrite = new Map<string, { who: string; at: number }>();
   private inFlight = new Map<string, number>();
+  /** Set once the hub has decided to end for its keeper to restart it (hub-health.ts recycleDue). */
+  private recycling = false;
   private queue = new Map<string, Array<() => void>>();
   /** Per seat: connections open, and bytes buffered across them. */
   private conns = new Map<string, number>();
@@ -1057,6 +1096,11 @@ export class Hub {
   /** Uploads and downloads in progress, by seat, kind and id. */
   private transfers = new Map<string, Transfer>();
   private transferTimer: ReturnType<typeof setInterval> | null = null;
+  /** Its own memory, read each minute: written to status.json, and said once on the trace past three quarters of the heap's limit. */
+  private memoryTimer: ReturnType<typeof setInterval> | null = null;
+  private healthTimer?: ReturnType<typeof setInterval>;
+  private snapshotTaken = false;
+  private memoryHigh = false;
   /** The sockets a seat's VM holds, and whose: every line written on one is checked against P.WIRE_LINE_MAX. */
   private seatSockets = new WeakMap<Socket, string>();
   private table: ReturnType<typeof boardTable>;
@@ -1238,12 +1282,25 @@ export class Hub {
    * harness trace this hub registered), its board post the harness's.
    */
   private async rereadSweeps(): Promise<void> {
+    // The sweeps recorded under older rules are read again in a process of its own, in the background: a record searched
+    // again lists the store and reads its objects, which the hub's loop must not hold. What it leaves to a next pass is
+    // swept once it answers.
+    void import("../extensions/store-sweep.ts")
+      .then((SW) =>
+        SW.execRereadSweeps(this.cfg.sandbox).then(async (r) => {
+          if (!r.records.length) return;
+          this.log(`store sweeps: ${r.records.length} read again under the sweep's rules version ${r.rules}; ${r.cleared.length} hold(s) cleared, ${r.added.length} added`);
+          await SW.reconcileSweepsAtStart(this.cfg.sandbox);
+        }),
+      )
+      .catch((err) => this.log(`store sweeps read again: ${(err as Error).message}`));
+    // A coverage record whose sweep a crash lost is swept now, not when the finish gate first asks (on the run s082123
+    // four such sweeps ran 85 to 89 minutes after their records, during the finish, while finish status said ready).
     try {
       const SW = await import("../extensions/store-sweep.ts");
-      const r = await SW.rereadSweeps(this.cfg.sandbox);
-      if (r.records.length) this.log(`store sweeps: ${r.records.length} read again under the sweep's rules version ${r.rules}; ${r.cleared.length} hold(s) cleared, ${r.added.length} added`);
+      await SW.reconcileSweepsAtStart(this.cfg.sandbox);
     } catch (err) {
-      this.log(`store sweeps read again: ${(err as Error).message}`);
+      this.log(`store sweeps reconciled at start: ${(err as Error).message}`);
     }
   }
 
@@ -1359,6 +1416,40 @@ export class Hub {
   async start(): Promise<void> {
     this.transferTimer = setInterval(() => this.sweepTransfers(), Math.max(1_000, Math.min(60_000, Math.floor((this.cfg.transferIdleMs ?? TRANSFER_IDLE_MS) / 2))));
     this.transferTimer.unref();
+    // The run s082123's hub ran out of heap after 90 minutes with nothing said before it died (several store sweeps at once, each holding
+    // the store's object list): what it holds is now in status.json, a crossing of three quarters of the limit is on the trace, and the
+    // launchers start it with --heapsnapshot-near-heap-limit, so a hub that dies of it leaves a snapshot in its own directory.
+    this.memoryTimer = setInterval(() => void this.checkMemory(), 60_000);
+    this.memoryTimer.unref();
+    // Each minute, what the hub and the host look like, on the trace (hub-health.ts); and one heap snapshot while it can still be written.
+    const loop = loopMonitor();
+    this.healthTimer = setInterval(() => {
+      const h = sampleHealth(loop.read(), { transfers: this.transfers.size, seats_linked: [...this.status.values()].filter((a) => a.connected).length, queued_prompts: [...this.queued.values()].reduce((n, q) => n + q.length, 0), jobs: this.jobService?.jobs.size ?? 0 });
+      void this.event("hub_health", {}, { ok: true, ...h }).catch(() => undefined);
+      if (snapshotDue(h, this.snapshotTaken)) {
+        this.snapshotTaken = true;
+        try {
+          const file = v8.writeHeapSnapshot(join(this.cfg.dir, `Heap.at-${Math.round(snapshotAt() * 100)}pct.${process.pid}.heapsnapshot`));
+          void this.event("hub_heap_snapshot", {}, { ok: true, file, heap_used_mb: h.heap_used_mb, heap_limit_mb: h.heap_limit_mb }).catch(() => undefined);
+          this.log(`memory: heap snapshot written at ${h.heap_used_mb} of ${h.heap_limit_mb} MB: ${file}`);
+        } catch (err) {
+          void this.event("hub_heap_snapshot", {}, { ok: false, reason: (err as Error).message }).catch(() => undefined);
+        }
+      }
+      // Past the recycle line, at a quiet moment, a supervised hub ends so that its keeper starts it again with --resume.
+      const busyJobs = [...(this.jobService?.jobs.values() ?? [])].filter((j) => j.state === "running" || j.state === "fenced" || j.state === "finished").length;
+      const calls = [...this.inFlight.values()].reduce((a, n) => a + n, 0);
+      const recycle = recycleDue(h, { supervised: process.env.SWARM_HUB_SUPERVISED === "1", callsInFlight: calls, jobsBusy: busyJobs });
+      if (recycle.due && !this.recycling) {
+        this.recycling = true;
+        this.log(`memory: ending for a restart by the keeper: ${recycle.why}`);
+        void this.event("hub_recycled", {}, { ok: true, why: recycle.why, heap_used_mb: h.heap_used_mb, heap_limit_mb: h.heap_limit_mb })
+          .catch(() => undefined)
+          .then(() => this.flushRefusals().catch(() => undefined))
+          .then(() => process.exit(75));
+      }
+    }, 60_000);
+    this.healthTimer.unref();
     // A Unix socket path the kernel takes is 103 bytes and its NUL (104 on
     // macOS): past it `listen` fails with a bare EINVAL, which said nothing
     // about why (measured: a 3-byte run id under macOS's TMPDIR made 105).
@@ -1532,6 +1623,8 @@ export class Hub {
     await this.jobService?.stop("the hub is stopping").catch((err: Error) => this.log(`jobs: stop: ${err.message}`));
     if (this.backstopTimer) clearInterval(this.backstopTimer);
     if (this.transferTimer) clearInterval(this.transferTimer);
+    if (this.memoryTimer) clearInterval(this.memoryTimer);
+    if (this.healthTimer) clearInterval(this.healthTimer);
     for (const key of [...this.transfers.keys()]) this.dropTransfer(key, false);
     await this.flushRefusals().catch(() => undefined);
     // Its link to the collector closes below: a harness line written after it goes the CLI's way.
@@ -1986,7 +2079,14 @@ export class Hub {
             return;
           }
           try {
-            const result = await this.callOnce(agent, String(msg.fn ?? ""), args, controller.signal, msg.rid);
+            const fn = String(msg.fn ?? "");
+            const raw = await this.callOnce(agent, fn, args, controller.signal, msg.rid);
+            // The wall behind every bounded source (extensions/reply-bound.ts): an answer past it is kept whole and named, never sent.
+            const { answer: result, cut } = await boundRpcAnswer(fn, raw, async (text) => {
+              const kept = await P.keepToolOutput(this.cfg.sandbox, P.toolOutputRel("harness", `answer-${fn}`, "text"), text);
+              return kept.write_error ? { write_error: kept.write_error } : { path: kept.path, bytes: kept.bytes, sha256: kept.sha256 };
+            });
+            if (cut) void this.refused(agent, "answer_too_large", `${cut.fn}: ${cut.bytes} bytes over ${cut.max}${cut.kept ? `, kept at ${cut.kept}` : ""}`);
             this.replyRpc(agent, socket, id, result);
           } finally {
             running.delete(id);
@@ -2572,10 +2672,20 @@ export class Hub {
     return Object.fromEntries(this.status);
   }
 
+  /** Said once each time the heap passes three quarters of its limit, and again after it has gone back under two thirds. */
+  async checkMemory(m = hubMemory()): Promise<void> {
+    this.writeStatus();
+    if (!this.memoryHigh && m.heap_used_mb > 0.75 * m.heap_limit_mb) {
+      this.memoryHigh = true;
+      await this.event("hub_memory_high", {}, { ok: true, ...m }).catch(() => undefined);
+      this.log(`memory: ${m.heap_used_mb} MB of a ${m.heap_limit_mb} MB heap in use (rss ${m.rss_mb} MB)`);
+    } else if (this.memoryHigh && m.heap_used_mb < (2 / 3) * m.heap_limit_mb) this.memoryHigh = false;
+  }
+
   private writeStatus(): void {
     try {
       const tmp = `${this.statusFile()}.tmp`;
-      writeFileSync(tmp, `${JSON.stringify({ at: new Date().toISOString(), pid: process.pid, agents: this.statusSnapshot(), finished: this.finished, finish_done: this.finishDone }, null, 2)}\n`);
+      writeFileSync(tmp, `${JSON.stringify({ at: new Date().toISOString(), pid: process.pid, memory: hubMemory(), agents: this.statusSnapshot(), finished: this.finished, finish_done: this.finishDone }, null, 2)}\n`);
       renameSync(tmp, this.statusFile());
     } catch {
       // the admin socket answers the same question
@@ -3285,7 +3395,7 @@ export function msbDbOutcomes(stdout: string): Array<{ agent: string; name: stri
   return [];
 }
 
-const KEPT_ENV = ["SWARM_INBOX_PAGE_CHARS", "SWARM_RUNS_DIR", "SWARM_VM_IMAGE_DIGEST", "SWARM_CUSTODY_TIMEOUT", "SWARM_HISTORY_QUOTA_MB", "SWARM_TRANSFER_PART_BYTES"];
+const KEPT_ENV = ["SWARM_INBOX_PAGE_CHARS", "SWARM_LEAD_MAX_QUESTIONS", "SWARM_RPC_ANSWER_MAX_BYTES", "SWARM_RUNS_DIR", "SWARM_VM_IMAGE_DIGEST", "SWARM_CUSTODY_TIMEOUT", "SWARM_HISTORY_QUOTA_MB", "SWARM_TRANSFER_PART_BYTES"];
 
 /**
  * Bytes of file history one seat may have stored: SWARM_HISTORY_QUOTA_MB, else

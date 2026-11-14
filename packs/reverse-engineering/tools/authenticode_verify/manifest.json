@@ -54,6 +54,6 @@
   "example": "{\"path\": \"work/extracted/sample.exe\", \"trust_ca\": \"inputs/roots.pem\"}",
   "by": "maintainer",
   "at": "2026-11-03T22:00:00.000Z",
-  "version": 6,
-  "sha256": "adf8382559c9cf5c3820accf5eede5a0e4fdca9b46922a2f74754a232ddb39f4"
+  "version": 7,
+  "sha256": "f065c9f1cbbf35647fdddb9a7c76da5bd3736d5485d97e0fdd429cffcb777819"
 }

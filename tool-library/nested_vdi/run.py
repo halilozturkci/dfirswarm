@@ -27,6 +27,14 @@ import os
 import re
 import tempfile
 from pathlib import Path
+import time
+
+# The Sleuth Kit turns a FAT time (a wall-clock time stored with no zone) into seconds with the C library's mktime, in this
+# process's time zone, and iso() writes those seconds as UTC: the times an answer gives are the same on every host only when
+# that zone is UTC, so it is set before pytsk3 is loaded (a host in UTC+3 gave every FAT time three hours early).
+os.environ["TZ"] = "UTC"
+if hasattr(time, "tzset"):
+    time.tzset()
 
 
 class LosslessPage:

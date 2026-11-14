@@ -127,7 +127,7 @@ test("each point delivers the warnings of its moment in the words finish status 
   const r = await run({ goal: GOAL(3) });
   // Question 1: not determinable, no ask and no reason for none.
   const L1 = await planned(r.a0, "1");
-  const abs = ok(await rec(r.a0, { kind: "absence", value: "a hidden volume", source: "inputs/disk.E01", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["1"] })).entry;
+  const abs = ok(await rec(r.a0, { kind: "absence", value: "a hidden volume", source: "inputs/disk.E01", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["1"] })).entry;
   const cov = ok(await rec(r.a0, coverage("1", ["input:disk.E01"], [`E-${abs.seq}`, "job:j000001/hits.txt"]))).entry;
   const a1 = ok(await rec(r.a1, { kind: "answer", section: "question:1", value: "No evidence of a hidden volume was found on the disk", reasoning: `E-${cov.seq}`, ...A, result: "not_determinable" }));
   assert.deepEqual(a1.warned, ["no_acquisition_ask"]);
@@ -243,7 +243,7 @@ test("under more_evidence: no nothing suggests an ask: the record's reply and th
   await mkdir(join(r.S, "network"), { recursive: true });
   await writeFile(join(r.S, "network", "policy.json"), JSON.stringify({ policy: "ctf", more_evidence: "no" }));
   await planned(r.a0, "1");
-  const abs = ok(await rec(r.a0, { kind: "absence", value: "a hidden volume", source: "inputs/disk.E01", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["1"] })).entry;
+  const abs = ok(await rec(r.a0, { kind: "absence", value: "a hidden volume", source: "inputs/disk.E01", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["1"] })).entry;
   const cov = ok(await rec(r.a0, coverage("1", ["input:disk.E01"], [`E-${abs.seq}`, "job:j000001/hits.txt"]))).entry;
   const a = ok(await rec(r.a1, { kind: "answer", section: "question:1", value: "No evidence of a hidden volume was found on the disk", reasoning: `E-${cov.seq}`, ...A, result: "not_determinable" }));
   for (const words of [a.note ?? "", ...(a.warnings ?? [])]) {

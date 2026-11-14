@@ -11,7 +11,8 @@
  * logical image header ("ADLOGICALIMAGE", version, chunk size, the image's
  * own metadata, the first item, the data source name). An item is a node of
  * the tree with its metadata chain and, for a file, a chunk table of zlib
- * streams.
+ * streams; after its name, as FTK Imager writes it, the address of its
+ * parent folder (0 for a top-level item).
  */
 import { createHash } from "node:crypto";
 import { closeSync, ftruncateSync, openSync, writeSync } from "node:fs";
@@ -29,6 +30,8 @@ export type Ad1Node = {
   /** Compressed chunks written as they are, with `size` as the item's size. */
   chunks?: Buffer[];
   size?: number;
+  /** The 8 bytes after the name hold this instead of the parent folder's address. */
+  parentField?: number;
 };
 
 export const md5 = (b: Buffer): string => createHash("md5").update(b).digest("hex");
@@ -161,8 +164,8 @@ export function ad1Data(tree: Ad1Node[], opts: LogicalOpts = {}): { data: Buffer
   return { data, addr };
 }
 
-/** A sibling chain of nodes, each with its metadata, its chunks and its children; the first one's address. */
-function chain(put: Put, at0: () => number, chunkSize: number, nodes: Ad1Node[], addr: Map<Ad1Node, number>): number {
+/** A sibling chain of nodes, each with its metadata, its chunks and its children, under the folder at `parent` (0: the top); the first one's address. */
+function chain(put: Put, at0: () => number, chunkSize: number, nodes: Ad1Node[], addr: Map<Ad1Node, number>, parent = 0): number {
   let first = 0;
   let prev: Buffer | null = null;
   for (const node of nodes) {
@@ -176,6 +179,7 @@ function chain(put: Put, at0: () => number, chunkSize: number, nodes: Ad1Node[],
     h.writeUInt32LE(node.folder ? 5 : 0, 40);
     h.writeUInt32LE(name.length, 44);
     name.copy(h, 48);
+    h.writeBigUInt64LE(BigInt(node.parentField ?? parent), 48 + name.length);
     let mprev: Buffer | null = null;
     for (const [c, k, v] of metaFor(node)) {
       const m = Buffer.alloc(20 + v.length);
@@ -199,7 +203,7 @@ function chain(put: Put, at0: () => number, chunkSize: number, nodes: Ad1Node[],
       table.writeBigUInt64LE(BigInt(at0()), 8 + 8 * pieces.length);
     }
     h.writeBigUInt64LE(BigInt(node.size ?? content.length), 32);
-    if (node.children?.length) h.writeBigUInt64LE(BigInt(chain(put, at0, chunkSize, node.children, addr)), 8);
+    if (node.children?.length) h.writeBigUInt64LE(BigInt(chain(put, at0, chunkSize, node.children, addr, at)), 8);
   }
   return first;
 }

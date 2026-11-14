@@ -91,6 +91,11 @@ export const LEAD_REF_MAX = 2000;
 export const LEAD_NOTE_MAX = 4000;
 export const LEAD_MAX_NEEDS = 20;
 export const LEAD_MAX_ANSWERS = 8;
+/** The most questions one lead may name in this run: SWARM_LEAD_MAX_QUESTIONS (1 to 8; swarm.sh --lead-max-questions), else 8. */
+export function leadMaxAnswers(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(env.SWARM_LEAD_MAX_QUESTIONS);
+  return Number.isInteger(n) && n >= 1 && n <= LEAD_MAX_ANSWERS ? n : LEAD_MAX_ANSWERS;
+}
 export const LEAD_MAX_OPENS = 10;
 /** Whole seconds from the environment, in milliseconds, or the default when unset or not a number. */
 function envMs(name: string, dfltSec: number): number {
@@ -1244,6 +1249,31 @@ export async function seatAvailable(sandboxRoot: string, agent: string, activity
   return { available: true, why: `${agent} can take it` };
 }
 
+/**
+ * "Seats working: n of N" for the header: a seat works when it wrote a
+ * working row within the stale limit or a job of its runs; the others are
+ * named with what they are (done, marked dead, compacting, silent). One
+ * line, the names cut past six.
+ */
+export async function seatsWorkingLine(sandboxRoot: string, snap: LeadsSnapshot, now = Date.now()): Promise<string | null> {
+  const ids = await P.teamIds(sandboxRoot).catch(() => [] as string[]);
+  if (ids.length < 2) return null;
+  const act = await recentActivity(sandboxRoot, Math.max(leadStaleMs(), LEAD_COMPACTION_BOUND_MS), now);
+  let working = 0;
+  const not: string[] = [];
+  for (const id of ids) {
+    const mark = (["done", "dead"] as const).find((m) => existsSync(join(sandboxRoot, "done", "agents", `${id}.${m}`)));
+    const row = act.get(id);
+    const job = snap.jobs.some((j) => j.agent === id && jobOpen(j));
+    if (mark) not.push(`${id} ${mark === "done" ? "done" : "marked dead"}`);
+    else if (row?.compacting && now - row.compacting < LEAD_COMPACTION_BOUND_MS) not.push(`${id} compacting`);
+    else if ((row?.last && now - row.last < leadStaleMs()) || job) working += 1;
+    else not.push(`${id} silent ${row?.last ? `${Math.round((now - row.last) / 60_000)} min` : `${Math.round(leadStaleMs() / 60_000)}+ min`}`);
+  }
+  const rest = not.length > 6 ? `${not.slice(0, 6).join(", ")} and ${not.length - 6} more` : not.join(", ");
+  return `Seats working: ${working} of ${ids.length}${not.length ? ` (${rest})` : ""}.`;
+}
+
 /** How long a held lead may go with no job and no act on it while its holder works elsewhere before it shows as parked (SWARM_LEAD_PARK_SEC, 600). */
 export function parkMs(): number {
   return envMs("SWARM_LEAD_PARK_SEC", 600);
@@ -1492,6 +1522,73 @@ export type LeadsSnapshot = {
   /** The question register (extensions/questions.ts), read beside the leads; null when it could not be read. */
   questions: import("./questions.ts").QuestionsSnapshot | null;
 };
+
+/**
+ * One open, unheld lead for each question of the goal that no lead answers, opened by the harness (swarm.sh
+ * --seed-leads, at kickoff): every question has a lead from the first minute, and a seat takes one with lead_claim
+ * instead of opening a broad one. The open-weight teams opened 11 to 20 leads a run, several questions to a lead, and
+ * a question's only holder could hang for an hour with nobody else on it. Returns the leads opened.
+ */
+export async function seedQuestionLeads(sandboxRoot: string): Promise<{ opened: string[]; had: number }> {
+  const snap = await leadsSnapshot(sandboxRoot);
+  const covered = new Set<string>();
+  for (const l of snap.state.leads.values()) if (!l.closed) for (const a of l.answers) covered.add(P.sectionKey(String(a).replace(/^question:/, "")));
+  const opened: string[] = [];
+  for (const q of snap.goal.questions) {
+    const key = P.sectionKey(q);
+    if (covered.has(key) || snap.answered.has(key)) continue;
+    const text = String((snap.questions?.bySection.get(key) as { text?: string } | undefined)?.text ?? "").replace(/\s+/g, " ").trim();
+    const title = `Answer question ${key}${text ? `: ${text.length > 90 ? `${text.slice(0, 89)}\u2026` : text}` : ""}`;
+    const r = await openLead({ sandboxRoot, agentId: P.SYSTEM_AGENT }, { title, why: "The goal asks it. Seeded at kickoff so that the question has a lead from the first minute: claim it (lead_claim) to work on it, and close it with the answer.", answers: [key] });
+    if (r.ok) opened.push(r.lead.id);
+  }
+  return { opened, had: covered.size };
+}
+
+/** How long a standing finding that answers a question may stand with no answer entry before it is said, and before anyone may write it. */
+export const FOUND_NOT_ANSWERED_MS = 10 * 60_000;
+export const FOUND_ANYONE_ANSWERS_MS = 20 * 60_000;
+
+export type FoundNotAnswered = { question: string; finding: number; by: string; minutes: number; lead: string | null; holder: string | null; anyone: boolean };
+
+/**
+ * The questions a standing finding answers that have no answer entry yet, with the oldest such finding of each. A
+ * value known is not an answer: on the run s5d814f a finding for question 5 stood 58 minutes while two seats waited
+ * for the lead's holder to write the answer, and on s01a4f4 a value was found a minute before the stop and never
+ * recorded. After FOUND_NOT_ANSWERED_MS the holder is told; after FOUND_ANYONE_ANSWERS_MS whoever can cite the
+ * finding is told to write the answer.
+ */
+export function foundNotAnswered(snap: Pick<LeadsSnapshot, "ledger" | "answered" | "state">, now: number): FoundNotAnswered[] {
+  const oldest = new Map<string, P.LedgerEntry>();
+  for (const e of snap.ledger.entries) {
+    if (e.kind !== "finding" || snap.ledger.replaced.has(e.seq)) continue;
+    const raw = (e as { answers?: string[] | string }).answers;
+    for (const a of Array.isArray(raw) ? raw : raw ? [raw] : []) {
+      const q = P.sectionKey(String(a).replace(/^question:/, ""));
+      if (!q || snap.answered.has(q)) continue;
+      const had = oldest.get(q);
+      if (!had || Date.parse(e.at) < Date.parse(had.at)) oldest.set(q, e);
+    }
+  }
+  const out: FoundNotAnswered[] = [];
+  for (const [q, e] of oldest) {
+    const age = now - Date.parse(e.at);
+    if (!(age >= FOUND_NOT_ANSWERED_MS)) continue;
+    const lead = [...snap.state.leads.values()].find((l) => !l.closed && l.holder && l.answers.some((x) => P.sectionKey(String(x).replace(/^question:/, "")) === q)) ?? null;
+    out.push({ question: q, finding: e.seq, by: e.by, minutes: Math.round(age / 60_000), lead: lead?.id ?? null, holder: lead?.holder ?? null, anyone: age >= FOUND_ANYONE_ANSWERS_MS });
+  }
+  return out.sort((a, b) => b.minutes - a.minutes);
+}
+
+/** The digest's line for them, for one seat. */
+export function foundNotAnsweredLine(items: readonly FoundNotAnswered[], me: string): string | null {
+  if (!items.length) return null;
+  const each = items.slice(0, 6).map((x) => {
+    const who = x.holder === me ? "you hold its lead: record the answer now" : x.anyone ? `${x.holder ? `${x.holder} holds its lead and has not answered` : "nobody holds a lead for it"}: whoever can cite E-${x.finding} records the answer now, the holder included` : x.holder ? `${x.holder} holds its lead and is asked to record the answer` : "nobody holds a lead for it: record the answer, citing the finding";
+    return `question:${x.question} (finding E-${x.finding} by ${x.by}, ${x.minutes} min ago; ${who})`;
+  });
+  return `Found but not answered (a finding says it, no answer entry does; an answer is what is graded): ${each.join("; ")}${items.length > 6 ? `; and ${items.length - 6} more` : ""}.`;
+}
 
 export async function leadsSnapshot(sandboxRoot: string): Promise<LeadsSnapshot> {
   const { events, text } = await readLeadEvents(sandboxRoot);
@@ -1825,7 +1922,8 @@ function checkAnswers(raw: unknown): { ok: true; answers: string[]; registered: 
     const key = P.sectionKey(a.replace(/^question:/i, ""));
     if (!answers.includes(key)) answers.push(key);
   }
-  if (answers.length + registered.length > LEAD_MAX_ANSWERS) return { ok: false, reason: `a lead names at most ${LEAD_MAX_ANSWERS} questions` };
+  const most = leadMaxAnswers();
+  if (answers.length + registered.length > most) return { ok: false, reason: `a lead names at most ${most} questions${most < LEAD_MAX_ANSWERS ? ": open one lead for each part of the work, so that each question has a holder who can close it (a lead that named three to five questions lived 50 to 96 minutes in four runs and left its questions without a second hand)" : ""}` };
   const bad = answers.find((a) => !P.LEDGER_ANSWER_ID.test(a));
   if (bad) return { ok: false, reason: `answers takes question ids: Q-19 from the question register, or the goal's own ("3", "Q3", "question:3"; got ${JSON.stringify(bad)})` };
   return { ok: true, answers, registered };
@@ -3987,6 +4085,9 @@ export async function leadsDigest(ctx: P.SwarmContext, o: { mark?: boolean } = {
   lines.push(`Blocked on you: ${blockedOnMe.length ? blockedOnMe.map((x) => `${x.id} (${x.holder ?? "unheld"}) needs ${x.needs.filter((n) => !n.met).map((n) => n.need).join(", ")}`).join("; ") : "none"}.`);
   lines.push(`Awaiting your interpretation: ${awaiting.length ? awaiting.map((a) => `${a.job}${a.lead ? ` (${a.lead})` : ""}${a.reinterpret ? `: its interpretation no longer stands, interpret it again (${a.why})` : ""}${a.unread_bytes ? `: ${a.unread_bytes} of ${a.total_bytes} stdout bytes unread, job_status offset ${a.next_offset}` : ""}`).join("; ") : "none"}.`);
   lines.push(`Questions nobody holds a lead for, with no answer yet: ${cov.uncovered.length ? cov.uncovered.map((q) => `question:${q}${cov.open_leads_for[q] ? ` (open: ${cov.open_leads_for[q].join(", ")})` : ""}`).join(", ") : "none"}.`);
+  // A value known is not an answer: findings that answer a question no answer entry answers yet.
+  const unanswered = foundNotAnsweredLine(foundNotAnswered(snap, Date.now()), me);
+  if (unanswered) lines.push(unanswered);
   // This seat's running jobs that look stuck (B11): all three signals still, not near their timeout. A hint, never a cancel.
   const T = await import("../scripts/job-telemetry.ts");
   const stuck: string[] = [];
@@ -3996,6 +4097,9 @@ export async function leadsDigest(ctx: P.SwarmContext, o: { mark?: boolean } = {
     if (p?.state === "suspected_stall") stuck.push(T.progressWords(j.id, p));
   }
   if (stuck.length) lines.push(`Your running jobs that look stuck: ${stuck.join("; ")}.`);
+  // How many seats work now: with three of eight seats working and the rest waiting, each seat saw only its own state.
+  const working = await seatsWorkingLine(ctx.sandboxRoot, snap).catch(() => null);
+  if (working) lines.push(working);
   // Parked leads (A2) and closures waiting for confirmation (A3): everyone sees them.
   const parked = await parkedLeads(ctx.sandboxRoot, snap).catch(() => [] as ParkedLead[]);
   if (parked.length) lines.push(`Parked (held, no job and no act on it for ${Math.round(parkMs() / 60_000)}+ min while the holder works elsewhere; offered to an idle seat unless the holder acts): ${parked.map((p) => `${p.lead} (${p.holder}, ${Math.round(p.idle_ms / 60_000)} min; ${p.elsewhere})`).join("; ")}.`);
@@ -4011,6 +4115,12 @@ export async function leadsDigest(ctx: P.SwarmContext, o: { mark?: boolean } = {
     // What was delivered now: each offer's first claim counts from here.
     await markOffersSeen(ctx.sandboxRoot, me, notices.filter((n) => n.offer !== undefined && n.kind !== "parked").flatMap((n) => n.batch ?? [{ lead: n.lead, offer: n.offer! }]));
     if (qd) await Q.markQuestionOffersSeen(ctx.sandboxRoot, me, qd.notices.filter((n) => n.kind === "offer" && n.offer !== undefined).map((n) => ({ q: n.q, offer: n.offer! }))).catch(() => undefined);
+  }
+  // No line of the digest is unbounded: it rides on every wait and inbox answer and on every hand-off. A line past the
+  // bound is cut and says so; the registers (leads, finish status, job_status) hold what was cut.
+  const DIGEST_LINE_MAX = 6000;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (lines[i]!.length > DIGEST_LINE_MAX) lines[i] = `${lines[i]!.slice(0, DIGEST_LINE_MAX - 120)}\u2026 (cut here: this line was ${lines[i]!.length} characters; leads, finish status and job_status give it whole)`;
   }
   return { text: lines.join("\n"), notices: [...notices, ...(qd?.notices ?? []).map((n) => ({ kind: `question_${n.kind}` as LeadNotice["kind"], lead: n.q, text: n.text, wakes: n.wakes }))], counts: { ...counts, ...(qd ? { questions: qd.counts } : {}) } };
 }

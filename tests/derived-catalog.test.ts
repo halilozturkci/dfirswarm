@@ -13,8 +13,8 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DERIVED, JobService, type DerivedLimits, type JobRecord, type JobServiceOptions } from "../scripts/job-service.ts";
-import { checkStore, storePaths, verifyJournalText, type JournalLine } from "../scripts/evidence-store.ts";
+import { DERIVED, derivedRank, JobService, type DerivedLimits, type JobRecord, type JobServiceOptions } from "../scripts/job-service.ts";
+import { checkStore, sealTree, storePaths, verifyJournalText, type JournalLine } from "../scripts/evidence-store.ts";
 import { localWorker } from "./job-service-worker.ts";
 import type { WorkerSpec } from "../scripts/vm.ts";
 
@@ -126,6 +126,49 @@ test("the largest objects go first, so many pairs a pass, and nothing offered is
   assert.equal(passes.length, 3, "10 objects at 4 pairs a pass");
   const firstRefs = (passes[0].rows as Array<{ ref: string }>).map((x) => x.ref);
   assert.deepEqual(firstRefs.sort(), ["f6.zip", "f7.zip", "f8.zip", "f9.zip"].map((f) => `job:${r.job.id}/${f}`).sort(), "the largest first");
+  await svc.stop("over");
+});
+
+test("what a user made or kept goes first, a vendor's or the system's files last, the largest first within each (the run sf4406b spent 49 of 50 on Program Files)", async () => {
+  assert.equal(derivedRank("challimage/Users/DukeThomas/Downloads/x.zip"), 0);
+  assert.equal(derivedRank("C/Users/bob/Documents/a.docx"), 0);
+  assert.equal(derivedRank("challimage/Program Files/Common Files/microsoft shared/OFFICE16/x.cab"), 2);
+  assert.equal(derivedRank("challimage/Windows/WinSxS/x.cab"), 2);
+  assert.equal(derivedRank("mat-0001/lib/x86_64-linux-gnu/libavcodec.so.59"), 2);
+  assert.equal(derivedRank("root/usr/share/doc/x.gz"), 2);
+  assert.equal(derivedRank("Users/bob/AppData/Local/Microsoft/Edge/x.zip"), 2);
+  assert.equal(derivedRank("extracted/archive.zip"), 1);
+  const S = sandbox();
+  const { svc } = service(S, { pairsPerPass: 1 });
+  await svc.start();
+  const big = 2000, small = 60;
+  const cmd = [
+    `mkdir -p "$OUT/Program Files/Common Files" "$OUT/Users/bob/Downloads" "$OUT/misc"`,
+    zipCommand([["Program Files/Common Files/big.zip", big], ["misc/mid.zip", 800], ["Users/bob/Downloads/small.zip", small]]).replaceAll("'$OUT/", "os.environ['OUT']+'/"),
+  ].join("\n");
+  const r = await svc.submit("a1", { kind: "command", command: cmd, inputs: [] });
+  assert.ok(r.ok);
+  await until(svc, r.job.id);
+  await eventually(() => of(S, "detect_answered").length === 3, "every object answered", 60000);
+  const order = of(S, "detect_answered").map((l) => (l.rows as Array<{ ref: string }>)[0]!.ref.replace(`job:${r.job.id}/`, ""));
+  assert.deepEqual(order, ["Users/bob/Downloads/small.zip", "misc/mid.zip", "Program Files/Common Files/big.zip"]);
+  await svc.stop("over");
+});
+
+test("a job's copy of a file an import holds (a supplied program's library) is not a new object: skipped, named by the import", async () => {
+  const S = sandbox();
+  mkdirSync(join(S, "staging"), { recursive: true });
+  spawnSync("python3", ["-c", "import zipfile,sys\nwith zipfile.ZipFile(sys.argv[1],'w') as z: z.writestr('m.txt','supplied')", join(S, "staging", "lib.zip")]);
+  await sealTree(S, join(S, "staging"), join(storePaths(S).imports, "mat-0001", "out"), "mat-0001", 1);
+  const { svc } = service(S);
+  await svc.start();
+  const r = await svc.submit("a1", { kind: "command", command: `cp store/imports/mat-0001/out/lib.zip "$OUT/copied.zip"`, inputs: [] });
+  assert.ok(r.ok);
+  await until(svc, r.job.id);
+  await eventually(() => of(S, "derived_offered").length === 1, "the offer");
+  const line = of(S, "derived_offered")[0] as JournalLine & { offered: unknown[]; skipped: Array<{ path: string; same_as: string }> };
+  assert.deepEqual(line.offered, []);
+  assert.deepEqual(line.skipped.map((x) => [x.path, x.same_as]), [["copied.zip", "import:mat-0001/lib.zip"]]);
   await svc.stop("over");
 });
 

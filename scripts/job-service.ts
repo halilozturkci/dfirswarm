@@ -13,7 +13,11 @@
  *
  * `fenced` is written only once msb says the worker is gone: until then no
  * byte of its staging directory is read, so nothing it could still write is
- * sealed. A job that fails keeps what it wrote (committed with its status);
+ * sealed, and the job keeps its worker slot. From `fenced` the slot is free
+ * and the job's output waits in the seal stage, a few seals at once beside
+ * the workers; only the line that puts a seal on the record, and a
+ * generation's or a revision's number, go through the store's one chain.
+ * A job that fails keeps what it wrote (committed with its status);
  * one interrupted by the hub's own death is retried once, and its first
  * attempt's output is kept beside the second's.
  *
@@ -34,15 +38,19 @@
  */
 import { createHash } from "node:crypto";
 import { constants, existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
-import { chmod, copyFile, link, lstat, mkdir, open, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, link, lstat, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { hubAlive, hubProcessFor, Journal, maybeCrash, publishGeneration, publishRevision, readManifest, resealMoved, sealTree, sha256File, sha256Hex, storePaths, traceLineBytes, traceOrigin, type JournalLine, type Manifest, type TraceOrigin } from "./evidence-store.ts";
+import { INDEX_MIN_BYTES } from "./manifest-index.ts";
+import { hubAlive, hubProcessFor, Journal, manifestFile, manifestOf, maybeCrash, publishGeneration, publishRevision, readManifest, resealMoved, sealTree, sha256File, sha256Hex, storePaths, traceLineBytes, traceOrigin, type JournalLine, type Manifest, type TraceOrigin } from "./evidence-store.ts";
 import { chooseImage, readImageRecords, type ImageChoice, type ImageRecord } from "./image-choice.ts";
-import { buildView, declaredScope, dropProjected, freeMb, PROJECTED_DIR, resolveScope, ScopeError, scopeKindOf, scopeManifestText, VIEW_DIR, type ScopeKind, type ScopeObject, type ViewEntry } from "./job-scope.ts";
+import { buildView, declaredScope, dropProjected, freeMb, PROJECTED_DIR, resolveScope, SCOPE_DECLARED_MAX, ScopeError, scopeKindOf, scopeManifestText, VIEW_DIR, type ScopeKind, type ScopeObject, type ViewEntry } from "./job-scope.ts";
 import { assessJob, HEARTBEAT_LINES, HEARTBEAT_STOP, keepSample, readSamples, sampleJob, type JobProgress } from "./job-telemetry.ts";
 import type { Mount, WorkerSpec } from "./vm.ts";
 import { jobNetworkHosts } from "./net-grants.ts";
-import { indexOutputs, objectsMatch, opMatch, rankSimilar, reuseOf, sameAsOf, sameAsView, type Reuse, type SameAs, type Similar } from "./job-reuse.ts";
+import { argRefsWords, resolveToolArgs, type ArgRef } from "./tool-arg-refs.ts";
+import { EACH_SCRIPT, eachOf, eachPlan, eachWords, type EachSpec } from "./tool-each.ts";
+import { dumpMembers, dumpReaders, dumpsPost, membersTsv } from "./dump-members.ts";
+import { indexOutputs, objectsMatch, opMatch, rankSimilar, reuseOf, SAME_AS_SHOWN, sameAsOf, sameAsView, type Reuse, type SameAs, type Similar } from "./job-reuse.ts";
 import { declaredSecretOutput, jobSensitivity, parseSecretDeclaration, recipeSecretRefusal, sensitiveIndex, targetPaths, type SecretDeclaration, type Sensitivity } from "./output-hygiene.ts";
 import { execRefused, execRefusedWords, type ExecRefused } from "./job-exec-refused.ts";
 import { writeRefused, writeRefusedWords, type WriteRefused } from "./job-write-refused.ts";
@@ -208,6 +216,12 @@ export type JobSpec = {
   note?: string;
   parent?: string;
   alias?: string;
+  /** tool: the arguments that were references (job:, import:, input:) and the paths the tool was given for them (scripts/tool-arg-refs.ts). */
+  args_resolved?: ArgRef[];
+  /** A one-file reader given a directory: run once per file it reads there (tool-each.ts). */
+  each?: EachSpec;
+  /** recipe: the one phase of the recipe to run, of those its recipe.json declares (`phases`); the recipe is told in RECIPE_PHASE. Without it the recipe runs whole. */
+  phase?: string;
   experimental?: boolean;
   /** The job image to run in, by profile (disk, memory, mobile, …), when the run declares job images; else the run's worker image. */
   profile?: string;
@@ -220,9 +234,21 @@ export type JobSpec = {
   /**
    * An intended reproduction of work another seat did (docs/adr/0017): a
    * command or a tool only. Recorded, and counted apart by the metrics; the
-   * similar jobs are still named.
+   * similar jobs are still named. It is also what makes the identical
+   * whole-object tool call run a second time: without it that call is
+   * answered with the job already under way or committed (submit, `joined`).
    */
   independent?: boolean;
+  /**
+   * Programs the operator supplied (import:mat-<n>, swarm.sh tool-supply) the
+   * job runs: each is copied into an executable directory inside the worker
+   * before the command, its bin/ directories put on PATH and its lib/
+   * directories on LD_LIBRARY_PATH. Nothing runs where it stands in store/
+   * (sealed files have no execute bit, $OUT is no-exec): on the run sf4406b a
+   * seat copied ffmpeg and zbarimg into $OUT, every call was refused, and the
+   * job ended 0. A command or a tool only; each is added to a declared scope.
+   */
+  programs?: string[];
   /**
    * Every output this job seals is sensitive (docs/adr/0016): its result
    * may hold a secret. Said by the agent, or declared by the tool's manifest
@@ -235,6 +261,27 @@ export type JobSpec = {
 };
 
 export type Requester = { agent: string; name?: string; doing?: string };
+
+/** A request answered with a job that is already under way or committed (the identical whole-object tool call): which job, what it is at, whose it is, and what to do, in words. */
+export type Joined = { job: string; state: JobState; status?: string; requester: string; note: string };
+
+/** One job in the seal stage: what to seal, where, whether its tree is large, and the promise of its commit. */
+/** A file of a job offered to the derived recipes, and one skipped as known by content (a derived_offered line's rows). */
+type OfferedRow = { sha256: string; path: string; bytes: number; recipes: string[] };
+type OfferSkipped = { sha256: string; path: string; same_as: string };
+
+type SealEntry = {
+  job: JobRecord;
+  r: { status: NonNullable<JobRecord["status"]>; exit: number | null; reason?: string };
+  where: string;
+  large: boolean;
+  active: boolean;
+  start: () => void;
+  done: Promise<void>;
+  progress?: { phase?: string; files_done?: number; files_total?: number };
+  /** Its seal failed and is tried again: the tries so far, of how many, the last error, and when the next starts. */
+  retry?: { tried: number; of: number; error: string; next_at: string };
+};
 
 /** A brain-side output being sealed: the ref, the trace line and digest it is held to, and where it came from. */
 export type SealSpec = { kind: "tool" | "trace"; ref: string; digest: string; line_sha256: string; path?: string; origin: TraceOrigin };
@@ -290,9 +337,21 @@ export type JobRecord = {
    * reuse hints (job-reuse.ts, docs/adr/0017): never used to merge.
    */
   reuse?: Reuse;
-  /** Its outputs that are an earlier job's, byte for byte (the job_same_as line). */
+  /**
+   * Its outputs that are an earlier job's, byte for byte: the first few
+   * (SAME_AS_SHOWN at most). Every one is counted in `same_as_total`, and
+   * listed in the side file it names when they are more than the journal
+   * line holds.
+   */
   same_as?: SameAs[];
+  /** How many of its files are an earlier job's bytes, their bytes, and where every one is listed (store/jobs/<id>/same_as.jsonl) when the line does not hold them. */
+  same_as_total?: { files: number; bytes: number; list?: string; list_sha256?: string };
+  /** When its command ended, as the worker wrote its exit status (the file's time), and when its worker was known to be gone: beside finished_at, when the service wrote job_finished. */
+  command_ended_at?: string;
+  worker_gone_at?: string;
   cancel_requested?: string;
+  /** It ran, and its output could not be sealed after every try (sealFailed): the tries, the last error, where what it wrote is, and how it had ended. */
+  seal_failed?: { tries: number; error: string; staging: string; ran: { status: string | null; exit: number | null; reason?: string } };
   lane?: Lane;
   image_choice?: ImageChoice;
   /**
@@ -351,6 +410,8 @@ export type RecipeInfo = {
   sha256: string;
   seconds: number;
   auto: string[];
+  /** The phases the recipe can be run to alone (recipe.json `phases`): "listing" is its catalogue's list before any digest. */
+  phases?: string[];
   experimental?: boolean;
   minBytes?: number;
   suffixes?: string[];
@@ -424,7 +485,32 @@ export type JobServiceOptions = {
   /** Offer what jobs make to the recipes whose trigger is "derived" (on by default in a run: --no-derived-catalog turns it off). */
   derived?: boolean;
   derivedLimits?: Partial<DerivedLimits>;
-  runWorker: (spec: WorkerSpec) => Promise<{ code: number | null; digest?: string; error?: string; fenced: boolean; fence_error?: string; boot_retry?: string; create_ms?: number }>;
+  /**
+   * `gone_at`: when the worker VM went, when the caller can say (vm.ts: when
+   * msb's stop and rm of it had returned, in the pass msb then confirmed it
+   * gone by); absent, the service records when the call returned.
+   */
+  runWorker: (spec: WorkerSpec) => Promise<{ code: number | null; digest?: string; error?: string; fenced: boolean; fence_error?: string; boot_retry?: string; create_ms?: number; gone_at?: string }>;
+  /**
+   * Finished jobs sealed into the store at once (default SEALERS). A stage of
+   * its own: a job's worker slot is free from its job_fenced line, and its
+   * seal waits here, so a worker never waits for a tree to be hashed.
+   */
+  sealers?: number;
+  /**
+   * What seals a tree (default evidence-store.ts sealTree): a seam for a seal
+   * done elsewhere than in the hub's own loop, and for the tests that hold a
+   * seal for seconds.
+   */
+  sealTree?: typeof sealTree;
+  /**
+   * A seal that fails is tried again (default SEAL_RETRY: three tries in all,
+   * 5 s after the first failure, 20 s after the second); after the last the
+   * job ends `failed` with the reason and its requester is told.
+   */
+  sealRetry?: { tries: number; waitMs: number };
+  /** The service's own clocks, in milliseconds (JOB_TIMING); a test shortens them. */
+  timing?: Partial<JobTiming>;
   /**
    * Whether this host has room now for one more worker of this much memory:
    * asked before each worker starts, since several runs may share a host and
@@ -432,7 +518,8 @@ export type JobServiceOptions = {
    * (said on the journal), and is asked again. Absent, there is always room.
    */
   hostRoom?: (memoryMib: number) => Promise<{ ok: boolean; available_mib: number | null; needed_mib: number }>;
-  destroyWorker: (name: string) => Promise<{ ok: boolean; error?: string }>;
+  /** Remove a worker and say whether it is gone; `gone_at`, when it went, when the caller can say (a late fence's `worker_gone_at`). */
+  destroyWorker: (name: string) => Promise<{ ok: boolean; error?: string; gone_at?: string }>;
   /**
    * Whether a stop of the run is under way (the hub's `.stop`, which
    * `swarm.sh stop` writes before it puts the seats away): no new worker is
@@ -466,6 +553,44 @@ export type JobServiceOptions = {
   /** The lead each of these jobs was run under (the lead register's), for the reuse hints; absent, none is named. */
   leadsOf?: (jobs: string[]) => Promise<Map<string, string>>;
 };
+
+/**
+ * The service's own clocks. `watchMs`: how often a running job is looked at
+ * from outside its worker. `exitGraceMs`: how long a worker may stay up after
+ * its command wrote its exit status before the service removes it.
+ * `pastLimitMs`: how long past the job's limit the service waits for a worker
+ * that reported nothing (timeout(1) inside it has ten seconds to kill, the
+ * VM's own limit is two minutes past) before it removes it and writes
+ * job_finished itself. On the run s17fdfe-E2 j000011 ended its command at
+ * 1,700 s of a 1,740 s limit and its job_finished came at 2,449 s: nothing
+ * outside the worker held it to its limit. `fenceRetryMs`: how often a worker
+ * not confirmed gone is asked to go again while its job holds its slot.
+ */
+export type JobTiming = { watchMs: number; exitGraceMs: number; pastLimitMs: number; fenceRetryMs: number };
+export const JOB_TIMING: JobTiming = { watchMs: 2000, exitGraceMs: 60_000, pastLimitMs: 124_000, fenceRetryMs: 10_000 };
+
+/** The most of a job_same_as line's own list, in bytes of JSON: past it (or past SAME_AS_SHOWN files) the list is a side file. */
+export const SAME_AS_LINE_MAX = 1536;
+
+/**
+ * The most of a derived_offered line's own lists (offered and skipped), in
+ * bytes of JSON: past it the lists are a side file beside the job
+ * (store/jobs/<id>/derived_offered.json), and the line carries their counts,
+ * a few of each and the file's sha256.
+ */
+export const OFFERED_LINE_MAX = 16 * 1024;
+export const OFFERED_SHOWN = 5;
+
+/** A seal that failed is tried this many times in all, `waitMs` after the first failure and four times as long after each next. */
+export const SEAL_RETRY = { tries: 3, waitMs: 5000 };
+
+/** Seals at once, by default: one may be a large tree, the other is kept for small ones (sealIsLarge). */
+export const SEALERS = 2;
+/** A tree of more files or bytes than this is a large seal: at most all sealers but one hold such trees. Counted by a bounded walk, never the whole tree. */
+export const SEAL_LARGE_FILES = 2000;
+export const SEAL_LARGE_BYTES = 256 * 1024 * 1024;
+/** The part of the derived catalogue's generations kept for what a user made or kept (derivedRank below 1), whenever it is offered. */
+export const DERIVED_RESERVE = 0.2;
 
 const JOB_ID = /^j\d{6}$/;
 export const TIMEOUT_MAX_SECONDS = 4 * 3600;
@@ -535,8 +660,38 @@ export function boundInputSets(S: string): string[] {
   return out;
 }
 
+/** Whether an import is a program the operator supplied with tool-supply: its committed record (material.json) carries `tool`. */
+export async function suppliedTool(importDir: string): Promise<boolean> {
+  try {
+    const rec = JSON.parse(await readFile(join(importDir, "material.json"), "utf8")) as { tool?: unknown };
+    return Boolean(rec.tool) && typeof rec.tool === "object";
+  } catch {
+    return false;
+  }
+}
+
+/** microsandbox's write quota for a bind with none given (measured on msb: a write stops at 4,294,967,296 bytes). */
+export const MSB_DEFAULT_QUOTA_MB = 4096;
+
+/**
+ * The write quota of a job's $OUT, in MiB: `SWARM_JOB_OUT_QUOTA_MB` when set,
+ * else the room free where it is kept less the room the service keeps free,
+ * shared among the jobs that write at once (`sharers`: this job and every
+ * other that runs), and never below microsandbox's default
+ * (a job could write that much before). Each job used to be given all the
+ * free room: three whole-image extractions of one run were promised the same
+ * 64 GB, and the disk stood at 94%.
+ */
+export function outQuotaMb(free: number | null, minFreeMb: number, env: NodeJS.ProcessEnv = process.env, sharers = 1): number {
+  const set = Number(env.SWARM_JOB_OUT_QUOTA_MB);
+  if (Number.isFinite(set) && set > 0) return Math.floor(set);
+  if (free === null) return MSB_DEFAULT_QUOTA_MB;
+  const n = Number.isFinite(sharers) && sharers >= 1 ? Math.floor(sharers) : 1;
+  return Math.max(MSB_DEFAULT_QUOTA_MB, Math.floor((free - minFreeMb) / n));
+}
+
 export class JobService {
-  readonly o: Required<Pick<JobServiceOptions, "perRequesterRunning" | "perRequesterQueued" | "minFreeMb" | "derived">> & JobServiceOptions;
+  readonly o: Required<Pick<JobServiceOptions, "perRequesterRunning" | "perRequesterQueued" | "minFreeMb" | "derived" | "sealers">> & JobServiceOptions;
   readonly S: string;
   /** Several sets held in place: their directories, read once (the sets do not change during a run). */
   private boundSets?: string[];
@@ -553,6 +708,28 @@ export class JobService {
   private readonly waitingForHost = new Map<string, number>();
   private rotation = 0;
   private stopping = false;
+  private stopReason = "the run is stopping";
+  /**
+   * The seal stage: every job whose worker is confirmed gone and whose output
+   * is not yet on the record, waiting or being sealed (sealQueue holds the
+   * ones that wait). Apart from the workers: on the run s17fdfe-E1 a seal of
+   * 188,114 files held one of six worker slots and the store's one chain, the
+   * other five filled behind it, and no job started for 51 minutes.
+   */
+  private readonly sealing = new Map<string, SealEntry>();
+  private readonly sealQueue: SealEntry[] = [];
+  private sealActive = 0;
+  private sealActiveLarge = 0;
+  /** Jobs whose worker is not confirmed gone, each holding its slot: woken to ask again (sweep, stop). */
+  private readonly fenceWaits = new Map<string, () => void>();
+  /** Work started and not awaited by what started it (offers to the derived recipes, what follows a commit): a stop waits for it. */
+  private readonly background = new Set<Promise<void>>();
+  /** Offers to the derived recipes, one at a time, behind the commits that made them. */
+  private offers: Promise<void> = Promise.resolve();
+  /** Counted for the tests that hold the service to what it must not do. */
+  readonly counters = { offer_file_opens: 0, offers_started: 0 };
+  /** Every file of a job that is an earlier job's bytes, until its job_same_as line and side file are written. */
+  private readonly sameAsFull = new Map<string, SameAs[]>();
   /** Sealing what a stop left, with no hub and nobody to tell (sealLeft). */
   private afterRun = false;
   /** One pump at a time: a call while one runs asks it to go round again. */
@@ -578,9 +755,11 @@ export class JobService {
   private readonly derivedSaid = new Set<string>();
   private timer: ReturnType<typeof setInterval> | undefined;
   /**
-   * Every change to the store and the catalogue, one at a time: a
-   * generation's id and a revision's number are counted from the journal,
-   * and two commits in the same tick would otherwise take the same ones.
+   * What must be one at a time, and only that: the decision and the line that
+   * put a job's sealed output on the record (job_committed), a generation's
+   * id and a revision's number (counted from the journal: two in the same
+   * tick would take the same ones), a seal's publication. Never the hashing
+   * of a tree: that is the seal stage's, beside this chain.
    */
   private chain: Promise<unknown> = Promise.resolve();
   private exclusive<T>(fn: () => Promise<T>): Promise<T> {
@@ -590,12 +769,27 @@ export class JobService {
   }
 
   constructor(options: JobServiceOptions) {
-    this.o = { perRequesterRunning: 2, perRequesterQueued: 8, minFreeMb: 4096, derived: false, ...options };
+    this.o = { perRequesterRunning: 2, perRequesterQueued: 8, minFreeMb: 4096, derived: false, sealers: SEALERS, ...options };
     this.S = resolve(options.sandbox);
   }
 
   private log(line: string): void {
     this.o.log?.(`jobs: ${line}`);
+  }
+
+  private timing(): JobTiming {
+    return { ...JOB_TIMING, ...(this.o.timing ?? {}) };
+  }
+
+  /** Work nobody waits for but a stop: its failure is logged, never raised. */
+  private later(what: string, p: Promise<unknown>): void {
+    const q: Promise<void> = p.then(() => undefined, (err: Error) => this.log(`${what}: ${err.message}`)).finally(() => this.background.delete(q));
+    this.background.add(q);
+  }
+
+  /** Until nothing started in the background is left (what it starts is waited for too). */
+  private async settled(): Promise<void> {
+    while (this.background.size || this.sealing.size) await Promise.allSettled([...this.background, ...[...this.sealing.values()].map((e) => e.done)]);
   }
 
   // --- start and recovery ---------------------------------------------------------
@@ -635,24 +829,33 @@ export class JobService {
           this.jobs.set(id, { id, attempt: 1, spec: l.spec as JobSpec, requester: l.requester as Requester, state: "accepted", accepted_at: l.at, ...(l.dedup_key ? { dedup_key: String(l.dedup_key) } : {}), ...(l.reuse ? { reuse: l.reuse as Reuse } : {}) });
           break;
         case "job_same_as":
-          if (j) j.same_as = l.same_as as SameAs[];
+          if (j) {
+            const list = (l.same_as as SameAs[] | undefined) ?? [];
+            j.same_as = list.slice(0, SAME_AS_SHOWN);
+            // A line from before the side file holds every one, and no count.
+            j.same_as_total = { files: Number(l.files ?? list.length), bytes: Number(l.bytes ?? list.reduce((a, x) => a + (x.bytes ?? 0), 0)), ...(l.list ? { list: String(l.list), list_sha256: String(l.list_sha256 ?? "") } : {}) };
+          }
           break;
         case "job_started":
           if (j) Object.assign(j, { state: "running", attempt: Number(l.attempt), started_at: l.at, worker: l.worker, image: l.image, tool_sha256: l.tool_sha256, accessible: l.accessible, network: l.network, ...(l.scope ? { scope: l.scope as JobScope } : {}), ...(l.sensitive_at_start ? { sensitive_at_start: l.sensitive_at_start as Sensitivity } : {}), ...(l.cpus ? { worker_size: `${l.cpus} vCPU, ${l.memory_mib} MiB` } : {}), ...(l.lane ? { lane: l.lane as Lane } : {}), ...(l.image_choice ? { image_choice: l.image_choice as ImageChoice } : {}) });
           break;
         case "job_finished":
-          if (j) Object.assign(j, { state: "finished", exit: l.exit as number | null, finished_at: l.at, status: l.status, reason: l.reason });
+          if (j) Object.assign(j, { state: "finished", exit: l.exit as number | null, finished_at: l.at, status: l.status, reason: l.reason, ...(l.command_ended_at ? { command_ended_at: String(l.command_ended_at) } : {}), ...(l.worker_gone_at ? { worker_gone_at: String(l.worker_gone_at) } : {}) });
           if (j?.requester.agent === DERIVED) this.derivedSpent.push({ at: Date.parse(String(l.at)), s: Number(l.duration_ms ?? 0) / 1000 });
           break;
         case "job_fenced":
-          if (j && l.fenced) j.state = "fenced";
+          if (j && l.fenced) {
+            j.state = "fenced";
+            // A late fence says when the worker went: job_finished was written before it was known.
+            if (l.worker_gone_at) j.worker_gone_at = String(l.worker_gone_at);
+          }
           break;
         case "job_committed":
           if (j) Object.assign(j, { state: "committed", status: l.status, outputs: l.outputs, image_digest: l.image_digest ?? j.image_digest, ...(l.sensitive ? { sensitive: l.sensitive as Sensitivity } : {}) });
           if (j?.requester.agent === DERIVED && j.spec.kind === "recipe") this.derivedOutputBytes += Number((l.outputs as { bytes?: number } | undefined)?.bytes ?? 0);
           break;
         case "job_failed":
-          if (j) Object.assign(j, { state: "failed", status: "failed", reason: l.reason });
+          if (j) Object.assign(j, { state: "failed", status: "failed", reason: l.reason, ...(l.seal_failed ? { seal_failed: l.seal_failed as JobRecord["seal_failed"] } : {}) });
           break;
         case "job_cancelled":
           if (j) Object.assign(j, { state: "cancelled", status: "cancelled", reason: l.reason });
@@ -669,14 +872,23 @@ export class JobService {
           if (sha) this.derivedKnown.set(sha, "catalogued");
           break;
         }
-        case "derived_offered":
+        case "derived_offered": {
+          // A long list is in the side file the line names (writeOffered); the line holds its first few. A side file
+          // that is gone or is not the bytes the line names is not believed: the job is offered again by recovery.
+          const whole = l.list ? this.offeredList(String(l.list), String(l.list_sha256 ?? "")) : { offered: (l.offered as OfferedRow[] | undefined) ?? [] };
+          if (!whole) {
+            this.log(`${id}: ${String(l.list)} is not there or is not the file its derived_offered line names: its files are offered again`);
+            this.derivedOfferedJobs.delete(id);
+            break;
+          }
           this.derivedOfferedJobs.add(id);
-          for (const o of (l.offered as Array<{ sha256: string; path: string; bytes: number; recipes: string[] }> | undefined) ?? []) {
+          for (const o of whole.offered) {
             if (this.derivedKnown.has(o.sha256)) continue;
             this.derivedKnown.set(o.sha256, "offered");
             this.derivedPending.push({ sha256: o.sha256, job: id, path: o.path, bytes: o.bytes, recipes: o.recipes, tries: 0, parent_status: String(l.parent_status ?? "") });
           }
           break;
+        }
         case "detect_answered":
           this.derivedProcessed.add(id);
           for (const r of (l.rows as Array<{ sha256: string }> | undefined) ?? []) if (this.derivedKnown.get(r.sha256) !== "catalogued") this.derivedKnown.set(r.sha256, "answered");
@@ -686,6 +898,7 @@ export class JobService {
           this.derivedKnown.set(String(l.sha256), "unanswered");
           break;
         case "derived_bounded":
+        case "derived_reserved":
         case "derived_deferred":
           this.derivedSaid.add(`${l.type}:${l.bound}`);
           break;
@@ -716,9 +929,14 @@ export class JobService {
   /**
    * After a crash, each job half done is finished from where it stopped, in
    * the order the steps are written: a worker still up is removed first; a
-   * fenced job is sealed; a tree already moved into the store is sealed where
-   * it is; a committed recipe without its generation gets it; a finished job
-   * nobody was told about is told.
+   * fenced job's seal is queued; a tree already moved into the store is
+   * sealed where it is; a committed recipe without its generation gets it; a
+   * finished job nobody was told about is told.
+   *
+   * The seals are queued for the seal stage and not waited for: on the run
+   * s17fdfe-E1 two restarts each sealed what the last hub had left, one tree
+   * after another, before the service took a job, and the six jobs each
+   * restart then started queued behind that for the rest of the run.
    */
   private async recover(): Promise<void> {
     for (const j of [...this.jobs.values()]) {
@@ -735,27 +953,33 @@ export class JobService {
           // VM (a job with network may already have done what it does); its
           // output so far is kept, as that attempt's or as the job's result.
           const interrupted = { status: "interrupted" as const, exit: null, reason: "the hub stopped while it ran" };
+          j.state = "fenced";
           if (j.attempt < 2 && !j.cancel_requested && j.spec.network === "off" && !j.spec.net_grants?.length) {
-            await this.commit(j, interrupted, `attempt-${j.attempt}-interrupted`);
-            await this.journal.append({ type: "job_retried", job: j.id, attempt: j.attempt + 1, why: "interrupted by the hub's restart" });
-            Object.assign(j, { state: "accepted", attempt: j.attempt + 1 });
-            delete j.outputs;
-            this.queue.push(j.id);
+            // Its first attempt's output is sealed before it is queued again: the retry's staging is the next attempt's.
+            this.later(`${j.id}: recovery`, this.commit(j, interrupted, `attempt-${j.attempt}-interrupted`).then(async () => {
+              await this.journal.append({ type: "job_retried", job: j.id, attempt: j.attempt + 1, why: "interrupted by the hub's restart" });
+              Object.assign(j, { state: "accepted", attempt: j.attempt + 1 });
+              delete j.outputs;
+              // A stop that came meanwhile cancels it on the record (stop's last pass over what is still accepted).
+              if (this.stopping) return;
+              this.queue.push(j.id);
+              void this.pump();
+            }));
           } else {
-            await this.commit(j, interrupted);
+            this.later(`${j.id}: recovery`, this.commit(j, interrupted));
           }
           continue;
         }
         j.state = "fenced";
       }
       if (j.state === "fenced") {
-        await this.commit(j, { status: j.status ?? "ok", exit: j.exit ?? null, reason: j.reason });
+        this.later(`${j.id}: recovery`, this.commit(j, { status: j.status ?? "ok", exit: j.exit ?? null, reason: j.reason }));
         continue;
       }
       // The derived catalogue: a pass committed and not read, a job's files never offered.
       if (j.state === "committed" && j.spec.kind === "detect" && j.requester.agent === DERIVED && !this.derivedProcessed.has(j.id)) await this.fromDetect(j);
       if ((j.state === "failed" || j.state === "cancelled") && j.spec.kind === "detect" && j.requester.agent === DERIVED && !this.derivedProcessed.has(j.id)) await this.derivedReturn(j, []);
-      if (this.o.derived && j.state === "committed" && (j.spec.kind === "tool" || j.spec.kind === "command" || j.spec.kind === "import") && !this.derivedOfferedJobs.has(j.id)) await this.offerFrom(j);
+      if (this.o.derived && j.state === "committed" && (j.spec.kind === "tool" || j.spec.kind === "command" || j.spec.kind === "import") && !this.derivedOfferedJobs.has(j.id)) this.offerLater(j);
       if (j.state === "committed" && j.spec.seal) await this.publishSeal(j);
       if (j.state === "committed" && j.spec.kind === "recipe" && !j.generation && j.status !== "cancelled") {
         await this.afterCommit(j);
@@ -808,6 +1032,7 @@ export class JobService {
             seconds: Number(r.limits?.seconds ?? 900),
             // A recipe the images cannot run, or that carries a declaration it cannot honour, is never triggered.
             auto: unavailable || refused ? [] : (r.auto ?? []),
+            ...(Array.isArray((r as { phases?: unknown }).phases) ? { phases: ((r as { phases: unknown[] }).phases).map(String).filter((x) => /^[a-z][a-z0-9_]{0,31}$/.test(x)) } : {}),
             ...(refused ? { refused } : {}),
             minBytes: Number(r.min_bytes ?? 0) || 0,
             ...(Array.isArray(r.suffixes) ? { suffixes: r.suffixes.map((x) => String(x).toLowerCase()) } : {}),
@@ -912,14 +1137,12 @@ export class JobService {
    * Accept a job, durably, or refuse it with the reason. The answer comes
    * once the acceptance is on disk; the work comes after.
    */
-  async submit(agent: string, raw: Partial<JobSpec>, o: { watch?: number; seal?: SealSpec } = {}): Promise<{ ok: true; job: JobRecord; similar?: Similar[]; similar_recorded?: boolean } | { ok: false; reason: string }> {
+  async submit(agent: string, raw: Partial<JobSpec>, o: { watch?: number; seal?: SealSpec } = {}): Promise<{ ok: true; job: JobRecord; similar?: Similar[]; similar_recorded?: boolean; joined?: Joined } | { ok: false; reason: string }> {
     if (this.stopping || this.held()) return { ok: false, reason: "the run is stopping; no new jobs" };
     // A seal comes only from sealCited, never in what an agent sends.
     const { seal: _seal, scope: _scope, ...asked } = raw;
     const spec = await this.normalise(asked, o.seal);
     if ("reason" in spec) return { ok: false, reason: spec.reason };
-    const queued = [...this.jobs.values()].filter((j) => j.requester.agent === agent && (j.state === "accepted" || j.state === "running"));
-    if (agent !== "system" && agent !== DERIVED && queued.length >= this.o.perRequesterQueued) return { ok: false, reason: `you have ${queued.length} jobs queued or running, the most one agent may have; wait for one (job_status) or cancel one` };
     // The same recipe over the same object is the same result: answered
     // with the earlier job. Never a command, a tool or anything with network.
     const key = spec.kind === "recipe" ? await this.recipeKey(spec) : undefined;
@@ -936,11 +1159,40 @@ export class JobService {
       }
     }
     const requester = await this.requesterOf(agent);
-    const id = this.nextId();
-    // A command or a tool is never merged (docs/adr/0017): what it reads, by
-    // digest, and what it runs are kept, and the jobs of other seats that do
-    // the same over the same objects are named to its requester.
+    // What a command or a tool reads, by digest, and what it runs are kept
+    // (docs/adr/0017), and the jobs of other seats that do the same over the
+    // same objects are named to its requester. A command is never merged.
     const reuse = !key ? await reuseOf(this.S, spec, { collections: this.collections(), targets: targetPaths(spec) }).catch(() => null) : null;
+    // One tool call is: the identical whole-object call (the same tool, the
+    // same arguments, the same declared objects by digest, no members named)
+    // is answered with the job already under way or committed, and whoever
+    // asked is told when it is done. On the run s17fdfe-E1 six seats asked
+    // for the same whole-image extraction within 188 s: 655,871 files and
+    // 117.9 GB were sealed for 27 GB of distinct bytes, each got a
+    // job_similar hint, and every one ran. `independent: true` runs it again.
+    const whole = reuse ? this.sameWholeCall(spec, reuse) : undefined;
+    if (whole) {
+      const open = whole.state !== "committed";
+      const notify = open && agent !== whole.requester.agent && agent !== "system";
+      await this.journal.append({ type: "job_deduplicated", job: whole.id, by: requester, kind: "tool", tool: spec.tool, why: "the same tool, arguments and declared objects, no members named", notify });
+      const until = o.watch && o.watch > 0 ? Date.now() + Math.min(o.watch, 120) * 1000 : 0;
+      if (notify) this.also(whole.id, agent, until);
+      else if (open && until) this.watchers.set(whole.id, Math.max(until, this.watchers.get(whole.id) ?? 0));
+      const mine = whole.requester.agent === agent;
+      const joined: Joined = {
+        job: whole.id,
+        state: whole.state,
+        ...(whole.status ? { status: whole.status } : {}),
+        requester: whole.requester.agent,
+        note: `Not run again: ${mine ? "you" : `${whole.requester.name ?? whole.requester.agent} (${whole.requester.agent})`} asked for the same call (tool ${spec.tool}, the same arguments over the same objects) as job ${whole.id}, which is ${open ? `${whole.state === "accepted" ? "queued" : whole.state === "running" ? "running" : "finished and being sealed"}; you are told when it is done, as its requester is` : `committed (${whole.outputs?.files ?? 0} file(s) in ${whole.outputs?.path ?? `store/jobs/${whole.id}/out`}/)`}. Cite its files as job:${whole.id}/<path>. When a second run is the point, say independent: true.`,
+      };
+      return { ok: true, job: whole, joined };
+    }
+    // The most one agent may have queued or running, asked only of a call that would be a job of its own: a call joined
+    // to a job that runs or is committed (above) adds nothing to the queue, and was refused here before it was looked at.
+    const queued = [...this.jobs.values()].filter((j) => j.requester.agent === agent && (j.state === "accepted" || j.state === "running"));
+    if (agent !== "system" && agent !== DERIVED && queued.length >= this.o.perRequesterQueued) return { ok: false, reason: `you have ${queued.length} jobs queued or running, the most one agent may have; wait for one (job_status) or cancel one` };
+    const id = this.nextId();
     await this.journal.append({ type: "job_accepted", job: id, spec, requester, ...(key ? { dedup_key: key } : {}), ...(reuse ? { reuse } : {}) });
     maybeCrash("job:accepted");
     const job: JobRecord = { id, attempt: 1, spec, requester, state: "accepted", accepted_at: new Date().toISOString(), ...(key ? { dedup_key: key } : {}), ...(reuse ? { reuse } : {}) };
@@ -961,6 +1213,33 @@ export class JobService {
       });
     }
     return { ok: true, job, ...(similar.length ? { similar, similar_recorded: recorded } : {}) };
+  }
+
+  /**
+   * The job a tool call is the same whole-object call as, when there is one
+   * under way or committed sound: the same tool with the same arguments over
+   * the same declared objects (job-reuse.ts: files by digest, the run's
+   * directories by path; a job that declared nothing has none, and is never
+   * the same), no `members` named in either (a call that picks members is
+   * its seat's own selection), nothing that makes two runs differ by
+   * themselves (network, grants) and the same way of running (profile,
+   * supplied programs, secret output). Never for a call marked independent.
+   */
+  private sameWholeCall(spec: JobSpec, reuse: Reuse): JobRecord | undefined {
+    if (spec.kind !== "tool" || spec.independent || !reuse.objects.length || spec.seal) return undefined;
+    const picks = (a: Record<string, unknown> | undefined): boolean => Array.isArray(a?.members) ? a.members.length > 0 : a?.members !== undefined && a?.members !== null && a?.members !== "";
+    if (picks(spec.args) || spec.network !== "off" || spec.net_grants?.length) return undefined;
+    const way = (x: JobSpec) => canonical([x.profile ?? null, [...(x.programs ?? [])].sort(), x.secret_output === true]);
+    let found: JobRecord | undefined;
+    for (const j of this.jobs.values()) {
+      if (j.spec.kind !== "tool" || !j.reuse || picks(j.spec.args) || j.spec.network !== "off" || j.spec.net_grants?.length) continue;
+      const open = j.state === "accepted" || j.state === "running" || j.state === "finished" || j.state === "fenced";
+      if ((!open && !(j.state === "committed" && j.status === "ok")) || j.cancel_requested) continue;
+      if (opMatch(spec, j.spec, reuse.op, j.reuse.op) !== "same tool and arguments" || objectsMatch(reuse.objects, j.reuse.objects)?.objects !== "same" || way(spec) !== way(j.spec)) continue;
+      // The one that is done, else the oldest under way.
+      if (!found || (j.state === "committed" && found.state !== "committed")) found = j;
+    }
+    return found;
   }
 
   /**
@@ -1044,7 +1323,9 @@ export class JobService {
     // An object of the store is itself by content, wherever it sits (the
     // same vault image extracted twice is one object); an input by its stat.
     const image = (await this.imageFor(spec)).ref;
-    if (spec.target?.sha256) return sha256Hex(canonical({ recipe: spec.recipe, sha: r?.sha256, image, content: spec.target.sha256 }));
+    // A phase of a recipe is not the recipe whole: its own key (absent from the key of a whole run, so those keep theirs).
+    const phase = spec.phase ? { phase: spec.phase } : {};
+    if (spec.target?.sha256) return sha256Hex(canonical({ recipe: spec.recipe, sha: r?.sha256, image, content: spec.target.sha256, ...phase }));
     const hashes: string[] = [];
     for (const p of spec.target?.paths ?? []) {
       try {
@@ -1054,7 +1335,7 @@ export class JobService {
         hashes.push(`${p}:missing`);
       }
     }
-    return sha256Hex(canonical({ recipe: spec.recipe, sha: r?.sha256, image, target: hashes }));
+    return sha256Hex(canonical({ recipe: spec.recipe, sha: r?.sha256, image, target: hashes, ...phase }));
   }
 
   /**
@@ -1098,14 +1379,37 @@ export class JobService {
     if (grants.length && kind !== "command" && kind !== "tool") return { reason: "network grants go with a command or a tool job" };
     if (grants.some((g) => !/^N-[1-9]\d{0,6}$/.test(g)) || grants.length > 8) return { reason: "net_grants names up to 8 grants, N-<k>" };
     if (raw.secret_output !== undefined && typeof raw.secret_output !== "boolean") return { reason: "secret_output is true or false" };
-    const base = { kind, inputs, scope: declared.kind, timeout_seconds: timeout, network, ...(raw.scratch ? { scratch: true } : {}), ...(raw.note ? { note: String(raw.note) } : {}), ...(raw.parent ? { parent: String(raw.parent) } : {}), ...(profile ? { profile } : {}), ...(grants.length ? { net_grants: grants } : {}), ...(raw.independent === true && (kind === "command" || kind === "tool") ? { independent: true } : {}), ...(raw.secret_output === true ? { secret_output: true } : {}) } as JobSpec;
+    const programs = Array.isArray(raw.programs) ? [...new Set(raw.programs.map((p) => String(p).trim().replace(/\/+$/, "")))].filter(Boolean) : [];
+    if (raw.programs !== undefined && !Array.isArray(raw.programs)) return { reason: "programs is a list of supplied programs, import:mat-<n>" };
+    if (programs.length && kind !== "command" && kind !== "tool") return { reason: "programs go with a command or a tool job" };
+    for (const p of programs) {
+      const id = /^import:(mat-\d{1,8})$/.exec(p)?.[1];
+      if (!id) return { reason: `programs names programs the operator supplied, as import:mat-<n> (swarm.sh tool-supply lists them on the board and in SWARM.md): ${JSON.stringify(p)} is not one` };
+      if (!existsSync(join(storePaths(this.S).imports, id, "out"))) return { reason: `programs: no supplied program ${p} in this run's store` };
+      // A program, not any material: only what tool-supply sealed (its record carries `tool`, the operator's statement of it) is made
+      // executable. Other operator material (a sample, a reference binary, a library) is read as an input, never run or put on a path.
+      if (!(await suppliedTool(join(storePaths(this.S).imports, id)))) return { reason: `programs: ${p} is operator material, not a supplied program (swarm.sh tool-supply seals programs; material add seals data): name it in inputs to read it` };
+    }
+    // A declared scope is given the programs it runs too: they are read from the store like any import.
+    if (programs.length && declared.kind === "declared") for (const p of programs) if (!inputs.some((x) => x.replace(/\/+$/, "") === p)) inputs.push(p);
+    const base = { kind, inputs, scope: declared.kind, timeout_seconds: timeout, network, ...(raw.scratch ? { scratch: true } : {}), ...(raw.note ? { note: String(raw.note) } : {}), ...(raw.parent ? { parent: String(raw.parent) } : {}), ...(profile ? { profile } : {}), ...(grants.length ? { net_grants: grants } : {}), ...(raw.independent === true && (kind === "command" || kind === "tool") ? { independent: true } : {}), ...(raw.secret_output === true ? { secret_output: true } : {}), ...(programs.length ? { programs } : {}) } as JobSpec;
     if (kind === "tool") {
       const args = raw.args && typeof raw.args === "object" && !Array.isArray(raw.args) ? raw.args : {};
       const checked = await this.toolCheck(String(raw.tool ?? ""), args);
       if (!checked.ok) return { reason: checked.reason };
+      // A reference given as an argument is the path it names; one that names nothing is refused here, with the form that works.
+      const refs = resolveToolArgs(this.S, String(raw.tool), args as Record<string, unknown>, (id) => this.jobs.get(id)?.state);
+      if (!refs.ok) return { reason: refs.reason };
+      // A declared scope is given what the arguments name: the tool could not read it otherwise.
+      if (declared.kind === "declared") for (const r of refs.resolved) if (!base.inputs.some((x) => x === r.object || x.startsWith(`${r.object}/`) || x === r.from) && base.inputs.length < SCOPE_DECLARED_MAX) base.inputs.push(r.from);
+      // A directory given to a one-file reader: the tool runs once per file it reads there, or the call is refused with what to do.
+      const man = JSON.parse(await readFile(join(this.S, "tools", String(raw.tool), "manifest.json"), "utf8"));
+      const each = eachOf(this.S, String(raw.tool), refs.args, man);
+      if (!each.ok) return { reason: each.reason };
+      const withRefs = { tool: String(raw.tool), args: refs.args, ...(refs.resolved.length ? { args_resolved: refs.resolved.slice(0, 32) } : {}), ...(each.each ? { each: each.each } : {}) };
       // The tool's manifest says this job is secret output: so it is, whatever the agent said (false included).
-      if (checked.secret) return { ...base, secret_output: true, secret_output_by: "tool_manifest", tool: String(raw.tool), args };
-      return { ...base, tool: String(raw.tool), args };
+      if (checked.secret) return { ...base, secret_output: true, secret_output_by: "tool_manifest", ...withRefs };
+      return { ...base, ...withRefs };
     }
     if (kind === "command") {
       const command = String(raw.command ?? "");
@@ -1140,7 +1444,9 @@ export class JobService {
       const target = raw.target;
       if (!target || !Array.isArray(target.paths) || !target.paths.length) return { reason: "a recipe job needs a target" };
       for (const p of target.paths) if (!this.insideRun(p)) return { reason: `${p} is not an object of this run` };
-      return { ...base, recipe: r.id, target, timeout_seconds: Math.min(r.seconds, TIMEOUT_MAX_SECONDS), ...(raw.alias ? { alias: String(raw.alias) } : {}), ...(r.experimental ? { experimental: true } : {}) };
+      const phase = raw.phase === undefined ? undefined : String(raw.phase);
+      if (phase !== undefined && !(r.phases ?? []).includes(phase)) return { reason: `${r.id} has no phase ${JSON.stringify(phase.slice(0, 40))} to run alone${r.phases?.length ? ` (it declares ${r.phases.join(", ")})` : " (its recipe.json declares none)"}; leave phase out to run it whole` };
+      return { ...base, recipe: r.id, target, timeout_seconds: Math.min(r.seconds, TIMEOUT_MAX_SECONDS), ...(raw.alias ? { alias: String(raw.alias) } : {}), ...(phase ? { phase } : {}), ...(r.experimental ? { experimental: true } : {}) };
     }
     const targets = Array.isArray(raw.targets) ? raw.targets.filter((t) => t && Array.isArray(t.paths) && t.paths.every((p) => this.insideRun(p))).map((t) => ({ paths: t.paths, ...(t.name ? { name: String(t.name) } : {}), ...(t.ref ? { ref: String(t.ref) } : {}), ...(t.sha256 && /^[0-9a-f]{64}$/.test(t.sha256) ? { sha256: t.sha256 } : {}) })) : [];
     if (!targets.length) return { reason: "a detect pass needs objects of this run" };
@@ -1207,7 +1513,9 @@ export class JobService {
     // The worker kept for short jobs is never a longer one's, even when idle.
     if (lane !== "short" && running.length - short >= this.o.workers - this.shortSlots()) return false;
     if (this.heavy(job) && running.filter((j) => this.heavy(j)).length >= this.heavySlots()) return false;
-    if (lane === "derived") return !running.some((j) => this.laneOf(j) === "derived");
+    // One at a time to its end: a derived job whose seal or generation is still to come counts (its worker slot is
+    // free from job_fenced, and the lane's ceilings are counted from what is committed).
+    if (lane === "derived") return !running.some((j) => this.laneOf(j) === "derived") && ![...this.sealing.values()].some((e) => this.laneOf(e.job) === "derived");
     if (lane === "kickoff") return true;
     // Each agent so many at once in each lane: its own long parses do not hold back its quick look.
     return running.filter((j) => j.requester.agent === job.requester.agent && (this.laneOf(j) === "short") === (lane === "short")).length < this.o.perRequesterRunning;
@@ -1332,9 +1640,11 @@ export class JobService {
     const kind = scopeKindOf(job.spec);
     const tail: Array<Mount & { note?: string }> = [];
     for (const pack of this.o.packDirs) if (existsSync(pack)) tail.push({ host: pack, guest: pack, readonly: true });
-    tail.push({ host: st.out, guest: this.outPath(job), noexec: true });
+    // $OUT's write quota: what the disk holds beyond the room the service keeps free, never below microsandbox's own default (4 GiB),
+    // which stopped whole-image extractions part way through a file (outQuotaMb).
+    tail.push({ host: st.out, guest: this.outPath(job), noexec: true, quota_mb: outQuotaMb(freeMb(st.out), this.o.minFreeMb, process.env, this.stagingSharers(job.id)) });
     tail.push({ host: st.ctl, guest: "/job", noexec: true });
-    const accessOf = (list: Array<Mount & { note?: string }>) => list.map((m) => ({ path: m.guest ?? m.host, access: `${m.readonly ? "read-only" : "read-write"}${m.noexec ? ", no-exec" : ""}${m.note ? `; ${m.note}` : ""}` }));
+    const accessOf = (list: Array<Mount & { note?: string }>) => list.map((m) => ({ path: m.guest ?? m.host, access: `${m.readonly ? "read-only" : "read-write"}${m.noexec ? ", no-exec" : ""}${m.quota_mb ? `, writes up to ${m.quota_mb} MiB` : ""}${m.note ? `; ${m.note}` : ""}` }));
     const strip = (list: Array<Mount & { note?: string }>) => list.map(({ note: _note, ...m }) => m);
     if (kind !== "declared") {
       const all = [...this.broadMounts(), ...tail];
@@ -1422,7 +1732,7 @@ export class JobService {
     // A heartbeat beside the command (job-telemetry.ts): the VM's CPU and I/O counters every 15 s, for the host to read while it runs.
     const run = (cmd: string) => [...pip, ...HEARTBEAT_LINES, `timeout --kill-after=10 ${box} ${cmd} > /job/stdout.log 2> /job/stderr.log`, "echo $? > /job/exit", HEARTBEAT_STOP, ...pipAfter];
     // SECRET_OUTPUT=1 for a job run as secret output (the agent's flag, or its tool's manifest), so a tool can refuse a values mode in a job that is not; unset for any other, whatever the image carries.
-    const head = ["#!/bin/bash", "set -u", `cd ${q(this.S)} 2>/dev/null || cd /`, `export OUT=${q(out)}`, job.spec.secret_output === true ? "export SECRET_OUTPUT=1" : "unset SECRET_OUTPUT", WORKER_PROBE_LINE];
+    const head = ["#!/bin/bash", "set -u", `cd ${q(this.S)} 2>/dev/null || cd /`, `export OUT=${q(out)}`, job.spec.secret_output === true ? "export SECRET_OUTPUT=1" : "unset SECRET_OUTPUT", WORKER_PROBE_LINE, ...programLines((job.spec.programs ?? []).map((p) => p.slice("import:".length)), storePaths(this.S).imports)];
     if (job.spec.kind === "tool") {
       const checked = await this.toolCheck(job.spec.tool ?? "", job.spec.args ?? {});
       if (!checked.ok) throw new Error(checked.reason);
@@ -1432,6 +1742,14 @@ export class JobService {
       // the job's directory before it is accepted, so {OUT} names it.
       const out = this.outPath(job);
       const sub = (v: unknown): unknown => (typeof v === "string" ? v.split("{OUT}").join(out) : Array.isArray(v) ? v.map(sub) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, sub(x)])) : v);
+      const each = job.spec.each;
+      if (each) {
+        // Once per file, in order, each run with its own output directory; the worker's script prints the one answer.
+        for (const [k, file] of each.files.entries()) await writeFile(join(ctl, `args-${k + 1}.json`), JSON.stringify(sub({ ...(job.spec.args ?? {}), [each.param]: file })));
+        await writeFile(join(ctl, "each.json"), JSON.stringify(eachPlan(job.spec.tool ?? "", each, [checked.runtime, checked.entry], box, (n) => `/job/args-${n}.json`)));
+        await writeFile(join(ctl, "each.py"), EACH_SCRIPT);
+        return { lines: [...head, ...run("python3 -I /job/each.py /job/each.json")], tool_sha256: checked.sha256, needs: checked.needs };
+      }
       await writeFile(join(ctl, "args.json"), JSON.stringify(sub(job.spec.args ?? {})));
       return { lines: [...head, ...run(`${checked.runtime} ${q(checked.entry)} < /job/args.json`)], tool_sha256: checked.sha256, needs: checked.needs };
     }
@@ -1449,7 +1767,9 @@ export class JobService {
       // The manifest or recipe.json may carry the key now, though it did not when the job was accepted: not run.
       if (r.refused) throw new Error(r.refused);
       await writeFile(join(ctl, "target.json"), JSON.stringify(job.spec.target));
-      return { lines: [...head, ...run(`${r.runtime} ${q(r.entry)} run --target /job/target.json --out "$OUT"`)], tool_sha256: r.sha256 };
+      // One phase of the recipe, when the job names one it declares: the recipe reads it from RECIPE_PHASE.
+      const phase = job.spec.phase && (r.phases ?? []).includes(job.spec.phase) ? [`export RECIPE_PHASE=${q(job.spec.phase)}`] : ["unset RECIPE_PHASE"];
+      return { lines: [...head, ...phase, ...run(`${r.runtime} ${q(r.entry)} run --target /job/target.json --out "$OUT"`)], tool_sha256: r.sha256 };
     }
     // detect: every recipe of the trigger asked about every target, or, for
     // a derived pass, the pairs whose prefilter matched; one line each.
@@ -1557,6 +1877,13 @@ export class JobService {
       await this.tell(job);
       return;
     }
+    // Picked a moment before the stop: no worker is made behind it, and it is cancelled on the record like the rest of the queue.
+    if (this.stopping) {
+      await this.journal.append({ type: "job_cancelled", job: job.id, reason: this.stopReason });
+      Object.assign(job, { state: "cancelled", status: "cancelled", reason: this.stopReason });
+      await this.project(job);
+      return;
+    }
     const st = this.staging(job);
     await rm(st.base, { recursive: true, force: true });
     let plan: WorkerPlan;
@@ -1569,6 +1896,14 @@ export class JobService {
       Object.assign(job, { state: "failed", status: "failed", reason });
       await this.project(job);
       await this.tell(job);
+      await rm(st.base, { recursive: true, force: true }).catch(() => undefined);
+      return;
+    }
+    // A stop that came while its worker was being laid out: none is made behind it.
+    if (this.stopping) {
+      await this.journal.append({ type: "job_cancelled", job: job.id, reason: this.stopReason });
+      Object.assign(job, { state: "cancelled", status: "cancelled", reason: this.stopReason });
+      await this.project(job);
       await rm(st.base, { recursive: true, force: true }).catch(() => undefined);
       return;
     }
@@ -1603,12 +1938,23 @@ export class JobService {
     const started = Date.now();
     const guard = setInterval(() => void this.watchDisk(job, worker), 15_000);
     guard.unref?.();
-    let result: Awaited<ReturnType<JobServiceOptions["runWorker"]>>;
+    let result: Awaited<ReturnType<JobServiceOptions["runWorker"]>> & { overdue?: string };
+    // When the call returned, taken in its own continuation: what follows it here may wait on the loop.
+    let returnedAt: number | null = null;
+    const ran = this.o.runWorker(workerSpec).then((r) => {
+      returnedAt = Date.now();
+      return r;
+    });
+    // Its own ending is not lost if the service stops waiting for it first.
+    ran.catch(() => undefined);
+    const watch = this.watchWorker(job, st.ctl, started);
     try {
-      result = await this.o.runWorker(workerSpec);
+      result = await Promise.race([ran, watch.overdue]);
     } finally {
       clearInterval(guard);
+      watch.stop();
     }
+    const noticedAt = Date.now();
     maybeCrash("job:ran");
     let exit: number | null = null;
     try {
@@ -1624,13 +1970,16 @@ export class JobService {
       job.needs_unmet = { need: "fuse", tool: job.spec.tool ?? null, image: chosen.ref, profile: chosen.profile ?? job.spec.profile ?? null };
     }
     const cancelled = job.cancel_requested ? `cancelled by ${job.cancel_requested}` : undefined;
-    const stopped = (job as JobRecord & { stopped?: string }).stopped;
+    // A worker taken away by a stop of the run (swarm.sh stop removes the workers; the service's own stop comes after) is stopped, not failed.
+    const stopped = (job as JobRecord & { stopped?: string }).stopped ?? (exit === null && !cancelled && (this.stopping || this.held()) ? "stopped: the run was stopping and its worker was removed" : undefined);
     const failed = !cancelled && !stopped && exit !== null && exit !== 0 && exit !== 124 && exit !== 137;
     // A program its worker could not execute: nothing runs where it stands in
     // store/, work/extracted/, inputs/ or $OUT (job-exec-refused.ts). Read
     // first: the loader's refusal to map a segment ends in exit 127, which is
     // no program missing from the image.
-    const unexecuted = failed ? await execRefused({ ctl: st.ctl, out: st.out, cwd: this.S, exit }).catch(() => null) : null;
+    // At exit 0 only the shell's line for a program in $OUT is read (a script that went on): the job is ok, and its reason says what did not run.
+    const noexec = [{ guest: this.outPath(job), host: st.out }, { guest: st.out, host: st.out }];
+    const unexecuted = failed || (exit === 0 && !cancelled && !stopped) ? await execRefused({ ctl: st.ctl, out: st.out, cwd: this.S, exit, noexec }).catch(() => null) : null;
     if (unexecuted) {
       job.exec_refused = unexecuted;
       await this.journal.append({ type: "job_exec_refused", job: job.id, attempt: job.attempt, exit, ...unexecuted });
@@ -1649,12 +1998,26 @@ export class JobService {
       job.write_refused = refused;
       await this.journal.append({ type: "job_write_refused", job: job.id, attempt: job.attempt, exit, ...refused });
     }
-    const status: NonNullable<JobRecord["status"]> = cancelled ? "cancelled" : stopped ? "stopped" : exit === 124 || exit === 137 ? "timed_out" : exit === 0 ? "ok" : "failed";
+    // 124 is the limit. 137 is the limit only when the limit had come (timeout's own kill after it); before it the program
+    // was killed by something else, most often the worker's memory (the run s082123: three jobs killed after 3 to 17 s
+    // were said to have stopped at limits of 900 and 1200 s, and the seat raised the limit).
+    const elapsedS = (Date.now() - started) / 1000;
+    const killedEarly = exit === 137 && elapsedS < job.spec.timeout_seconds;
+    // Held to its limit from outside too: a worker that reported no exit status this long past it.
+    const pastLimit = exit === null && result.overdue !== undefined;
+    const atLimit = exit === 124 || (exit === 137 && !killedEarly) || pastLimit;
+    const status: NonNullable<JobRecord["status"]> = cancelled ? "cancelled" : stopped ? "stopped" : atLimit ? "timed_out" : exit === 0 ? "ok" : "failed";
     const reason =
       cancelled ??
       stopped ??
-      (exit === 124 || exit === 137
+      (pastLimit
+        ? `stopped at its limit of ${job.spec.timeout_seconds}s by the job service: ${result.overdue}`
+        : atLimit
         ? `stopped at its limit of ${job.spec.timeout_seconds}s`
+        : killedEarly
+          ? `exit 137: killed (signal 9) after ${Math.max(1, Math.round(elapsedS))}s, before its limit of ${job.spec.timeout_seconds}s: not a timeout. The worker has ${this.o.workerMemoryMib} MiB of memory, and a program that outgrows it is ended this way; a longer limit does not help`
+        : exit === 0 && unexecuted
+          ? `exit 0, but ${execRefusedWords(unexecuted, { job: job.id, out: this.outPath(job), cwd: this.S })}`
         : exit === null
           ? result.error ?? "the worker did not report an exit status"
           : job.spec.kind === "import" && exit === 3
@@ -1671,20 +2034,111 @@ export class JobService {
                     ? `exit ${exit}`
                     : undefined);
     if (job.requester.agent === DERIVED) this.derivedSpent.push({ at: Date.now(), s: (Date.now() - started) / 1000 });
-    await this.journal.append({ type: "job_finished", job: job.id, attempt: job.attempt, exit, status, ...(reason ? { reason } : {}), duration_ms: Date.now() - started, ...(result.digest ? { image_digest: result.digest } : {}), ...(result.boot_retry ? { boot_retry: result.boot_retry } : {}), ...(result.create_ms !== undefined ? { create_ms: result.create_ms } : {}) });
-    Object.assign(job, { state: "finished", exit, status, reason, finished_at: new Date().toISOString(), ...(result.digest ? { image_digest: result.digest } : {}) });
-    await this.workerHealth(job, exit === null && !cancelled && !stopped ? (result.error ?? "the worker did not report an exit status") : null);
+    // Three times, so an overrun can be put where it belongs (s17fdfe-E2 j000011: 709 s past its limit with exit 0, and
+    // the record could not say whether the command, the VM's going or the hub was late): when the command ended (the time
+    // of the exit status its worker wrote; a clock of the worker's, through the share), when the worker was gone (its
+    // caller's word, else when the call returned; absent when it is not confirmed gone), and when the service went on
+    // with it. The line's own `at` is when it was written.
+    const iso = (ms: number) => new Date(ms).toISOString();
+    const commandEnded = await stat(join(st.ctl, "exit")).then((x) => iso(x.mtimeMs)).catch(() => null);
+    const workerGone = result.fenced ? (result.gone_at ?? iso(returnedAt ?? noticedAt)) : null;
+    const times = { command_ended_at: commandEnded, worker_gone_at: workerGone, noticed_at: iso(noticedAt), ...(result.overdue ? { overdue: result.overdue } : {}) };
+    await this.journal.append({ type: "job_finished", job: job.id, attempt: job.attempt, exit, status, ...(reason ? { reason } : {}), duration_ms: Date.now() - started, ...times, ...(result.digest ? { image_digest: result.digest } : {}), ...(result.boot_retry ? { boot_retry: result.boot_retry } : {}), ...(result.create_ms !== undefined ? { create_ms: result.create_ms } : {}) });
+    Object.assign(job, { state: "finished", exit, status, reason, finished_at: new Date().toISOString(), ...(commandEnded ? { command_ended_at: commandEnded } : {}), ...(workerGone ? { worker_gone_at: workerGone } : {}), ...(result.digest ? { image_digest: result.digest } : {}) });
+    // job.json says what the job is at each step, not only at its commit: a job waiting to be sealed read "running" for hours (the run s17fdfe).
+    await this.project(job).catch(() => undefined);
+    await this.workerHealth(job, exit === null && !cancelled && !stopped && !pastLimit ? (result.error ?? "the worker did not report an exit status") : null);
     await this.journal.append({ type: "job_fenced", job: job.id, attempt: job.attempt, fenced: result.fenced, ...(result.fence_error ? { error: result.fence_error } : {}) });
     if (!result.fenced) {
-      // Never sealed while a VM that could write to it may still be up; the
-      // backstop tries to remove it again, and recovery seals it after.
+      // Never sealed while a VM that could write to it may still be up, and
+      // its slot is not given to another job while it may: on the runs of
+      // s17fdfe 48 fences failed ("could not list processes to find the maker
+      // of ..."), each freed its slot at once, and the next worker started
+      // beside one that was confirmed gone up to 248 s later.
       this.log(`${job.id}: worker ${worker} not confirmed gone: ${result.fence_error}`);
       await this.project(job);
-      return;
+      if (!(await this.confirmGone(job, worker, ran))) return;
     }
     job.state = "fenced";
+    await this.project(job).catch(() => undefined);
     maybeCrash("job:fenced");
-    await this.commit(job, { status, exit, reason });
+    // Its worker slot is free from here (the pump's own finally): the seal is the seal stage's, and nothing of a worker waits for it.
+    this.later(`${job.id}: not sealed`, this.commit(job, { status, exit, reason }));
+  }
+
+  /**
+   * A running job watched from outside its worker, on the service's own clock:
+   * `overdue` resolves, with the reason, when the worker is still up
+   * `exitGraceMs` after its command wrote its exit status, or `pastLimitMs`
+   * past the job's limit with none. The worker is then asked to go
+   * (destroyWorker) and the job goes on as one whose worker is not confirmed
+   * gone: job_finished is written now, its slot is held until the worker is.
+   * timeout(1) covers the command and nothing after it, and the VM's own
+   * limit is the VM manager's to keep.
+   */
+  private watchWorker(job: JobRecord, ctl: string, started: number): { overdue: Promise<{ code: null; fenced: false; fence_error: string; overdue: string }>; stop: () => void } {
+    const T = this.timing();
+    let timer: ReturnType<typeof setInterval> | undefined;
+    let exitSeen: number | null = null;
+    const overdue = new Promise<{ code: null; fenced: false; fence_error: string; overdue: string }>((res) => {
+      timer = setInterval(() => {
+        const now = Date.now();
+        if (exitSeen === null && existsSync(join(ctl, "exit"))) exitSeen = now;
+        const why =
+          exitSeen !== null && now - exitSeen >= T.exitGraceMs
+            ? `its command had ended and its worker was still up ${Math.round((now - exitSeen) / 1000)}s later`
+            : now - started >= job.spec.timeout_seconds * 1000 + T.pastLimitMs
+              ? `its worker had reported nothing ${Math.round((now - started) / 1000 - job.spec.timeout_seconds)}s past it`
+              : null;
+        if (!why) return;
+        clearInterval(timer);
+        res({ code: null, fenced: false, fence_error: `${why}; the job service asked it to go`, overdue: why });
+      }, Math.max(10, T.watchMs));
+      timer.unref?.();
+    });
+    return { overdue, stop: () => clearInterval(timer) };
+  }
+
+  /**
+   * Until a worker that was not confirmed gone is: asked again every
+   * `fenceRetryMs` (and when the backstop or a stop wakes it), or its own
+   * call returns saying it is. True once it is gone, with the late job_fenced
+   * line written; false when the service stops first (the stop accounts for
+   * it: fenceLeft). The job's slot is held all the while.
+   */
+  private async confirmGone(job: JobRecord, worker: string, ran: Promise<{ fenced: boolean }>): Promise<boolean> {
+    let byItself = false;
+    void ran.then((r) => {
+      if (!r.fenced) return;
+      byItself = true;
+      this.fenceWaits.get(job.id)?.();
+    }, () => undefined);
+    try {
+      for (;;) {
+        if (this.stopping) return false;
+        const gone: { ok: boolean; error?: string; gone_at?: string } = byItself ? { ok: true } : await this.o.destroyWorker(worker).catch((err: Error) => ({ ok: false, error: err.message }));
+        if (this.stopping) return false;
+        // The backstop got there first (a sweep called by hand).
+        if (job.state !== "finished") return false;
+        if (gone.ok || byItself) {
+          // When it went, as whoever removed it says (vm.ts destroyWorker's gone_at); else now, when it was known.
+          const goneAt = gone.gone_at ?? new Date().toISOString();
+          await this.journal.append({ type: "job_fenced", job: job.id, attempt: job.attempt, fenced: true, late: true, worker_gone_at: goneAt });
+          job.worker_gone_at = goneAt;
+          return true;
+        }
+        await new Promise<void>((res) => {
+          const t = setTimeout(res, this.timing().fenceRetryMs);
+          t.unref?.();
+          this.fenceWaits.set(job.id, () => {
+            clearTimeout(t);
+            res();
+          });
+        });
+      }
+    } finally {
+      this.fenceWaits.delete(job.id);
+    }
   }
 
   /**
@@ -1702,6 +2156,9 @@ export class JobService {
       await this.o.notify("all", `Tool jobs run again: ${job.id} ran in a worker.`).catch(() => undefined);
       return;
     }
+    // A stop takes the workers away: that is no trouble of theirs, and nobody is told jobs do not run (the run s17fdfe-E0:
+    // the stop removed three workers, and the board read "Tool jobs are not running: the last 3 could not run in a worker").
+    if (this.stopping || this.held()) return;
     this.unrun += 1;
     if (this.unrun < 3 || this.degraded) return;
     this.degraded = true;
@@ -1718,19 +2175,154 @@ export class JobService {
   }
 
   /**
-   * Seal what the job wrote into the store and record it. `where` names the
-   * directory under store/jobs/<id>/: `out` for the job's result, or an
-   * interrupted attempt's own name.
+   * Seal what the job wrote into the store and record it, in the seal stage:
+   * queued here, sealed when a sealer is free, on the record through the
+   * store's chain, and followed by what a commit starts (afterCommit).
+   * `where` names the directory under store/jobs/<id>/: `out` for the job's
+   * result, or an interrupted attempt's own name. Resolves when all of that
+   * is done. A seal or a record that fails is tried again, a bounded number
+   * of times with a longer wait each time (sealRetry; a seal goes on from
+   * what the failed one left: moved, or its hashes so far), back in the
+   * queue behind what waits there; a `job_seal_failed` line says each
+   * failure. After the last the job ends `failed` with the reason and its
+   * requester is told (sealFailed): on the runs of s17fdfe a job whose one
+   * seal failed stayed `fenced` until the stop, and its requester waited on
+   * it for the rest of the run. While the service stops, and after the run,
+   * a failure is not tried again and the job stays fenced (rejects): the
+   * stop, and `swarm.sh stop` after it, each seal what is left once more.
+   * One entry a job: a second call while the first is under way is answered
+   * with the first.
+   *
+   * Only a job whose worker is confirmed gone comes here (state fenced): no
+   * byte of a staging directory is read while its worker may be up.
    */
-  private async commit(job: JobRecord, r: { status: NonNullable<JobRecord["status"]>; exit: number | null; reason?: string }, where = "out"): Promise<void> {
-    const recorded = await this.exclusive(() => this.sealAndRecord(job, r, where));
-    if (!recorded) return;
-    // The hint is written outside the store's one-at-a-time section: it never holds a commit up.
-    if (job.same_as?.length) await this.writeSameAs(job);
-    await this.afterCommit(job);
+  private commit(job: JobRecord, r: { status: NonNullable<JobRecord["status"]>; exit: number | null; reason?: string }, where = "out"): Promise<void> {
+    const under = this.sealing.get(job.id);
+    if (under) return under.done;
+    if (job.state !== "fenced") return Promise.reject(new Error(`${job.id} is ${job.state}: its worker is not confirmed gone, and nothing of it is sealed`));
+    let start!: () => void;
+    const go = new Promise<void>((res) => {
+      start = res;
+    });
+    const entry: SealEntry = { job, r, where, large: false, active: false, start, done: Promise.resolve() };
+    entry.done = (async () => {
+      try {
+        // How much there is to seal, by a bounded walk (the worker is gone: its staging may be read).
+        entry.large = await sealIsLarge(join(storePaths(this.S).jobs, job.id, where), this.staging(job).out).catch(() => false);
+        const retry = { ...SEAL_RETRY, ...(this.o.sealRetry ?? {}) };
+        const tries = Math.max(1, Math.floor(retry.tries));
+        let recorded = false;
+        let waited = go;
+        for (let tried = 1; ; tried += 1) {
+          this.sealQueue.push(entry);
+          this.pumpSeals();
+          await waited;
+          let failure: Error | null = null;
+          try {
+            const sealed = await this.sealFiles(job, where);
+            maybeCrash("job:sealed");
+            recorded = await this.exclusive(() => this.record(job, r, where, sealed));
+          } catch (err) {
+            failure = err as Error;
+          } finally {
+            this.sealActive -= 1;
+            if (entry.large) this.sealActiveLarge -= 1;
+            entry.active = false;
+            delete entry.progress;
+            this.pumpSeals();
+          }
+          if (!failure) break;
+          // Its job_committed line is written and something after it failed: it is committed, and nothing is sealed twice.
+          if ((job.state as JobState) === "committed") {
+            this.log(`${job.id}: committed, and what follows the line failed: ${failure.message}`);
+            recorded = where === "out";
+            break;
+          }
+          // A stop, or the seal after the run: no wait and no verdict here; the job stays fenced for whoever seals what is left.
+          if (this.stopping || this.afterRun || where !== "out") throw failure;
+          const last = tried >= tries;
+          const waitMs = Math.max(0, retry.waitMs) * 4 ** (tried - 1);
+          // Said to whoever waits (waitWords) from before the line is written: the next try is counted from the failure.
+          if (!last) entry.retry = { tried, of: tries, error: failure.message, next_at: new Date(Date.now() + waitMs).toISOString() };
+          const from = Date.now();
+          await this.journal.append({ type: "job_seal_failed", job: job.id, attempt: job.attempt, try: tried, of: tries, error: failure.message, ...(last ? {} : { retry_in_ms: waitMs }) }).catch(() => undefined);
+          this.log(`${job.id}: its seal failed (try ${tried} of ${tries}): ${failure.message}`);
+          if (last) {
+            delete entry.retry;
+            await this.sealFailed(job, tries, failure.message);
+            return;
+          }
+          // The wait ends early when the run stops: the stop is not held up by it, and the next try is the stop's.
+          for (const until = from + waitMs; Date.now() < until && !this.stopping; ) await new Promise((res) => setTimeout(res, Math.min(200, Math.max(1, until - Date.now()))));
+          if (this.stopping) throw failure;
+          waited = new Promise<void>((res) => {
+            entry.start = res;
+          });
+        }
+        delete entry.retry;
+        if (!recorded) return;
+        // The hint is written outside the store's one-at-a-time section: it never holds a commit up.
+        if (job.same_as_total) await this.writeSameAs(job);
+        await this.afterCommit(job);
+      } finally {
+        this.sealing.delete(job.id);
+        void this.pump();
+      }
+    })();
+    // Whoever waits for it hears of a failure; a rejection nobody waits for is not the process's.
+    entry.done.catch(() => undefined);
+    this.sealing.set(job.id, entry);
+    return entry.done;
   }
 
-  private async sealAndRecord(job: JobRecord, r: { status: NonNullable<JobRecord["status"]>; exit: number | null; reason?: string }, where: string): Promise<boolean> {
+  /**
+   * A job whose output could not be sealed, after every try: it ends
+   * `failed` on the record with why, and whoever asked for it (and whoever
+   * joined it) is told. What it wrote stays where the last try left it (its
+   * staging directory, or store/jobs/<id>/out with no manifest), named in
+   * the reason: nothing of it can be cited, and nothing of it is removed.
+   */
+  private async sealFailed(job: JobRecord, tries: number, error: string): Promise<void> {
+    const staging = `store/staging/${job.id}-${job.attempt}`;
+    const ran = `it ran${job.exit !== undefined && job.exit !== null ? ` (exit ${job.exit})` : ""}${job.status && job.status !== "ok" ? `, ${job.status}${job.reason ? `: ${job.reason}` : ""}` : ""}`;
+    const reason = `its output could not be sealed into the store after ${tries} tries (${error}); ${ran}, and what it wrote is kept unsealed in ${staging}/ or store/jobs/${job.id}/out/ and cannot be cited. Run it again, or tell the operator if the store's disk is the cause`;
+    const seal_failed = { tries, error, staging, ran: { status: job.status ?? null, exit: job.exit ?? null, ...(job.reason ? { reason: job.reason } : {}) } };
+    await this.journal.append({ type: "job_failed", job: job.id, attempt: job.attempt, reason, seal_failed });
+    Object.assign(job, { state: "failed", status: "failed", reason, seal_failed });
+    await this.project(job).catch(() => undefined);
+    await this.tell(job);
+  }
+
+  /**
+   * Start the seals that may start: `sealers` at once, and of those all but
+   * one (one at least) may be large trees, so a small job's commit has a
+   * sealer no walk of an image holds. The oldest that may start goes first.
+   * On the run s17fdfe-E2 16 jobs that finished within four minutes of a
+   * 201,202-file tree waited 1,065 s at the median to be committed; one of
+   * them had sealed no file at all.
+   */
+  private pumpSeals(): void {
+    const max = Math.max(1, Math.floor(this.o.sealers));
+    const largeMax = Math.max(1, max - 1);
+    for (;;) {
+      if (this.sealActive >= max) return;
+      const i = this.sealQueue.findIndex((e) => !e.large || this.sealActiveLarge < largeMax);
+      if (i < 0) return;
+      const [e] = this.sealQueue.splice(i, 1);
+      this.sealActive += 1;
+      if (e.large) this.sealActiveLarge += 1;
+      e.active = true;
+      e.start();
+    }
+  }
+
+  /**
+   * The tree and the job's own words in the store, hashed: the long part of a
+   * commit, done beside the store's chain. Where a crash stopped decides the
+   * step: moved but not sealed is sealed in place; sealed but not recorded is
+   * read back; not moved is sealed now.
+   */
+  private async sealFiles(job: JobRecord, where: string): Promise<{ manifest: Manifest; manifestSha256: string; logs: Record<string, string> }> {
     const P = storePaths(this.S);
     const st = this.staging(job);
     const jobDir = join(P.jobs, job.id);
@@ -1738,16 +2330,19 @@ export class JobService {
     await mkdir(jobDir, { recursive: true });
     let sealed: { manifest: Manifest; manifestSha256: string };
     const manifestPath = join(jobDir, where === "out" ? "manifest.json" : `${where}.manifest.json`);
-    // Where a crash stopped decides the step: moved but not sealed is sealed
-    // in place; sealed but not recorded is read back; not moved is sealed now.
     const done = existsSync(manifestPath) ? await readManifest(manifestPath) : null;
     if (existsSync(dest) && done) {
       sealed = { manifest: done.manifest, manifestSha256: done.sha256 };
-    } else if (existsSync(dest)) {
-      sealed = await resealMoved(this.S, dest, job.id, job.attempt, manifestPath);
     } else {
-      await mkdir(st.out, { recursive: true });
-      sealed = await sealTree(this.S, st.out, dest, job.id, job.attempt, manifestPath);
+      // How far the seal is, for whoever waits on the job (waitWords): the seal's own count, never a guess.
+      const entry = this.sealing.get(job.id);
+      const opts = { onProgress: (p: { phase?: string; files_done?: number; files_total?: number }) => { if (entry) entry.progress = { phase: p.phase, files_done: p.files_done, files_total: p.files_total }; } };
+      if (existsSync(dest)) {
+        sealed = await resealMoved(this.S, dest, job.id, job.attempt, manifestPath, opts);
+      } else {
+        await mkdir(st.out, { recursive: true });
+        sealed = await (this.o.sealTree ?? sealTree)(this.S, st.out, dest, job.id, job.attempt, manifestPath, opts);
+      }
     }
     // The job's own words, whole: stdout and stderr beside its outputs.
     const logs: Record<string, string> = {};
@@ -1761,14 +2356,30 @@ export class JobService {
       // Streamed: a job that prints gigabytes leaves a log of gigabytes.
       if (existsSync(to)) logs[name] = await sha256File(to);
     }
-    maybeCrash("job:sealed");
+    return { ...sealed, logs };
+  }
+
+  /**
+   * A sealed job on the record: whether it is sensitive, decided against what
+   * is committed at this moment, and its job_committed line. In the store's
+   * chain, so two commits are never decided against each other's absence;
+   * nothing here grows with the tree but the sensitivity's own reading.
+   */
+  private async record(job: JobRecord, r: { status: NonNullable<JobRecord["status"]>; exit: number | null; reason?: string }, where: string, sealed: { manifest: Manifest; manifestSha256: string; logs: Record<string, string> }): Promise<boolean> {
+    const st = this.staging(job);
     const outputs = { manifest_sha256: sealed.manifestSha256, files: sealed.manifest.totals.files, bytes: sealed.manifest.totals.bytes, rejected: sealed.manifest.rejected.length, path: `store/jobs/${job.id}/${where}` };
     // Sensitive at seal time (docs/adr/0016): run with secret_output, or made from a sensitive output.
     const sensitive = await this.sensitivityOf(job, sealed.manifest.files).catch((err: Error) => {
       this.log(`${job.id}: its sensitivity could not be decided (${err.message}); sealed as sensitive`);
       return { why: "derived" as const, from: [], note: `its sensitivity could not be decided when it was sealed (${err.message}): held sensitive` };
     });
-    await this.journal.append({ type: "job_committed", job: job.id, attempt: job.attempt, status: r.status, exit: r.exit, ...(r.reason ? { reason: r.reason } : {}), outputs, logs, ...(job.image_digest ? { image_digest: job.image_digest } : {}), ...(sensitive ? { sensitive } : {}) });
+    await this.journal.append({ type: "job_committed", job: job.id, attempt: job.attempt, status: r.status, exit: r.exit, ...(r.reason ? { reason: r.reason } : {}), outputs, logs: sealed.logs, ...(job.image_digest ? { image_digest: job.image_digest } : {}), ...(sensitive ? { sensitive } : {}) });
+    // A sensitive commit is taken into the run's sensitive index now, in the
+    // background, so that the next job's decision does not read its files: a
+    // tree of 200,000 files takes about 200 ms here, after the commit, and
+    // the decision after it under a millisecond (a decision asked while it
+    // is taken in waits for it, never answers without it).
+    if (sensitive) void sensitiveIndex(this.S).catch((err: Error) => this.log(`${job.id}: the sensitive index was not brought up to date at its commit (${err.message}); the next decision does it`));
     await rm(st.base, { recursive: true, force: true }).catch(() => undefined);
     if (where !== "out") return false;
     // In memory only, before the record says committed (whoever reads the
@@ -1809,7 +2420,7 @@ export class JobService {
       const pending = this.sameAsPending.splice(0);
       for (const p of pending) {
         this.sameAsAtCommit(p.job, p.files);
-        if (p.job.same_as?.length) {
+        if (p.job.same_as_total) {
           await this.writeSameAs(p.job);
           await this.project(p.job).catch(() => undefined);
         }
@@ -1830,12 +2441,61 @@ export class JobService {
     }
     const same = sameAsOf(job.id, files, this.outputIndex);
     indexOutputs(this.outputIndex, job.id, files);
-    if (same.length) job.same_as = same;
+    if (!same.length) return;
+    // The record carries the first few and the count; every one goes to the line or to the side file (writeSameAs).
+    job.same_as = same.slice(0, SAME_AS_SHOWN);
+    job.same_as_total = { files: same.length, bytes: same.reduce((a, x) => a + x.bytes, 0) };
+    this.sameAsFull.set(job.id, same);
   }
 
-  /** The job_same_as line; a failure to write it is logged, never raised. */
+  /**
+   * The job_same_as line: how many of the job's files are an earlier job's
+   * bytes, their bytes, and by which jobs. A few are listed on the line
+   * itself; more than the line holds go, every one, to a side file beside
+   * the job's outputs (store/jobs/<id>/same_as.jsonl: a header line, then one
+   * file a line), named on the line with its sha256. On the runs of s17fdfe a
+   * second walk of the same image put every file on the line: 17.7 MB in one
+   * journal line, and 20.3 MB in job.json, both read whole by every reader.
+   * A failure to write either is logged, never raised.
+   */
   private async writeSameAs(job: JobRecord): Promise<void> {
-    await this.journal.append({ type: "job_same_as", job: job.id, same_as: job.same_as ?? [] }).catch((err) => this.log(`${job.id}: the job_same_as line was not written: ${(err as Error).message}`));
+    const same = this.sameAsFull.get(job.id) ?? job.same_as ?? [];
+    this.sameAsFull.delete(job.id);
+    const total = job.same_as_total ?? { files: same.length, bytes: same.reduce((a, x) => a + x.bytes, 0) };
+    try {
+      const inline = JSON.stringify(same);
+      if (same.length <= SAME_AS_SHOWN && inline.length <= SAME_AS_LINE_MAX) {
+        await this.journal.append({ type: "job_same_as", job: job.id, files: total.files, bytes: total.bytes, same_as: same });
+        return;
+      }
+      const rel = `store/jobs/${job.id}/same_as.jsonl`;
+      const path = join(this.S, rel);
+      const text = `${JSON.stringify({ v: 1, job: job.id, files: total.files, bytes: total.bytes })}\n${same.map((x) => JSON.stringify(x)).join("\n")}\n`;
+      await chmod(path, 0o644).catch(() => undefined);
+      await writeFile(path, text);
+      await chmod(path, 0o444).catch(() => undefined);
+      // By which earlier jobs, the largest shares first; and a few of the files, as many as stay small.
+      const by = new Map<string, { files: number; bytes: number }>();
+      for (const x of same) {
+        const b = by.get(x.job) ?? { files: 0, bytes: 0 };
+        b.files += 1;
+        b.bytes += x.bytes;
+        by.set(x.job, b);
+      }
+      const jobs = [...by].map(([j, b]) => ({ job: j, ...b })).sort((a, b) => b.files - a.files || a.job.localeCompare(b.job));
+      const sample: SameAs[] = [];
+      let room = SAME_AS_LINE_MAX;
+      for (const x of same) {
+        room -= JSON.stringify(x).length + 1;
+        if (room < 0 || sample.length >= 5) break;
+        sample.push(x);
+      }
+      Object.assign(total, { list: rel, list_sha256: sha256Hex(text) });
+      job.same_as_total = total;
+      await this.journal.append({ type: "job_same_as", job: job.id, files: total.files, bytes: total.bytes, list: rel, list_sha256: total.list_sha256, jobs: jobs.slice(0, 8), ...(jobs.length > 8 ? { jobs_more: jobs.length - 8 } : {}), same_as: sample });
+    } catch (err) {
+      this.log(`${job.id}: the job_same_as line was not written: ${(err as Error).message}`);
+    }
   }
 
   /**
@@ -1902,7 +2562,7 @@ export class JobService {
       }));
       Object.assign(job, { generation: generation.id, revision });
       await this.project(job);
-      if (job.spec.target?.sha256) this.derivedKnown.set(job.spec.target.sha256, "catalogued");
+      if (job.spec.target?.sha256 && !job.spec.phase) this.derivedKnown.set(job.spec.target.sha256, "catalogued");
       if (trigger === "derived") this.derivedOutputBytes += job.outputs?.bytes ?? 0;
       const where = `Files: catalog/gen/${generation.id}/${generation.alias ? ` (also ${generation.alias}/)` : ""}; index: catalog/revisions/${revision}/index.md.`;
       const what = `${generation.id} ${generation.recipe} over ${generation.target.name ?? generation.target.ref ?? "an object"}`;
@@ -1912,7 +2572,8 @@ export class JobService {
       const lacks = generation.sensitive ? [] : missingOf(generation.coverage);
       const lackNote = lacks.length ? ` Missing from the images: ${lacks.join("; ")}.` : "";
       if (trigger === "kickoff") {
-        await this.o.notify("all", `Catalogue revision ${revision}: ${what} — ${generation.status}${generation.experimental ? " (experimental recipe)" : ""}.${lackNote} ${where}`).catch(() => undefined);
+        await this.o.notify("all", `Catalogue revision ${revision}: ${what} — ${phaseWords(job.spec.phase, generation.status)}${generation.experimental ? " (experimental recipe)" : ""}.${lackNote} ${where}`).catch(() => undefined);
+        void this.tellDumps(job, generation.id, generation.target.name ?? generation.target.ref ?? "an object", Boolean(generation.sensitive));
       } else if (trigger === "derived") {
         // A complete catalogue of something a job made is everyone's news;
         // a partial or failed one is its maker's, with the recipe's reasons.
@@ -1930,9 +2591,33 @@ export class JobService {
     }
     if (job.spec.kind === "detect") await this.fromDetect(job);
     if (job.spec.seal) await this.publishSeal(job);
-    if (this.o.derived && (job.spec.kind === "tool" || job.spec.kind === "command" || job.spec.kind === "import")) await this.offerFrom(job);
+    // Whoever asked is told before anything is offered: the offer reads the
+    // job's whole manifest and the head of its files, and on the run
+    // s17fdfe-E2 the requester of j000011 (201,202 files) was told 79 minutes
+    // after its commit, when the offer ended.
     await this.tell(job);
+    if (this.o.derived && (job.spec.kind === "tool" || job.spec.kind === "command" || job.spec.kind === "import")) this.offerLater(job);
     void this.pump();
+  }
+
+  /** A job's files offered to the derived recipes behind the commit, one job at a time, nobody waiting for it. */
+  private offerLater(job: JobRecord): void {
+    const next = this.offers.then(() => (this.stopping ? undefined : this.offerFrom(job))).then(() => void this.pump());
+    this.offers = next.catch(() => undefined);
+    this.later(`${job.id}: its files were not offered to the derived recipes`, next);
+  }
+
+  /** How many generations the derived catalogue has made. */
+  private derivedMade(): number {
+    return this.journal.of("generation_committed").filter((l) => l.trigger === "derived").length;
+  }
+
+  /** Where a derived object stands in the lane's order (derivedRank), by its path and by whether a seat picked it by name when it extracted it. */
+  private rankOf(c: { job: string; path: string }): number {
+    const maker = this.jobs.get(c.job);
+    const args = maker?.spec.args as { members?: unknown } | undefined;
+    const picked = maker !== undefined && maker.requester.agent !== "system" && maker.requester.agent !== DERIVED && Array.isArray(args?.members) && args.members.length > 0;
+    return derivedRank(c.path, { picked });
   }
 
   // --- a brain's own output, sealed when a record cites it ----------------------------------------
@@ -2003,9 +2688,16 @@ export class JobService {
     if (this.journal.of("brain_output_sealed").some((l) => l.job === job.id) || this.journal.of("brain_output_refused").some((l) => l.job === job.id)) return;
     await this.exclusive(async () => {
       const P = storePaths(this.S);
-      const found = await readManifest(join(P.jobs, job.id, "manifest.json"));
-      const file = found?.manifest.files.find((f) => f.sha256 === seal.digest);
-      if (!found || !file) {
+      // The sealed file by its digest: among the manifest's first files (a seal's job seals one file), else the manifest whole.
+      const sealedPath = join(P.jobs, job.id, "manifest.json");
+      const found = await manifestOf(sealedPath).catch(() => null);
+      const first = found?.head.first.find((f) => f.sha256 === seal.digest);
+      const file = found && first
+        ? await manifestFile(sealedPath, found, [first.path]).catch(() => null)
+        : found && found.head.totals.files > found.head.first.length
+          ? ((await readManifest(sealedPath))?.manifest.files.find((f) => f.sha256 === seal.digest) ?? null)
+          : null;
+      if (!found || !file || file.sha256 !== seal.digest) {
         await this.journal.append({ type: "brain_output_refused", job: job.id, ref: seal.ref, why: `job ${job.id}'s sealed output holds no file of sha256 ${seal.digest.slice(0, 16)}…, the digest the trace recorded` });
         return;
       }
@@ -2028,7 +2720,8 @@ export class JobService {
       for (const f of ["manifest.json", "import.json"]) await chmod(join(dir, f), 0o444).catch(() => undefined);
       await chmod(join(dir, "out"), 0o555).catch(() => undefined);
       await chmod(dir, 0o555).catch(() => undefined);
-      const manifestSha = (await readManifest(join(dir, "manifest.json")))?.sha256 ?? "";
+      // The copy's own bytes, hashed as a stream: what the line says of it is read from it, and nothing is parsed.
+      const manifestSha = await sha256File(join(dir, "manifest.json")).catch(() => "");
       await this.journal.append({ type: "brain_output_sealed", job: job.id, ref: seal.ref, import: importRef, digest: seal.digest, trace_line: seal.line_sha256, seat: seal.origin.seat, tool: seal.origin.tool, manifest_sha256: manifestSha, import_json_sha256: sha256Hex(text) });
     });
   }
@@ -2075,21 +2768,43 @@ export class JobService {
    */
   private async offerFrom(job: JobRecord): Promise<void> {
     if (this.derivedOfferedJobs.has(job.id)) return;
+    this.counters.offers_started += 1;
     const derived = await this.allRecipes("derived");
     if (!derived.length) return;
+    // At the run's ceiling nothing more is asked about: no manifest is read
+    // and no file opened for an offer nobody will take up. The line says so,
+    // and the job is not offered again; catalog_request still catalogues any
+    // object of it.
+    const L = this.limits();
+    const bound = this.derivedMade() >= L.generationsMax ? "generations" : this.derivedOutputBytes >= L.outputBytesMax ? "output_bytes" : null;
+    if (bound) {
+      this.derivedOfferedJobs.add(job.id);
+      await this.journal.append({ type: "derived_offered", job: job.id, parent_status: job.status ?? job.state, offered: [], skipped: [], filtered: 0, not_read: bound, files: job.outputs?.files ?? 0 });
+      // The ceiling is said to everyone once, here if nothing else of the lane was left to say it.
+      await this.derivedMayRun();
+      return;
+    }
     const m = await readManifest(join(storePaths(this.S).jobs, job.id, "manifest.json"));
     if (!m || !m.manifest.files.length) return;
     const reach = Math.min(Math.max(0, ...derived.flatMap((r) => (r.magic ?? []).map((g) => g.offset + g.bytes.length))), 1 << 20);
     const out = join(storePaths(this.S).jobs, job.id, "out");
     const inputsSha = await this.inputShas();
-    const offered: Array<{ sha256: string; path: string; bytes: number; recipes: string[] }> = [];
-    const skipped: Array<{ sha256: string; path: string; same_as: string }> = [];
+    const offered: OfferedRow[] = [];
+    const skipped: OfferSkipped[] = [];
     const seen = new Set<string>();
     let filtered = 0;
+    let n = 0;
     for (const f of m.manifest.files) {
+      // In the background: the loop is given back every so many files, and a stop ends it (recovery offers the job again).
+      n += 1;
+      if (n % 500 === 0) {
+        await new Promise<void>((res) => setImmediate(res));
+        if (this.stopping) return;
+      }
       const name = Buffer.from(f.path_b64, "base64").toString("utf8");
       const head = async (): Promise<Buffer> => {
         if (!reach) return Buffer.alloc(0);
+        this.counters.offer_file_opens += 1;
         const fh = await open(join(out, name), "r").catch(() => null);
         if (!fh) return Buffer.alloc(0);
         try {
@@ -2116,25 +2831,93 @@ export class JobService {
     }
     if (!offered.length && !skipped.length) return;
     this.derivedOfferedJobs.add(job.id);
-    await this.journal.append({ type: "derived_offered", job: job.id, parent_status: job.status ?? job.state, offered, skipped, filtered });
+    await this.writeOffered(job, offered, skipped, filtered);
     for (const o of offered) {
       this.derivedKnown.set(o.sha256, "offered");
       this.derivedPending.push({ ...o, job: job.id, tries: 0, parent_status: job.status ?? job.state });
     }
   }
 
-  private inputShaCache: Map<string, string> | null = null;
-  /** The run's inputs by content: a job's copy of an input is not a new object. */
-  private async inputShas(): Promise<Map<string, string>> {
-    if (this.inputShaCache) return this.inputShaCache;
-    const m = new Map<string, string>();
-    try {
-      const inputs = JSON.parse(await readFile(join(this.S, "inputs.json"), "utf8")) as { files?: Array<{ path: string; sha256?: string }> };
-      for (const f of inputs.files ?? []) if (f.sha256) m.set(f.sha256, `input:${f.path.replace(/^inputs\//, "")}`);
-    } catch {
-      // no inputs.json: nothing to skip by
+  /**
+   * The derived_offered line: what of a job's files was offered to the
+   * derived recipes, what was skipped as known, how many no recipe takes.
+   * Small lists are on the line; larger ones go whole to a side file beside
+   * the job (store/jobs/<id>/derived_offered.json, one JSON document), named
+   * on the line with its sha256, and the line keeps the counts and the first
+   * few of each. On the runs of s17fdfe one such line was 5.6 MB, read whole
+   * by every reader of the journal. The side file is what a restart reads
+   * what waits from (replay); when it cannot be written the lists stay on
+   * the line, since nothing offered may be lost.
+   */
+  private async writeOffered(job: JobRecord, offered: OfferedRow[], skipped: OfferSkipped[], filtered: number): Promise<void> {
+    const base = { type: "derived_offered", job: job.id, parent_status: job.status ?? job.state, filtered, offered_total: offered.length, skipped_total: skipped.length };
+    if (JSON.stringify(offered).length + JSON.stringify(skipped).length <= OFFERED_LINE_MAX) {
+      await this.journal.append({ ...base, offered, skipped });
+      return;
     }
-    this.inputShaCache = m;
+    const rel = `store/jobs/${job.id}/derived_offered.json`;
+    const text = `${JSON.stringify({ v: 1, job: job.id, offered, skipped })}\n`;
+    try {
+      const path = join(this.S, rel);
+      await chmod(path, 0o644).catch(() => undefined);
+      await writeFile(path, text);
+      await chmod(path, 0o444).catch(() => undefined);
+    } catch (err) {
+      this.log(`${job.id}: the list of what was offered could not be written beside it (${(err as Error).message}); it is on the journal line whole`);
+      await this.journal.append({ ...base, offered, skipped });
+      return;
+    }
+    await this.journal.append({ ...base, offered_bytes: offered.reduce((a, o) => a + o.bytes, 0), list: rel, list_sha256: sha256Hex(text), offered: offered.slice(0, OFFERED_SHOWN), skipped: skipped.slice(0, OFFERED_SHOWN) });
+  }
+
+  /** A derived_offered line's side file, held to the sha256 the line names; null when it is not there or is not those bytes. */
+  private offeredList(rel: string, sha256: string): { offered: OfferedRow[]; skipped: OfferSkipped[] } | null {
+    try {
+      if (!/^store\/jobs\/j\d{6}\/derived_offered\.json$/.test(rel)) return null;
+      const text = readFileSync(join(this.S, rel), "utf8");
+      if (sha256Hex(text) !== sha256) return null;
+      const doc = JSON.parse(text) as { offered?: OfferedRow[]; skipped?: OfferSkipped[] };
+      return Array.isArray(doc.offered) ? { offered: doc.offered, skipped: Array.isArray(doc.skipped) ? doc.skipped : [] } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private inputShaCache: Map<string, string> | null = null;
+  private importShaSeen = new Set<string>();
+  /**
+   * The run's inputs and imports by content: a job's copy of an input, of a
+   * program the operator supplied or of evidence added later is not a new
+   * object (on the run s68ce47 the derived catalogue spent 37 of its 50
+   * generations on the libraries of a supplied ffmpeg a seat had copied into
+   * $OUT). Imports sealed since the last look are added as they come.
+   */
+  private async inputShas(): Promise<Map<string, string>> {
+    if (!this.inputShaCache) {
+      const m = new Map<string, string>();
+      try {
+        const inputs = JSON.parse(await readFile(join(this.S, "inputs.json"), "utf8")) as { files?: Array<{ path: string; sha256?: string }> };
+        for (const f of inputs.files ?? []) if (f.sha256) m.set(f.sha256, `input:${f.path.replace(/^inputs\//, "")}`);
+      } catch {
+        // no inputs.json: nothing to skip by
+      }
+      this.inputShaCache = m;
+    }
+    const m = this.inputShaCache;
+    const dir = storePaths(this.S).imports;
+    let ids: string[] = [];
+    try {
+      ids = readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+    } catch {
+      ids = [];
+    }
+    for (const id of ids) {
+      if (this.importShaSeen.has(id)) continue;
+      const found = await readManifest(join(dir, id, "manifest.json")).catch(() => null);
+      if (!found) continue;
+      this.importShaSeen.add(id);
+      for (const f of found.manifest.files) if (!m.has(f.sha256)) m.set(f.sha256, `import:${id}/${Buffer.from(f.path_b64, "base64").toString("utf8")}`);
+    }
     return m;
   }
 
@@ -2160,11 +2943,17 @@ export class JobService {
     const made = this.journal.of("generation_committed").filter((l) => l.trigger === "derived").length;
     const bound = made >= L.generationsMax ? { bound: "generations", spent: made, cap: L.generationsMax } : this.derivedOutputBytes >= L.outputBytesMax ? { bound: "output_bytes", spent: this.derivedOutputBytes, cap: L.outputBytesMax } : null;
     if (bound) {
+      // What the lane still had queued is cancelled on the record, with why:
+      // left `accepted` it read as work to come for the rest of the run (the
+      // run s17fdfe-E2: 47 of its jobs queued at the ceiling, never started,
+      // never cancelled). A pass's objects go back to what is offered and
+      // not asked about.
+      const queued = this.queue.filter((id) => this.jobs.get(id)?.requester.agent === DERIVED);
+      for (const id of queued) await this.dropDerived(id, `not run: the derived catalogue reached its ${bound.bound === "generations" ? `${bound.cap} generations` : `${bound.cap} bytes of output`} for this run; catalog_request the object to have it catalogued`);
       if (!this.derivedSaid.has(`derived_bounded:${bound.bound}`)) {
         this.derivedSaid.add(`derived_bounded:${bound.bound}`);
-        const queued = this.queue.filter((id) => this.jobs.get(id)?.requester.agent === DERIVED).length;
-        await this.journal.append({ type: "derived_bounded", ...bound, pending: this.derivedPending.length, queued });
-        await this.o.notify("all", `The derived catalogue has reached its ${bound.bound === "generations" ? `${bound.cap} generations` : `${bound.cap} bytes of output`} for this run: ${this.derivedPending.length} object(s) that jobs made stay offered and not asked about, and ${queued} of its jobs stay queued (each named in the journal). catalog_request any object to have it catalogued.`).catch(() => undefined);
+        await this.journal.append({ type: "derived_bounded", ...bound, pending: this.derivedPending.length, queued: queued.length, ...(queued.length ? { cancelled: queued } : {}) });
+        await this.o.notify("all", `The derived catalogue has reached its ${bound.bound === "generations" ? `${bound.cap} generations` : `${bound.cap} bytes of output`} for this run: ${this.derivedPending.length} object(s) that jobs made stay offered and not asked about${queued.length ? `, and ${queued.length} of its queued jobs were cancelled (each named in the journal)` : ""}. catalog_request any object to have it catalogued.`).catch(() => undefined);
       }
       return false;
     }
@@ -2177,13 +2966,67 @@ export class JobService {
       return false;
     }
     this.derivedSaid.delete("derived_deferred:worker_seconds");
+    // Only the part kept for a user's objects is left: a queued recipe over anything else is not run.
+    if (made >= L.generationsMax - this.derivedReserve()) {
+      for (const id of [...this.queue]) {
+        const j = this.jobs.get(id);
+        if (!j || j.requester.agent !== DERIVED || j.spec.kind !== "recipe") continue;
+        const at = /^job:(j\d{6})\/(.*)$/s.exec(j.spec.target?.ref ?? "");
+        if ((at ? this.rankOf({ job: at[1], path: at[2] }) : 1) >= 1) await this.dropDerived(id, `not run: ${made} of the derived catalogue's ${L.generationsMax} generations are made, and the ${this.derivedReserve()} left are kept for what a user made or kept; catalog_request the object to have it catalogued`);
+      }
+    }
     return true;
   }
 
+  /** The generations kept for what a user made or kept (DERIVED_RESERVE of the ceiling, none of a ceiling too small to share). */
+  private derivedReserve(): number {
+    return Math.floor(this.limits().generationsMax * DERIVED_RESERVE);
+  }
+
   /**
-   * Start a derived pass when the lane is free: the largest waiting objects
-   * first (a cap lands on small noise, never on a disk), up to the pass's
-   * pairs, as the lowest lane's job.
+   * Whether the lane may still spend a generation on an object of this rank:
+   * anything while the unreserved part lasts, then only what a user made or
+   * kept (rank below 1), up to the ceiling. Counted from the generations
+   * made: the lane runs one job at a time to its end, and each start asks.
+   */
+  private derivedRoomFor(rank: number): boolean {
+    const L = this.limits();
+    const made = this.derivedMade();
+    if (made >= L.generationsMax) return false;
+    return rank < 1 || made < L.generationsMax - this.derivedReserve();
+  }
+
+  /** A queued job of the lane, cancelled on the record with why. */
+  private async dropDerived(id: string, reason: string): Promise<void> {
+    const j = this.jobs.get(id);
+    const at = this.queue.indexOf(id);
+    if (!j || at < 0) return;
+    this.queue.splice(at, 1);
+    this.waitingForHost.delete(id);
+    await this.journal.append({ type: "job_cancelled", job: id, reason });
+    Object.assign(j, { state: "cancelled", status: "cancelled", reason });
+    await this.project(j).catch(() => undefined);
+    // A pass's objects go back to what is offered and not asked about (as a restart reads them).
+    if (j.spec.kind !== "detect" || this.derivedProcessed.has(id)) return;
+    (j.spec.targets ?? []).forEach((t, i) => {
+      const m = /^job:(j\d{6})\/(.*)$/s.exec(t.ref ?? "");
+      if (m && t.sha256 && this.derivedKnown.get(t.sha256) === "offered") this.derivedPending.push({ sha256: t.sha256, job: m[1], path: m[2], bytes: this.bytesOf(m[1], m[2]), recipes: (j.spec.pairs ?? []).filter((q) => q.t === i).map((q) => q.recipe), tries: this.derivedTries.get(t.sha256) ?? 0, parent_status: this.jobs.get(m[1])?.status ?? "" });
+    });
+  }
+
+  /**
+   * Start a derived pass when the lane is free, up to the pass's pairs, as the
+   * lowest lane's job: what a user made or kept first, a vendor's or the
+   * system's own files last (derivedRank), and within each the largest first
+   * (a cap lands on small noise, never on a disk). On the run sf4406b 49 of the
+   * 50 generations went to Office's files under Program Files/Common Files.
+   *
+   * Part of the ceiling is kept back (derivedReserve): the lane drains what is
+   * offered now, and the first tree committed in a run is a prefix of Program
+   * Files, so on the runs of s17fdfe the 50 were spent (29 vendor files and 20
+   * Python .pyd in E0) before the profile's Temp and Downloads were offered.
+   * Once only the kept part is left, a pass takes only what a user made or
+   * kept, whenever it comes; the rest stays offered, said once.
    */
   private async maybeDrainDerived(): Promise<void> {
     if (!this.o.derived || this.stopping || !this.derivedPending.length || this.draining) return;
@@ -2192,15 +3035,25 @@ export class JobService {
     this.draining = true;
     try {
       const L = this.limits();
-      this.derivedPending.sort((a, b) => b.bytes - a.bytes);
+      const ranks = new Map(this.derivedPending.map((c) => [c, this.rankOf(c)]));
+      this.derivedPending.sort((a, b) => ranks.get(a)! - ranks.get(b)! || b.bytes - a.bytes);
+      const userOnly = !this.derivedRoomFor(1);
       const take: Candidate[] = [];
       let pairs = 0;
       while (this.derivedPending.length && (pairs === 0 || pairs + this.derivedPending[0].recipes.length <= L.pairsPerPass) && take.length < DETECT_FILES_MAX) {
+        // Sorted by rank: the first that is not a user's ends the pass when only the kept part is left.
+        if (userOnly && ranks.get(this.derivedPending[0])! >= 1) break;
         const c = this.derivedPending.shift()!;
         take.push(c);
         pairs += c.recipes.length;
       }
-      if (!take.length) return;
+      if (!take.length) {
+        if (userOnly && this.derivedPending.length && !this.derivedSaid.has("derived_reserved:generations")) {
+          this.derivedSaid.add("derived_reserved:generations");
+          await this.journal.append({ type: "derived_reserved", bound: "generations", spent: this.derivedMade(), cap: L.generationsMax, reserve: this.derivedReserve(), pending: this.derivedPending.length });
+        }
+        return;
+      }
       const S = this.S;
       const targets: Target[] = take.map((c) => ({ paths: [join(S, "store", "jobs", c.job, "out", c.path)], name: `job:${c.job}/${c.path}`, ref: `job:${c.job}/${c.path}`, sha256: c.sha256 }));
       const r = await this.submit(DERIVED, {
@@ -2254,6 +3107,7 @@ export class JobService {
     if (derivedPass && this.derivedProcessed.has(job.id)) return;
     let applied = 0;
     const unasked: string[] = [];
+    const notRun: Array<{ sha256: string; ref: string; recipe: string }> = [];
     for (const a of answered) {
       if (a.rc !== "0") continue;
       const t = targets[a.t];
@@ -2270,6 +3124,16 @@ export class JobService {
       }
       // Its parent is the job that made the object (a derived target names it).
       const maker = derivedPass ? /^job:(j\d{6})\//.exec(t.ref ?? "")?.[1] : undefined;
+      // The lane's ceiling, held where a generation is decided: a recipe that
+      // would pass it (or take the part kept for a user's objects) is not
+      // queued, and its object is named as answered and not catalogued.
+      if (derivedPass) {
+        const at = /^job:(j\d{6})\/(.*)$/s.exec(t.ref ?? "");
+        if (!this.derivedRoomFor(at ? this.rankOf({ job: at[1], path: at[2] }) : 1)) {
+          notRun.push({ sha256: t.sha256 ?? "", ref: t.ref ?? "", recipe: a.recipe });
+          continue;
+        }
+      }
       const r = await this.submit(derivedPass ? DERIVED : job.requester.agent === "system" ? "system" : job.requester.agent, { kind: "recipe", recipe: a.recipe, target: t, inputs: [t.ref ?? "all"], timeout_seconds: 900, network: "allowlist", parent: maker ?? job.spec.parent ?? job.id });
       // Already catalogued over the same bytes: the agent who asked is told
       // where, since no job of its own will report.
@@ -2282,6 +3146,7 @@ export class JobService {
       }
     }
     if (derivedPass) {
+      if (notRun.length) await this.journal.append({ type: "derived_not_run", job: job.id, bound: "generations", cap: this.limits().generationsMax, reserve: this.derivedReserve(), objects: notRun.slice(0, 200), ...(notRun.length > 200 ? { more: notRun.length - 200 } : {}) });
       await this.derivedReturn(job, answered);
       return;
     }
@@ -2382,9 +3247,47 @@ export class JobService {
 
   /** The sha256 of a job's file as its manifest has it, or of every file when no path is named. */
   private async shasOf(job: string, path?: string): Promise<string[]> {
-    const m = await readManifest(join(storePaths(this.S).jobs, job, "manifest.json")).catch(() => null);
-    if (!m) return [];
-    return m.manifest.files.filter((f) => path === undefined || f.path === path).map((f) => f.sha256);
+    const manifestPath = join(storePaths(this.S).jobs, job, "manifest.json");
+    const view = await manifestOf(manifestPath).catch(() => null);
+    if (!view) return [];
+    // One file: a line of the index. Every file: the index as a stream, never the manifest parsed whole.
+    if (path !== undefined) {
+      const f = await manifestFile(manifestPath, view, [path]).catch(() => null);
+      return f ? [f.sha256] : [];
+    }
+    const out: string[] = [];
+    for await (const rows of view.files()) for (const f of rows) out.push(f.sha256);
+    return out;
+  }
+
+  /** Kickoff targets whose dump-named members were already said (a listing and then the whole catalogue list the same). */
+  private readonly dumpsTold = new Set<string>();
+
+  /**
+   * The dump-named members of a kickoff catalogue, said to everyone once per
+   * target (scripts/dump-members.ts), with the tools of the run's packs that
+   * read a dump. Off the commit's path: a table of 400,000 rows is a stream
+   * read of a second, and a failure here is a log line.
+   */
+  private async tellDumps(job: JobRecord, generation: string, over: string, sensitive: boolean): Promise<void> {
+    const key = job.spec.target?.sha256 ?? job.spec.target?.ref ?? (job.spec.target?.paths ?? []).join("|");
+    if (sensitive || !key || this.dumpsTold.has(key)) return;
+    try {
+      const found = await dumpMembers(membersTsv(this.S, generation));
+      if (!found || !found.total) return;
+      this.dumpsTold.add(key);
+      const post = dumpsPost(generation, over, found, dumpReaders(this.o.packDirs));
+      if (post) await this.o.notify("all", post).catch(() => undefined);
+    } catch (e) {
+      this.log(`dump members of ${generation}: ${(e as Error).message}`);
+    }
+  }
+
+  /** The jobs that may still write at once: this one and every other that runs (what an ended job wrote is already out of the free room). */
+  private stagingSharers(id: string): number {
+    let n = 1;
+    for (const j of this.jobs.values()) if (j.id !== id && j.state === "running") n += 1;
+    return n;
   }
 
   /** The kickoff's plan: every recipe the census found applies, run once the hub is up. */
@@ -2400,6 +3303,15 @@ export class JobService {
     // A recipe the plan names that the service refuses is named with why, on the record: a broad extraction refused here is declined with that why (scripts/preparation.ts).
     const refused: Array<{ recipe: string; input: string; reason: string }> = [];
     for (const p of plan) {
+      // A recipe that can list before it digests is run twice: the listing alone first (a catalogue of a 400,000-item image in
+      // under a minute, where the whole took twenty and every seat walked the image itself meanwhile), then whole. The listing
+      // takes no alias: catalog/<input>/ is the whole catalogue's.
+      const info = await this.recipe(p.recipe);
+      if (info?.phases?.includes(LISTING_PHASE)) {
+        const first = await this.submit("system", { kind: "recipe", recipe: p.recipe, phase: LISTING_PHASE, target: p.target, inputs: [p.target.ref ?? "all"], timeout_seconds: 900, network: "allowlist", note: `kickoff: ${p.input} (the listing; the digests follow)` });
+        if (first.ok) ids.push(first.job.id);
+        else this.log(`kickoff recipe ${p.recipe} (listing) over ${p.input} refused: ${first.reason}`);
+      }
       const r = await this.submit("system", { kind: "recipe", recipe: p.recipe, target: p.target, alias: p.alias, inputs: [p.target.ref ?? "all"], timeout_seconds: 900, network: "allowlist", note: `kickoff: ${p.input}` });
       if (r.ok) ids.push(r.job.id);
       else {
@@ -2445,6 +3357,39 @@ export class JobService {
   /** Every running job sampled (the service's own clock), so the samples say how long each signal has been still. */
   async sampleRunning(): Promise<void> {
     for (const j of this.jobs.values()) if (j.state === "running") await this.progress(j.id).catch(() => null);
+  }
+
+  /**
+   * Why a job that is not done is not done yet, in words for the seat that waits: queued behind what, or finished and
+   * waiting to be sealed behind how many. Undefined for a job that runs or is done. A job whose output waits for the
+   * store read "accepted", "fenced" or "still running" (4,443 seat-seconds of such answers in one run), and seats
+   * cancelled, re-ran and recorded "sealed nothing" on it.
+   */
+  waitWords(job: JobRecord): string | undefined {
+    const others = [...this.jobs.values()].filter((j) => j.id !== job.id);
+    const sealing = others.filter((j) => j.state === "finished" || j.state === "fenced");
+    if (job.state === "accepted") {
+      const ahead = Math.max(0, this.queue.indexOf(job.id));
+      const busy = this.running.size >= this.o.workers;
+      // A seal holds no worker: it is said because the store is busy, not as what the job waits for.
+      return `queued, not started: ${ahead} job(s) ahead of it${busy ? `, and all ${this.o.workers} workers are busy` : ""}${sealing.length ? ` (${sealing.length} finished job(s) are being sealed into the store beside the workers)` : ""}. It will start by itself; a post tagged result says when it is done`;
+    }
+    if (job.state === "finished" || job.state === "fenced") {
+      const done = `finished${job.exit !== undefined && job.exit !== null ? ` (exit ${job.exit})` : ""}${job.finished_at ? ` at ${job.finished_at}` : ""}`;
+      const rest = `Its output cannot be cited or read as job:${job.id}/... until then; it is not lost, and running it again or cancelling it gains nothing. A post tagged result says when it is sealed`;
+      const mine = this.sealing.get(job.id);
+      const p = mine?.progress;
+      // How far, in the seal's own count (sealFiles' onProgress): the files hashed of all there are, or the step it is at before and after the hashing.
+      const far = p?.phase === "manifest" && p.files_total ? ` (all ${p.files_total} files hashed, its manifest is being written)` : p?.files_total ? ` (${p.files_done ?? 0} of ${p.files_total} files hashed)` : p?.phase === "walk" ? " (its files are being listed)" : p?.phase === "move" ? " (its files are being moved into the store)" : mine?.large ? " (a large tree)" : "";
+      // A seal that failed and is tried again: said, with the error, so the wait is not read as a seal that hangs.
+      const again = mine?.retry ? ` Its seal failed ${mine.retry.tried === 1 ? "once" : `${mine.retry.tried} times`} (${mine.retry.error}) and is tried again${mine.active ? " now" : ` at ${mine.retry.next_at}`}, try ${mine.retry.tried + 1} of ${mine.retry.of}; if the last try fails the job ends failed and you are told.` : "";
+      if (mine?.active) return `${done}, being sealed into the store now${far}.${again} ${rest}`;
+      if (mine?.retry) return `${done}, not yet sealed into the store.${again} ${rest}`;
+      // Behind it in the seal stage: what waits there and came first; a job the stage has not got (its worker not yet confirmed gone, a service that was restarted) counts by when it finished.
+      const ahead = mine ? this.sealQueue.indexOf(mine) : sealing.filter((j) => (j.finished_at ?? "") < (job.finished_at ?? "")).length;
+      return `${done}, waiting to be sealed into the store: ${Math.max(0, ahead)} job(s) ahead of it. ${job.state === "finished" && this.fenceWaits.has(job.id) ? "Its worker VM is not yet confirmed gone, and nothing of it is read before that. " : ""}${rest}`;
+    }
+    return undefined;
   }
 
   /** A job's state for its requester (or anyone: jobs are the run's, not private), with a page of its stdout. */
@@ -2557,34 +3502,71 @@ export class JobService {
     const dir = join(storePaths(this.S).jobs, job.id);
     await mkdir(dir, { recursive: true });
     const path = join(dir, "job.json");
-    await chmod(path, 0o644).catch(() => undefined);
-    await writeFile(path, `${JSON.stringify(job, null, 2)}\n`);
-    await chmod(path, 0o444).catch(() => undefined);
+    const text = `${JSON.stringify(job, null, 2)}\n`;
+    // Whole or not at all: a reader (a seat's job_status, the hub, a test) never sees the file cut while it is written again.
+    const tmp = join(dir, `.job.json.${process.pid}.${(this.projected += 1)}.tmp`);
+    try {
+      await writeFile(tmp, text, { mode: 0o444 });
+      await rename(tmp, path);
+    } catch {
+      await rm(tmp, { force: true }).catch(() => undefined);
+      // A directory that takes no new file (made read-only): the file itself, written in place as before.
+      await chmod(path, 0o644).catch(() => undefined);
+      await writeFile(path, text);
+      await chmod(path, 0o444).catch(() => undefined);
+    }
   }
+  /** Distinct names for the temporary files project() renames into place. */
+  private projected = 0;
 
   // --- stopping -----------------------------------------------------------------------------------
 
-  /** The run is ending: queued jobs are cancelled, running workers removed, and each recorded. */
+  /**
+   * The run is ending: queued jobs are cancelled, running workers removed,
+   * what is finished sealed, and each recorded. `stopping` is set before
+   * anything is taken away, so a worker's going is read as the stop's doing
+   * (workerHealth, execute).
+   */
   async stop(reason: string): Promise<void> {
     this.stopping = true;
+    this.stopReason = reason;
     if (this.timer) clearInterval(this.timer);
-    for (const id of [...this.queue]) {
-      const j = this.jobs.get(id);
-      if (!j) continue;
-      await this.journal.append({ type: "job_cancelled", job: id, reason });
-      Object.assign(j, { state: "cancelled", status: "cancelled", reason });
-      await this.project(j);
-    }
-    this.queue.length = 0;
+    await this.cancelQueued(reason);
     for (const j of this.jobs.values()) {
       if (j.state === "running" && j.worker) {
         j.cancel_requested = "the harness";
         await this.o.destroyWorker(j.worker).catch(() => undefined);
       }
     }
+    // A job that holds its slot for a worker not confirmed gone lets go: fenceLeft asks for it, and accounts for it.
+    for (const wake of [...this.fenceWaits.values()]) wake();
     await Promise.allSettled([...this.running.values()]);
+    // What the seal stage holds is sealed before the service goes, and what a commit started ends.
+    await this.settled();
     await this.fenceLeft(this.o.stopFence ?? { tries: 3, waitMs: 2000 });
+    await this.settled();
+    // Whatever is still accepted (picked as the stop came, queued again by a recovery that ended meanwhile) is cancelled too: nothing is left to start.
+    await this.cancelQueued(reason);
     await dropProjected(storePaths(this.S).staging);
+  }
+
+  /**
+   * Every job never started is cancelled on the record: what is in the queue,
+   * and any other still `accepted` that no worker was picked for. On the run
+   * s17fdfe-E1 46 jobs (27 derived recipes, 19 of seats) stayed `accepted`
+   * for ever: the hub's own stop never ran, and the seal after the run wrote
+   * nothing for them.
+   */
+  private async cancelQueued(reason: string): Promise<void> {
+    const ids = new Set([...this.queue, ...[...this.jobs.values()].filter((j) => j.state === "accepted" && !this.running.has(j.id)).map((j) => j.id)]);
+    this.queue.length = 0;
+    for (const id of ids) {
+      const j = this.jobs.get(id);
+      if (!j || j.state !== "accepted") continue;
+      await this.journal.append({ type: "job_cancelled", job: id, reason });
+      Object.assign(j, { state: "cancelled", status: "cancelled", reason });
+      await this.project(j).catch(() => undefined);
+    }
   }
 
   /**
@@ -2637,7 +3619,10 @@ export class JobService {
    * (`job_fenced` with `by: "stop"`, then its commit, as recovery would) or
    * accounted for with a `job_unsealed` line when it is not. A staging
    * directory no such job owns is named and left as it is. Only with no hub
-   * running: the hub is the store's writer while it runs.
+   * running: the hub is the store's writer while it runs. Every job the
+   * journal still has as accepted is cancelled on the record: no hub is left
+   * to start it, and the hub's own stop, which would have said so, did not
+   * run or did not get that far.
    */
   async sealLeft(): Promise<{ sealed: Array<{ staging: string; job: string; status: string }>; left: Array<{ staging: string; why: string }> }> {
     // The hub is the store's writer while it lives: by hub.pid, and by its
@@ -2661,13 +3646,15 @@ export class JobService {
         continue;
       }
       if (j.state !== "running" && j.state !== "finished" && j.state !== "fenced") {
-        left.push({ staging: name, why: `${j.id} is ${j.state} on the journal: nothing of it is left to seal` });
+        left.push({ staging: name, why: j.seal_failed ? `${j.id} could not be sealed during the run after ${j.seal_failed.tries} tries (${j.seal_failed.error}) and ended failed on the journal: what it wrote is left as it is` : `${j.id} is ${j.state} on the journal: nothing of it is left to seal` });
         continue;
       }
       owned.set(j.id, name);
     }
     // Once each: destroyWorker already asks msb three times.
     await this.fenceLeft({ tries: 1, waitMs: 0 }, new Set(owned.keys()), "after the run");
+    await this.settled();
+    await this.cancelQueued("the run was stopped before it started");
     for (const [id, name] of owned) {
       const after = this.jobs.get(id)!;
       if (after.state === "committed") sealed.push({ staging: name, job: id, status: after.status ?? "ok" });
@@ -2677,17 +3664,54 @@ export class JobService {
     return { sealed, left: left.sort((a, b) => a.staging.localeCompare(b.staging)) };
   }
 
-  /** Backstop: a worker that did not go when its job ended is asked to go again. */
+  /**
+   * Backstop: a worker that did not go when its job ended is asked to go
+   * again. A job that still holds its slot for it asks by itself
+   * (confirmGone) and is only woken here; one a restart found is asked here,
+   * and its seal queued once it is gone.
+   */
   async sweep(): Promise<void> {
+    for (const wake of [...this.fenceWaits.values()]) wake();
     for (const j of this.jobs.values()) {
-      if (j.state !== "finished" || !j.worker) continue;
+      if (j.state !== "finished" || !j.worker || this.running.has(j.id)) continue;
       const gone = await this.o.destroyWorker(j.worker);
-      if (!gone.ok) continue;
+      if (!gone.ok || j.state !== "finished") continue;
       await this.journal.append({ type: "job_fenced", job: j.id, attempt: j.attempt, fenced: true, late: true });
       j.state = "fenced";
-      await this.commit(j, { status: j.status ?? "ok", exit: j.exit ?? null, reason: j.reason });
+      this.later(`${j.id}: not sealed`, this.commit(j, { status: j.status ?? "ok", exit: j.exit ?? null, reason: j.reason }));
     }
   }
+}
+
+/**
+ * Whether a tree to seal is a large one (SEAL_LARGE_FILES, SEAL_LARGE_BYTES):
+ * a walk that stops as soon as it knows, so it costs the same for a tree of
+ * a hundred files and one of two hundred thousand. The tree is where the
+ * seal will find it: moved into the store already (a crash after the move),
+ * else in the job's staging.
+ */
+export async function sealIsLarge(dest: string, staged: string): Promise<boolean> {
+  const root = existsSync(dest) ? dest : staged;
+  let files = 0;
+  let bytes = 0;
+  const stack = [root];
+  while (stack.length) {
+    const dir = stack.pop()!;
+    const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+    for (const e of entries) {
+      const p = join(dir, e.name);
+      if (e.isDirectory()) {
+        stack.push(p);
+        continue;
+      }
+      files += 1;
+      if (files > SEAL_LARGE_FILES) return true;
+      if (!e.isFile()) continue;
+      bytes += (await lstat(p).catch(() => null))?.size ?? 0;
+      if (bytes > SEAL_LARGE_BYTES) return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -2738,22 +3762,117 @@ export async function programMissing(ctl: string, exit: number | null): Promise<
   return dash ? dash[1]! : "?";
 }
 
+/**
+ * The lines that make a job's supplied programs runnable (JobSpec.programs):
+ * each import's out/ copied into one executable directory under /tmp, every
+ * file in it given its owner's execute bit, its bin/ and sbin/ directories (and
+ * its own top) on PATH, its lib/, lib64/ and *-linux-gnu/ directories on
+ * LD_LIBRARY_PATH, and PROGRAMS naming the directory. What could not be copied
+ * is said in /job/programs.log, which the job keeps with its logs.
+ */
+export function programLines(ids: readonly string[], importsDir: string): string[] {
+  if (!ids.length) return [];
+  const q = shQuote;
+  const lines = ['PROGRAMS="$(mktemp -d /tmp/programs.XXXXXX)"', ": > /job/programs.log"];
+  for (const id of ids) {
+    const dst = `"$PROGRAMS"/${q(id)}`;
+    lines.push(
+      `mkdir -p ${dst} && cp -R ${q(join(importsDir, id, "out"))}/. ${dst}/ 2>>/job/programs.log && chmod -R u+rwX ${dst} && find ${dst} -type f -exec chmod u+x {} + || echo "programs: ${id} could not be made runnable" >> /job/programs.log`,
+      `while IFS= read -r d; do PATH="$d:$PATH"; done < <(find ${dst} -type d \\( -name bin -o -name sbin \\) 2>/dev/null | sort -r)`,
+      `PATH="${"$"}PROGRAMS/${id}:$PATH"`,
+      `while IFS= read -r d; do LD_LIBRARY_PATH="$d\${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; done < <(find ${dst} -type d \\( -name lib -o -name lib64 -o -name '*-linux-gnu' \\) 2>/dev/null | sort -r)`,
+    );
+  }
+  lines.push("export PATH PROGRAMS; export LD_LIBRARY_PATH=\"${LD_LIBRARY_PATH:-}\"");
+  return lines;
+}
+
+/**
+ * Where a derived object stands in the derived catalogue's queue, lowest
+ * first. Words of the path only: no file is read.
+ *
+ * - 0: what a case turns on. A program, a script, a document, an archive or
+ *   an image of a disk in a place a user (or what ran as one) writes to: a
+ *   profile's Temp, Downloads, Desktop, Documents and its other kept folders,
+ *   the shared profile, the system's temp directories; and any file a seat
+ *   picked by name when it extracted it (`picked`).
+ * - 0.5: a user's other files (the rest of a profile, the rest of those
+ *   places).
+ * - 1: anything else.
+ * - 2: a vendor's or the system's files (Program Files, Windows, ProgramData,
+ *   a profile's AppData/Local/Microsoft, Packages and Programs, /usr, /lib,
+ *   a shared library) and a language's runtime and packages wherever they sit
+ *   (a Python's DLLs and .pyd, site-packages, node_modules, a JDK), a
+ *   profile's included.
+ *
+ * On the runs of s17fdfe the rank before this one put `.pyd` and
+ * `Users/<name>/AppData/Local/Programs/Python/Python311/DLLs/` at 1, above
+ * nothing a user had made: 20 (E0) and 42 (E2) of the 50 generations went
+ * there, and none named the image's `AppData/Local/Temp/mssetup.exe` or a
+ * file under Downloads.
+ */
+export function derivedRank(path: string, o: { picked?: boolean } = {}): number {
+  if (o.picked) return 0;
+  const p = `/${path.replace(/\\/g, "/")}`.toLowerCase();
+  // A language's runtime or packages, a profile's too.
+  if (
+    /\/(node_modules|site-packages|dist-packages|__pycache__|\.cache|\.nuget|\.cargo|\.rustup|\.m2|\.gradle|\.npm|\.conda|\.vscode[^/]*|go\/pkg|python[\d.]*\/(dlls|lib|libs|scripts|tcl|include|tools)|(miniconda|anaconda|miniforge)\d*|jdk[^/]*|jre[^/]*|ruby\d*[^/]*\/lib|perl\d*\/lib|appdata\/local\/programs|appdata\/local\/pip|appdata\/roaming\/(npm|python)|appdata\/local\/microsoft|appdata\/local\/packages)\//.test(p) ||
+    /\.(pyd|pyc|pyo|whl|egg)$/.test(p)
+  )
+    return 2;
+  const kept = /\/(users|home|documents and settings)\/[^/]+\/(desktop|documents|my documents|downloads|pictures|videos|music|onedrive[^/]*|dropbox|appdata\/local\/temp|local settings\/temp)\//.test(p) || /\/(users\/public|windows\/temp|\$recycle\.bin|tmp|var\/tmp|dev\/shm)\//.test(p);
+  if (kept) return CASE_FILE.test(p) ? 0 : 0.5;
+  if (/\/(program files( \(x86\))?|programdata|windows|winsxs|\$windows\.~bt|system volume information|usr|lib|lib64|opt|snap)\//.test(p) || /\.(so(\.\d+)*|dll|mui|cat|manifest)$/.test(p)) return 2;
+  if (/\/(users|home|documents and settings)\/[^/]+\//.test(p)) return 0.5;
+  return 1;
+}
+
+/** A program, a script, a document, a mail, an archive or an image of a disk, by its name's ending. */
+const CASE_FILE = /\.(exe|dll|scr|com|pif|cpl|sys|msi|msix|appx|bat|cmd|ps1|psm1|vbs|vbe|js|jse|wsf|wsh|hta|lnk|url|jar|py|sh|elf|bin|apk|dmg|pkg|deb|rpm|doc[xm]?|dot[xm]?|xls[xmb]?|xlt[xm]?|ppt[xm]?|pps[xm]?|rtf|pdf|one|odt|ods|odp|csv|txt|eml|msg|pst|ost|mbox|zip|7z|rar|tar|gz|tgz|bz2|xz|cab|iso|img|vhdx?|vmdk|ova|e01|ad1|kdbx|sqlite|db)$/;
+
+/** The phase a recipe may declare to be run to alone at kickoff: its catalogue's list, before any digest. */
+export const LISTING_PHASE = "listing";
+
+/**
+ * What a kickoff catalogue post says of its generation: its status, or, for
+ * a listing run alone, that the list is whole and what is still to come. A
+ * listing's own status is partial by its record (the digests are pending),
+ * which read alone would send seats to walk the image themselves.
+ */
+export function phaseWords(phase: string | undefined, status: string): string {
+  if (phase !== LISTING_PHASE) return status;
+  return `the listing (every member's path, size and times; search it now with catalog_search). Its digests are not computed yet: the whole catalogue follows as a later revision, from a job that is already queued, so nobody need walk the image for a list (${status} until then)`;
+}
+
 /** One post, for the agent that asked. */
 export function describe(job: JobRecord): string {
   const what = job.spec.kind === "tool" ? `tool ${job.spec.tool}` : job.spec.kind === "command" ? "command" : job.spec.kind === "recipe" ? `recipe ${job.spec.recipe}` : job.spec.seal ? `the seal of ${job.spec.seal.ref}` : job.spec.kind === "import" ? `import of ${job.spec.source}${scopeKindOf(job.spec) === "declared" ? ", from the snapshot the hub took at its start" : ", copied live from where it was"}` : "detect pass";
+  if (job.state === "failed" && job.seal_failed) return `Job ${job.id} (${what}) failed: ${job.reason}.`;
   if (job.state === "failed") return `Job ${job.id} (${what}) was not run: ${job.reason}.`;
   if (job.state === "cancelled") return `Job ${job.id} (${what}) was cancelled${job.reason ? `: ${job.reason}` : ""}.`;
   const o = job.outputs;
   const files = o ? `${o.files} file(s), ${o.bytes} bytes in ${o.path}/${o.rejected ? ` (${o.rejected} link(s) or special file(s) left out, named in its manifest)` : ""}` : "no output";
-  const head = job.status === "ok" ? "done" : `${job.status}${job.reason ? ` (${job.reason})` : ""}`;
+  const head = job.status === "ok" ? `done${job.exec_refused && job.reason ? ` (${job.reason})` : ""}` : `${job.status}${job.reason ? ` (${job.reason})` : ""}`;
   const cite = job.spec.seal && job.status === "ok" ? `record again citing ${job.spec.seal.ref}: it resolves to import:${job.id}/<name>` : `cite its files as job:${job.id}/<path>`;
-  const same = job.same_as?.length ? ` ${job.same_as.length} of its files are an earlier job's output byte for byte (job_status ${job.id} names them).` : "";
-  return `Job ${job.id} (${what}) ${head}: ${files}; stdout and stderr whole in store/jobs/${job.id}/. job_status ${job.id} for the details; ${cite}.${job.generation ? ` Catalogued as ${job.generation}.` : ""}${same}${job.sensitive ? ` ${sensitiveWords(job)}` : ""}`;
+  const sameN = job.same_as_total?.files ?? job.same_as?.length ?? 0;
+  const same = sameN ? ` ${sameN} of its files are an earlier job's output byte for byte (job_status ${job.id} names ${job.same_as_total?.list ? `the first, ${job.same_as_total.list} every one` : "them"}).` : "";
+  return `Job ${job.id} (${what}) ${head}: ${files}; stdout and stderr whole in store/jobs/${job.id}/. job_status ${job.id} for the details; ${cite}.${job.generation ? ` Catalogued as ${job.generation}.` : ""}${same}${job.spec.args_resolved?.length ? ` ${argRefsWords(job.spec.args_resolved)}` : ""}${job.spec.each ? ` ${eachWords(job.spec.each)}` : ""}${job.sensitive ? ` ${sensitiveWords(job)}` : ""}`;
 }
 
-/** What a sensitive job's outputs mean for whoever uses them, in one sentence. */
+/**
+ * What a sensitive job's outputs mean for whoever uses them, in one sentence.
+ * A job marked file by file (its record names `files`: the ones that are a
+ * sensitive output's bytes, output-hygiene.ts) says which files, and that
+ * the rest of what it sealed and its logs are not sensitive.
+ */
 export function sensitiveWords(job: Pick<JobRecord, "id" | "sensitive">): string {
   if (!job.sensitive) return "";
+  const files = job.sensitive.why === "derived" && Array.isArray(job.sensitive.files) && job.sensitive.files.length ? job.sensitive.files : null;
+  if (files) {
+    const n = files.length;
+    const shown = files.slice(0, 3).map((f) => `out/${f}`).join(", ");
+    return `${n} of its output files ${n === 1 ? "is" : "are"} sensitive (${shown}${n > 3 ? `, and ${n - 3} more: its job_committed line names every one` : ""}): byte for byte the sensitive output of ${job.sensitive.from.join(", ")}. An entry citing ${n === 1 ? "that file" : "one of those files"}, or the job's whole output, is recorded sensitive, a job reading ${n === 1 ? "it" : "one"} seals sensitive output too, and a redacted package withholds ${n === 1 ? "it" : "them"}; the rest of what it sealed, and its logs, are not sensitive. Say what ${n === 1 ? "that file shows" : "those files show"} without the value.`;
+  }
   return `Its outputs are sensitive (${job.sensitive.why === "secret_output" ? `it ran with secret_output${job.sensitive.declared === "tool_manifest" ? ", which the tool's manifest declares" : ""}` : `made from the sensitive output of ${job.sensitive.from.join(", ")}`}): an entry citing them is recorded sensitive, a job reading them seals sensitive output too, and a redacted package withholds them. Say what they show without the value.`;
 }
 
@@ -2763,10 +3882,11 @@ export function sensitiveWords(job: Pick<JobRecord, "id" | "sensitive">): string
  * files it wrote (every one is in its manifest, named), the tail of stderr
  * when it failed (all of it is in stderr.log, named), and how to cite it.
  */
-export async function jobView(S: string, job: JobRecord, o: { files?: number } = {}): Promise<Record<string, unknown>> {
+export async function jobView(S: string, job: JobRecord, o: { files?: number; waiting?: string } = {}): Promise<Record<string, unknown>> {
   const view: Record<string, unknown> = {
     job: job.id,
     state: job.state,
+    ...(o.waiting ? { waiting: o.waiting } : {}),
     ...(job.status ? { status: job.status } : {}),
     ...(job.reason ? { reason: job.reason } : {}),
     kind: job.spec.kind,
@@ -2786,22 +3906,36 @@ export async function jobView(S: string, job: JobRecord, o: { files?: number } =
     ...(job.generation ? { generation: job.generation, revision: job.revision } : {}),
     ...(job.program_missing ? { program_missing: { ...job.program_missing, note: "the image of its profile does not hold it: run it in a profile that does, install it if the job may, or tell the operator (the console lists these for the images' upkeep)" } } : {}),
     ...(job.spec.independent ? { independent: true } : {}),
+    ...(job.spec.programs?.length ? { programs: job.spec.programs } : {}),
     ...(job.spec.secret_output ? { secret_output: true } : {}),
     ...(job.spec.secret_output_by ? { secret_output_by: job.spec.secret_output_by } : {}),
     ...(job.sensitive ? { sensitive: sensitiveWords(job) } : {}),
+    // Marked file by file: the files that are sensitive (the first; its job_committed line names every one), the rest of its output is not.
+    ...(job.sensitive?.why === "derived" && job.sensitive.files?.length ? { sensitive_files: job.sensitive.files.slice(0, 20).map((f) => `out/${f}`), ...(job.sensitive.files.length > 20 ? { sensitive_files_more: job.sensitive.files.length - 20 } : {}) } : {}),
+    ...(job.seal_failed ? { seal_failed: job.seal_failed } : {}),
   };
   if (job.state !== "committed" || !job.outputs) return view;
   const dir = join(storePaths(S).jobs, job.id);
-  const m = await readManifest(join(dir, "manifest.json"));
-  const shown = o.files ?? 20;
+  // Its first files and its top-level entries, from the manifest's head (manifest-index.ts): a status call never
+  // reads a manifest whole (a tree of 201,202 files has one of 60 MB, and every job_status parsed it).
+  const manifestPath = join(dir, "manifest.json");
+  const m = await manifestOf(manifestPath).catch(() => null);
+  const head = m?.head;
+  const shown = Math.max(0, o.files ?? 20);
+  const list = head ? head.first.slice(0, shown).map((f) => ({ path: f.path, bytes: f.bytes, sha256: f.sha256 })) : [];
+  // The names of what was left out are in the manifest only: read from a small one, counted from a large one's head.
+  const rejected = head?.rejected && head.manifest.bytes < INDEX_MIN_BYTES ? ((await readManifest(manifestPath))?.manifest.rejected ?? []) : [];
   view.outputs = {
     path: job.outputs.path,
     files: job.outputs.files,
     bytes: job.outputs.bytes,
-    ...(m ? { list: m.manifest.files.slice(0, shown).map((f) => ({ path: f.path, bytes: f.bytes, sha256: f.sha256 })) } : {}),
-    ...(m && m.manifest.files.length > shown ? { more: `${m.manifest.files.length - shown} more, every one in store/jobs/${job.id}/manifest.json` } : {}),
-    ...(m && m.manifest.rejected.length ? { left_out: m.manifest.rejected.map((r) => `${r.path} (${r.kind})`) } : {}),
+    ...(head ? { list } : {}),
+    ...(head && head.totals.files > list.length ? { more: `${head.totals.files - list.length} more, every one in store/jobs/${job.id}/manifest.json` } : {}),
+    // What its tree holds at the top, when the first files do not say (a tree of many files): each entry with its files and bytes.
+    ...(head && head.totals.files > list.length && head.top.length ? { top: head.top.slice(0, 20).map((t) => (t.kind === "dir" ? { dir: `${t.name}/`, files: t.files, bytes: t.bytes } : { file: t.name, bytes: t.bytes })), ...(head.top.length + head.top_more > 20 ? { top_more: head.top.length + head.top_more - 20 } : {}) } : {}),
+    ...(rejected.length ? { left_out: rejected.map((r) => `${r.path} (${r.kind})`) } : head?.rejected ? { left_out: [`${head.rejected} link(s) or special file(s), each named under "rejected" in store/jobs/${job.id}/manifest.json`] } : {}),
     manifest: `store/jobs/${job.id}/manifest.json`,
+    ...(head ? { manifest_sha256: head.manifest.sha256 } : {}),
   };
   // stderr is shown whatever the exit status: a command that swallowed its
   // failures still exits 0, and what it said on stderr is how that shows.
@@ -2815,7 +3949,8 @@ export async function jobView(S: string, job: JobRecord, o: { files?: number } =
   } catch {
     // no stderr
   }
-  Object.assign(view, sameAsView(job.id, job.same_as ?? []));
+  // The first few of its files that are an earlier job's bytes, and the count and bytes of all of them; every one is in the side file its job_same_as line names.
+  Object.assign(view, sameAsView(job.id, job.same_as ?? [], job.same_as_total));
   view.cite = `job:${job.id}/<path>`;
   return view;
 }
@@ -2906,6 +4041,9 @@ export async function resolveTarget(S: string, text: string, journal?: Journal):
   // bytes (run s8c228e: an agent's request catalogued the decrypted vault a
   // second time, 13 s after the derived catalogue had).
   const om = /^store\/(jobs|imports)\/([^/]+)\/out\/(.+)$/.exec(relToS);
-  const sha256 = om ? (await readManifest(join(S, "store", om[1], om[2], "manifest.json")))?.manifest.files.find((f) => f.path === om[3])?.sha256 : undefined;
+  // One line of its manifest's index, never the manifest whole.
+  const omPath = om ? join(S, "store", om[1], om[2], "manifest.json") : "";
+  const omView = om ? await manifestOf(omPath).catch(() => null) : null;
+  const sha256 = om && omView ? (await manifestFile(omPath, omView, [om[3]]).catch(() => null))?.sha256 : undefined;
   return { paths, name: relToS, ref, ...(sha256 ? { sha256 } : {}) };
 }

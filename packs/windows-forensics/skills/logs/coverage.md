@@ -3,6 +3,7 @@ id: logs/coverage
 title: Gapped logs
 when: Before saying an event or channel is absent.
 needs: []
+card: evtx_query {"path": "<log>.evtx"} with no filter keeps every record in result_file: its first and last rows are the interval the file can speak for. An empty channel is a coverage condition, not a verdict. An EventRecordID gap is absent records, not a count. A negative over a partial run is bounded by what was read.
 tools: [evtx_query, regkv]
 requires_host: []
 ---

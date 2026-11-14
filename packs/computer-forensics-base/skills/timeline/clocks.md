@@ -1,7 +1,8 @@
 ---
 id: timeline/clocks
 title: Timestamp semantics, zones and clock uncertainty
-when: Before a number or date string becomes a time in the ledger, or sources disagree on when.
+when: Before a number becomes a time in the ledger, or sources disagree.
+card: timestamp_decode {"value": "<raw>"} lists the reading under every common epoch and applies no zone: the artefact's schema picks the epoch, never the plausible reading. Keep the raw value, field, unit and kind of zone beside the result; a local time needs the zone's rule on that date, and a repeated hour keeps both readings. Does not show: when a person acted, or that two clocks agree.
 needs: []
 tools: [timestamp_decode]
 requires_host: []

@@ -45,7 +45,17 @@
   "example": "{\"path\": \"work/extracted/$MFT\", \"name\": \"\\\\.docx$\", \"limit\": 50}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 7,
+  "not_for": [
+    {
+      "what": "the change journal ($UsnJrnl:$J) and its reasons",
+      "use": "usn_journal"
+    },
+    {
+      "what": "names a directory no longer lists, from $I30 slack",
+      "use": "indx_carve"
+    }
+  ],
+  "version": 8,
   "sha256": "f5e662bbb99f971b1daca22376fcf7c65d2e0056728d86ede5beda586f59b24a",
   "use": {
     "names": [

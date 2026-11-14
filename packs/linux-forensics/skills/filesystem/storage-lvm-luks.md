@@ -3,6 +3,7 @@ id: filesystem/storage-lvm-luks
 title: LVM and LUKS on evidence copies
 when: Mapping logical volumes and their files, and LUKS headers, without activating or unlocking.
 needs: []
+card: Read the catalogue's linux-target files or linux_triage {"source": "<complete image set>", "out_dir": "work/<your id>/<name>"} first: it reads LVM without activating anything, and is partial (program_group, left_behind) when dissect.target left a process. Record lvs, pvs and vgs before any activation; never activate an evidence volume group by its name. LUKS header inspection needs no key. Does not show: who owns a key slot, or that a volume unlocks.
 tools: [linux_triage]
 requires_host: [lvs, pvs, vgs, cryptsetup, luksdeinfo, target-fs, fls, icat, mmls]
 ---

@@ -407,6 +407,65 @@
       },
       "licence": "LGPL-2.1-or-later, with the unRAR licence restriction on the RAR code; BSD-3-Clause and BSD-2-Clause for some code (7-Zip's License.txt for the Linux builds)",
       "redistributable": false
+    },
+    {
+      "name": "ffmpeg",
+      "package": "ffmpeg",
+      "optional": true,
+      "why": "Decode a video's frames for frame_survey (every frame onto contact sheets, a range at native size) and remux an MP4 or AVI that will not open into a copy whose frames are then counted by decoding. Invoked as an executable. frame_survey has no decoder of its own: without this program it answers failed and says so. Declared optional: an image that lacks it still holds the pack.",
+      "install": {
+        "brew": "brew install ffmpeg",
+        "apt": "apt-get install -y ffmpeg"
+      },
+      "licence": "GPL-2.0-or-later as Debian builds it (the libraries alone are LGPL-2.1-or-later)",
+      "redistributable": false
+    },
+    {
+      "name": "ffprobe",
+      "package": "ffmpeg",
+      "optional": true,
+      "why": "Read the shape of a video's first stream (codec, frame size, rate, the container's own frame count) before frame_survey decodes it. Same ffmpeg package as ffmpeg.",
+      "install": {
+        "brew": "brew install ffmpeg",
+        "apt": "apt-get install -y ffmpeg"
+      },
+      "licence": "GPL-2.0-or-later as Debian builds it (the libraries alone are LGPL-2.1-or-later)",
+      "redistributable": false
+    },
+    {
+      "name": "tesseract",
+      "package": "tesseract-ocr",
+      "optional": true,
+      "why": "An OCR engine as a second reader of one line of text in a picture: glyph_strip runs it on the crop (--psm 7) and says which reader read what; without it glyph_strip says so and still counts and cuts the glyphs. The English model comes with it, and a small font set (DejaVu) so that a script can render a candidate reading to compare with the crop.",
+      "install": {
+        "brew": "brew install tesseract",
+        "apt": "apt-get install -y tesseract-ocr tesseract-ocr-eng fonts-dejavu-core"
+      },
+      "licence": "Apache-2.0 (the DejaVu fonts under the Bitstream Vera licence)",
+      "redistributable": false
+    },
+    {
+      "name": "r2",
+      "package": "radare2",
+      "optional": true,
+      "why": "Disassembly, cross-references and function discovery from the command line, scriptable. Declared by the base pack too, so that every image holds a disassembler of more than one architecture (an image of a macOS or an aarch64 host has objdump for its own architecture only); the pin is the reverse-engineering pack's, the same download.",
+      "install": {
+        "brew": "brew install radare2",
+        "apt": "pinned download 6.2.2 (install.download): upstream's .deb per architecture; radare2 is not in Debian 12, only in unstable",
+        "download": {
+          "version": "6.2.2",
+          "amd64": {
+            "url": "https://github.com/radareorg/radare2/releases/download/6.2.2/radare2_6.2.2_amd64.deb",
+            "sha256": "09234e4139bf8dfcbb7fc1fdb2519859ad516e63c19d3c27d92aaecdf463b1ad"
+          },
+          "arm64": {
+            "url": "https://github.com/radareorg/radare2/releases/download/6.2.2/radare2_6.2.2_arm64.deb",
+            "sha256": "6e3ccf220e5b53adedc9dccc67825e908b545aabd4cf8723f0c43ebfd0c4f437"
+          }
+        }
+      },
+      "licence": "LGPL-3.0-only; some plugins GPL (radare2's doc/licenses.md)",
+      "redistributable": false
     }
   ]
 }

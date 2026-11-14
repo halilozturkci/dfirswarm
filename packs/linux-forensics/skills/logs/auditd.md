@@ -3,6 +3,7 @@ id: logs/auditd
 title: auditd records, events and what ran
 when: Reading audit.log for executed commands and logins, and for what auditd did not record.
 needs: []
+card: Read the rules first: without them an absence says nothing. audit_events {"paths": ["<oldest rotation>", "<audit.log>"]}, oldest first. Read missing_components before quoting an event, lost_and_daemon_records and rotation_gaps before an absence. auid 4294967295 is unset; success is the system call's, not the command's. Does not show: that a command reached its aim, or what the rules left out.
 tools: [audit_events]
 requires_host: [ausearch]
 ---

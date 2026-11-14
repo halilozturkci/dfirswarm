@@ -151,6 +151,20 @@ for f in disk.E02 disk.E10 disk.EAA raw.002 case.Ex02; do [[ -n "$(cont "$f")" ]
 [[ "$(cont disk.EAA)" == "disk.E01" ]] || fail "a continuation names the set's first segment"
 pass "a segment set is catalogued once: continuations are named, not walked"
 
+# FTK Imager's AD1 sets are .ad1 .ad2 … .ad12: the further ones are segments of
+# the first, in their number's order (the AD1 reader takes segment k from the
+# k-th path), so .ad10 comes after .ad9, not after .ad1.
+for k in 1 2 3 4 5 6 7 8 9 10 11 12; do : > "$SEG/chall.ad$k"; done
+: > "$SEG/lone.ad2"
+[[ -z "$(cont chall.ad1)" ]] || fail "an AD1 image's first segment is not a continuation"
+[[ "$(cont chall.ad2)" == "chall.ad1" ]] || fail ".ad2 should be a continuation of .ad1"
+[[ "$(cont chall.ad12)" == "chall.ad1" ]] || fail ".ad12 should be a continuation of .ad1"
+[[ -z "$(cont lone.ad2)" ]] || fail "an .ad2 with no .ad1 beside it stands on its own"
+order="$(py "import glob, os; print(' '.join(os.path.basename(p) for p in sorted((p for p in glob.glob('$SEG/chall.ad*') if not p.endswith('.ad1')), key=e.segment_order)))")"
+[[ "$order" == "chall.ad2 chall.ad3 chall.ad4 chall.ad5 chall.ad6 chall.ad7 chall.ad8 chall.ad9 chall.ad10 chall.ad11 chall.ad12" ]] \
+  || fail "AD1 segments should be ordered by their number: $order"
+pass "an AD1 segment set is one image, its segments in their number's order"
+
 # End to end: two segments in, one catalogue out, the skip on the record, and
 # the recipe given the whole set in order.
 SEGSB="$TMP/segsb"; mkdir -p "$SEGSB/inputs" "$TMP/segbin"

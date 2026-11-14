@@ -46,6 +46,7 @@ const ESTABLISHED = {
   answer_review: {
     reproduced: "re-derived the cited finding from its sealed ref",
     read: "nothing beyond the cited entries",
+    link: "the cited record is the host's own log of the event the question asks about",
     parts: [{ part: "the question as asked", established: true, why: "the cited finding shows it" }],
     inference: "the finding is the answer",
     alternatives: [{ explanation: "a copy of the record left by another process", why: "the record's own metadata ties it to the event", evidence: ["E-1"] }],
@@ -437,4 +438,46 @@ test("the metric: a run whose only first-done refusal would have been late items
   assert.match((await import("../scripts/metrics.ts")).metricsText(ma), /the first done refused: late posts \(a0\), on late items; 1 done\(s\) refused on late items/);
   // What the trace keeps of the finish acts is read back from the register too.
   assert.match(await readFile(join(b.S, "leads", "finish.jsonl"), "utf8"), /"ev":"prepare"/);
+});
+
+test("what holds the finish is given by code, and the trace keeps the codes and counts: an answer with no critic act holds it as no_critic_act", async () => {
+  const r = await run("fp-held");
+  const f = await P.recordEntry(r.a0, { kind: "finding", ...FINDING, value: "a logon at 09:14 by the first account", source: "the log", evidence: "line 12", refs: ["job:j000001/hits.txt"], answers: ["1"] } as unknown as P.LedgerInput);
+  assert.ok(f.ok, JSON.stringify(f));
+  const seq = (f as { entry: P.LedgerEntry }).entry.seq;
+  const a = await P.recordEntry(r.a1, { kind: "answer", section: "question:1", value: "The first account, at 09:14", reasoning: `E-${seq}`, confidence: "high", confidence_why: "direct", alternatives_open: "none open", would_change: "a second source", result: "established" } as unknown as P.LedgerInput);
+  assert.ok(a.ok, JSON.stringify(a));
+  const st = (await F.finishStatus(r.a0)) as { ready: boolean; items: string[]; held?: Array<{ section: string; code: string }> };
+  assert.equal(st.ready, false);
+  assert.ok(st.held?.some((h) => h.section === "question:1" && h.code === "no_critic_act"), JSON.stringify(st.held));
+  const counts = F.readinessCounts(st as unknown as Record<string, unknown>);
+  assert.equal(counts.ready, false);
+  assert.equal(counts.items, st.items.length);
+  assert.ok((counts.held?.no_critic_act ?? 0) >= 1, JSON.stringify(counts));
+  // No words of an item reach the counts.
+  assert.ok(!JSON.stringify(counts).includes("question:1"), JSON.stringify(counts));
+  await publish(r.S, "a0", "# Report\n\n## 1\n\nThe first account.\n");
+  const p = await prepare(r.a0, REPORT);
+  assert.ok(p.ok, JSON.stringify(p));
+  assert.ok(((p.readiness as { held?: unknown[] }).held ?? []).length >= 1, JSON.stringify(p.readiness));
+  assert.deepEqual(F.heldCodes([{ code: "sweep_hits" }, { code: "sweep_hits" }, { code: "no_critic_act" }, {}]), { sweep_hits: 2, no_critic_act: 1 });
+});
+
+test("a seat at work whose evidence job ended after its last record holds the finish; one that recorded since, is done, or is silent does not", async () => {
+  const r = await run("fp-unrec");
+  await established(r); // a0 records a finding and a coverage record, a1 an answer
+  const later = new Date(Date.now() + 60_000).toISOString();
+  // a1's command job ended after its answer; a0's tool job ended before its records; a2's is a recipe, not a seat's evidence job.
+  await job(r.S, "j000002", "out.txt", { requester: { agent: "a1" }, spec: { kind: "command", command: "decode" }, finished_at: later });
+  await job(r.S, "j000003", "o.txt", { requester: { agent: "a0" }, spec: { kind: "tool", tool: "t" }, finished_at: "2026-01-01T00:00:00.000Z" });
+  await job(r.S, "j000004", "r.txt", { requester: { agent: "a2" }, spec: { kind: "recipe" }, finished_at: later });
+  const held = await F.unrecordedWork(r.S, await L.leadsSnapshot(r.S), Date.now());
+  assert.equal(held.length, 1, JSON.stringify(held));
+  assert.match(held[0]!, /^a1 is at work and its job j000002 ended after its last record \(20\d\d-.*\): ask it to record what that job showed, or wait for it$/);
+  // Silent past the stale limit: not at work, not held.
+  assert.deepEqual(await F.unrecordedWork(r.S, await L.leadsSnapshot(r.S), Date.now() + 2 * L.leadStaleMs()), []);
+  // Done: not held.
+  await mkdir(join(r.S, "done", "agents"), { recursive: true });
+  await writeFile(join(r.S, "done", "agents", "a1.done"), "");
+  assert.deepEqual(await F.unrecordedWork(r.S, await L.leadsSnapshot(r.S), Date.now()), []);
 });

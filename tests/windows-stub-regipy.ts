@@ -9,8 +9,9 @@
  * calls: a value is derived from its raw bytes by its type (a binary value is bytes, or hex trimmed to 256 characters when
  * the caller leaves trimming on; text is decoded as UTF-16LE, then UTF-8, and a type regipy does not know is decoded the
  * same way and is named by its number), "(default)" is the name of an unnamed value, a key without subkeys iterates
- * nothing, a path without a leading backslash loses its first part in get_key, and a value record that cannot be parsed
- * ends the iteration without an error.
+ * nothing, a path without a leading backslash loses its first part in get_key, a value record that cannot be parsed
+ * ends the iteration without an error, and a key or value name stored one byte a character (every character below U+0100,
+ * as Windows stores one) is decoded as ASCII with errors replaced, each character from U+0080 to U+00FF becoming U+FFFD.
  *
  * Each test that matters runs twice from one description: against the stand-in always, and against the real library
  * with real hive bytes (tests/windows-hive.ts) where the library is installed.
@@ -206,6 +207,11 @@ function raw(v: Val): Buffer {
   }
 }
 
+/** A name as regipy 6.3 gives it (registry.py decodes a compressed name with "ascii", errors="replace"; tests/windows-hive.ts compresses as Windows does). */
+export function regipyName(name: string): string {
+  return /^[\u0000-\u00ff]*$/.test(name) ? name.replace(/[\u0080-\u00ff]/g, "\ufffd") : name;
+}
+
 /** The stand-in's file: a flat JSON description, so a chain a thousand keys deep is not a nested document. */
 export function stubHive(root: Node, opts: { primarySeq?: number; secondarySeq?: number; mutate?: (nodes: Record<string, Record<string, unknown>>, ids: Map<Node, string>) => void } = {}): string {
   const nodes: Record<string, Record<string, unknown>> = {};
@@ -220,9 +226,9 @@ export function stubHive(root: Node, opts: { primarySeq?: number; secondarySeq?:
       const id = "n" + n++;
       ids.set(node, id);
       nodes[id] = {
-        name: node.name,
+        name: regipyName(node.name),
         last_modified: String(node.lastWritten ?? 133_443_104_000_000_000n),
-        values: (node.values ?? []).map((v) => ({ name: v.name, type: typeNumber(v), raw: raw(v).toString("hex") })),
+        values: (node.values ?? []).map((v) => ({ name: regipyName(v.name), type: typeNumber(v), raw: raw(v).toString("hex") })),
         children: [],
         ...(node.declaredValues !== undefined ? { declared_values: node.declaredValues } : {}),
       };

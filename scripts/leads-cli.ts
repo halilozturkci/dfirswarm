@@ -126,7 +126,18 @@ type RegroupState = { progress_at: number; count: number; last_at: number; nudge
  * the last one, up to REGROUP_MAX_MINUTES. It never stops. The post goes to
  * everyone; the answer is null when none is due.
  */
-export async function regroup(sandbox: string, now = Date.now()): Promise<{ posted: false; why: string } | { posted: true; kind: "nudge" | "all_hands"; count: number; post: number; since: string; next_minutes: number; to?: string[] }> {
+/** Whether what holds a run still is the store: jobs that have finished (or are fenced) and wait to be sealed. */
+export function platformStall(jobs: ReadonlyArray<{ id: string; state: string }>): { jobs: string[]; queued: number } | null {
+  const sealing = jobs.filter((j) => j.state === "finished" || j.state === "fenced").map((j) => j.id);
+  return sealing.length ? { jobs: sealing, queued: jobs.filter((j) => j.state === "accepted").length } : null;
+}
+
+export function platformStallWords(w: { jobs: string[]; queued: number }, minutes: number): string {
+  const named = w.jobs.slice(0, 8).join(", ") + (w.jobs.length > 8 ? ` and ${w.jobs.length - 8} more` : "");
+  return `PLATFORM STALL: nothing has been sealed for ${minutes} minutes, and the cause is the harness's store, not your work: ${w.jobs.length} job(s) have finished and wait to be sealed (${named})${w.queued ? `, and ${w.queued} more wait for a worker behind them` : ""}. Nothing is asked of you over this: do not cancel or run these jobs again (their output is not lost; job_status says where each stands), and take work that does not wait for them. The operator is told.`;
+}
+
+export async function regroup(sandbox: string, now = Date.now()): Promise<{ posted: false; why: string } | { posted: true; kind: "nudge" | "all_hands" | "platform"; count: number; post: number; since: string; next_minutes: number; to?: string[] }> {
   const budget = await P.readBudget(sandbox).catch(() => null);
   if (!budget?.until_solved) return { posted: false, why: "not an until-solved run" };
   if (await P.swarmDoneExists(sandbox)) return { posted: false, why: "the run is over" };
@@ -142,6 +153,19 @@ export async function regroup(sandbox: string, now = Date.now()): Promise<{ post
     // none yet: the first
   }
   if (now - since.at < stall) return { posted: false, why: `the run moved ${Math.round((now - since.at) / 60_000)} min ago` };
+  // The store is the stall: jobs have finished and wait to be sealed. That is the harness's own, and no seat is asked to
+  // regroup over it or to cancel a job (on the run s17fdfe a seat was asked whether to cancel a job that had finished 43
+  // minutes before and was waiting for its seal). Said once per stall to everyone, and to the operator on the trace.
+  const waiting = platformStall(snap.jobs.map((j) => ({ id: j.id, state: j.state })));
+  if (waiting) {
+    if ((state as RegroupState & { platform_at?: number }).platform_at) return { posted: false, why: `the store is the stall (${waiting.jobs.length} finished job(s) wait to be sealed); said ${Math.round((now - (state as RegroupState & { platform_at?: number }).platform_at!) / 60_000)} min ago` };
+    const body = platformStallWords(waiting, Math.round((now - since.at) / 60_000));
+    const post = await P.systemPost(sandbox, { tag: "hold", to: "all", body });
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(`${path}.tmp`, `${JSON.stringify({ ...state, progress_at: since.at, platform_at: now })}\n`, "utf8");
+    await rename(`${path}.tmp`, path);
+    return { posted: true, kind: "platform", count: state.count, post: post.id, since: new Date(since.at).toISOString(), next_minutes: Math.round(stall / 60_000) };
+  }
   // A job running under a lead is movement for one window (B12): the first
   // regroup nudges that lead's holder, with what the job is doing; if
   // nothing changes in the next window everyone is asked, job or not, so a
@@ -186,7 +210,7 @@ export async function regroup(sandbox: string, now = Date.now()): Promise<{ post
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [cmd, sandboxArg, ...rest] = process.argv.slice(2);
   const usage = () => {
-    process.stderr.write("usage: leads-cli.ts list|note|reopen|nudge-line|regroup <sandbox> ...\n");
+    process.stderr.write("usage: leads-cli.ts list|note|reopen|nudge-line|regroup|seed <sandbox> ...\n");
     process.exit(2);
   };
   if (!cmd || !sandboxArg) usage();
@@ -237,6 +261,11 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       const r = await L.reopenLead(sandbox, lead, "operator", why.join(" ") || "the operator reopened it", "operator");
       process.stdout.write(`${JSON.stringify(r)}\n`);
       process.exit(r.ok ? 0 : 1);
+      break;
+    }
+    case "seed": {
+      // One open, unheld lead per question no lead answers (swarm.sh --seed-leads).
+      process.stdout.write(`${JSON.stringify(await L.seedQuestionLeads(sandbox))}\n`);
       break;
     }
     case "regroup": {

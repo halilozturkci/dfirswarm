@@ -3,6 +3,7 @@ id: artifacts/biome
 title: Biome streams and SEGB framing
 when: An activity question depends on a macOS Biome stream, or segb_read answered.
 needs: []
+card: segb_read shows SEGB framing only, the payload as protobuf tags with no value; its layouts were never checked against a real sample (layout_basis). unsupported and a failed bound (partial) are parser outcomes, not empty streams. A deleted state_raw is not a person deleting; a container time is not the event time. Does not show: what the payload recorded, the event time, or which device wrote a record.
 tools: [segb_read]
 requires_host: []
 ---

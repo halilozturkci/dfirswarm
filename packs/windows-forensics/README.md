@@ -27,7 +27,7 @@ one-line index once and fetches a body only when it reaches that artefact family
 | Memory | `memory/windows` (`memory/hibernation-pagefile`) |
 | Anti-forensics | `antiforensics/traces` (`antiforensics/wiping`, `antiforensics/log-clearing`, `antiforensics/timestamps-clock`, `antiforensics/controls`) |
 
-**Twenty-seven tools.** The parsers that carry most cases: `mft_records` (both time
+**Thirty tools.** The parsers that carry most cases: `mft_records` (both time
 sets, resident data, every named stream), `evtx_query` and `evtx_carve` (records
 from a log, and records from a log that was cleared), `regkv`, `prefetch_mam`
 and `mam_scan`, `amcache_apps`, `usn_journal`, `shellbags`, `jumplist`,
@@ -46,7 +46,13 @@ against real hives, and no second reader cross-checks it) and
 IFEO and Active Setup entries and the events of an `evtx_query` result file as items with observations that are not verdicts; the WMI repository is not
 examined and no second reader is started) and `srum_reader` (SRUDB.dat read through SrumECmd and dissect.target, every row naming the backend that produced it, with the
 database's state, the unresolved ids counted and the table counts of the two compared; SrumECmd's own strings say it refuses to run off Windows (read from the dll's strings, not run), so in a Linux image only dissect.target can give rows, and neither backend's
-shape has been checked against a real run).
+shape has been checked against a real run) and `thumbcache_read` (the entries of a thumbnail or icon cache, `thumbcache_*.db` and `iconcache_*.db`, each stored image
+written to a file with its hash: on a host whose files were encrypted the caches may hold renderings made before; the Windows 10 layout was run against real caches, the older ones
+against fixtures built from the published structures) and `chromium_logins` and `dpapi_masterkey` (the logins a Chromium-family browser saved, decrypted with the profile key, and the
+DPAPI master key and blob steps that lead to that key from the user's password or hash; both run only as secret-output jobs, take every secret as a file, write passwords and keys to a
+sealed file and never to the answer, answer a wrong key with `decrypted: false` or `verified: false` and never an exception, and run a known-answer self-test before every call; the
+`v10` reader was run against a real profile and its key, while the DPAPI derivation is checked against vectors made by forward implementations written apart from it, not against a
+master key whose password is known from Windows).
 
 **One recipe**, `windows-artefacts`, run on request over an extracted collection: it reads each
 family of artefact it finds with the tool above that reads it (and runs a fixed list of

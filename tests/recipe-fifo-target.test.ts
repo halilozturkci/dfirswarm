@@ -74,7 +74,9 @@ test("every recipe, given a FIFO, a directory and a link to a FIFO as the target
             failures.push(`${where}: no JSON on stdout (exit ${x.code})`);
             continue;
           }
-          if (verb === "detect" && label === "a FIFO" && !(x.code === 2 && doc.applies === "unknown")) failures.push(`${where}: exit ${x.code} applies ${JSON.stringify(doc.applies)}, not exit 2 and "unknown"`);
+          // A recipe that cannot run on this host at all says so whatever the target ("does not apply here: ..."): that is not an answer about the FIFO.
+          const aboutTheHost = x.code === 1 && doc.applies === false && /^does not apply here: /.test(String((doc as { why?: unknown }).why ?? ""));
+          if (verb === "detect" && label === "a FIFO" && !aboutTheHost && !(x.code === 2 && doc.applies === "unknown")) failures.push(`${where}: exit ${x.code} applies ${JSON.stringify(doc.applies)}, not exit 2 and "unknown"`);
         }
       }
     } finally {

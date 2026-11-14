@@ -3,6 +3,7 @@ id: logs/auth
 title: Authentication and privilege-use records
 when: Reading retained auth logs, their timestamp assumptions and attribution limits.
 needs: []
+card: auth_log {"path": "<auth.log, secure or their directory>"} reads plain and gzip rotations oldest first: read order_basis and cross_file_order, then status, unparsed and read_errors; status is the parse, not coverage. A missing rotation is a gap. Before you date or count lines, read year_basis and time_zone (logs/auth-time). Compare sessions with utmp_parse and the journal; a disagreement is a question, not alteration. Sudo commands and typed names need write_text in a secret_output job. Does not show: a person, or that an absent line did not happen.
 tools: [auth_log, utmp_parse]
 requires_host: []
 ---

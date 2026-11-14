@@ -164,3 +164,23 @@ sbb="$(sandbox_of "$out")"
 [[ "$(grep -c '^## Must establish$' "$sbb/SWARM.md")" -eq 1 ]] || fail "the front matter's list was not merged into the goal's own section"
 [[ "$(required_of bothreq)" == '["Q-1","Q-2"]' ]] || fail "the front matter's list beside the goal's section was dropped: $(required_of bothreq)"
 echo "ok - must_establish: items at column 0 are read, a key that names nothing is warned about, and a list beside the goal's own section is merged into it"
+
+# requires: what the case's questions need done, checked before the run starts
+# where the agents run (here, this host): met by a program that does the work,
+# said in SWARM.md, a warning when not met; --requires names it on the CLI.
+mkdir -p "$TMP/capbin"
+printf '#!/usr/bin/env bash\nexit 4\n' > "$TMP/capbin/zbarimg"
+chmod +x "$TMP/capbin/zbarimg"
+qgoal "$TMP/req.md" 'requires: qr-decode, ocr\n' ''
+out="$(PATH="$TMP/capbin:$PATH" swarm start --model solo/model --n 2 --cap-usd 1 --no-start --goal-file "$TMP/req.md" --label reqcaps)"
+sbr="$(sandbox_of "$out")"
+[[ -f "$sbr/toolbox.json" ]] || fail "a goal that says what it requires was not checked (no toolbox.json): $out"
+jq -e '.requires[] | select(.capability == "qr-decode" and .met == true)' "$sbr/toolbox.json" >/dev/null || fail "qr-decode is met by a zbarimg that reads the probe: $(jq -c .requires "$sbr/toolbox.json")"
+if ! command -v tesseract >/dev/null 2>&1; then
+  grep -q "^WARN: the case requires ocr and this host cannot do it (none of: tesseract)" <<<"$out" || fail "an unmet capability is a warning before the start: $out"
+  grep -q '| ocr | not met (none of `tesseract`)' "$sbr/SWARM.md" || fail "SWARM.md does not say ocr is not met: $(grep -n 'ocr' "$sbr/SWARM.md")"
+fi
+grep -q '| qr-decode | `zbarimg` |' "$sbr/SWARM.md" || fail "SWARM.md does not say what meets qr-decode"
+out="$(swarm start --model solo/model --n 2 --cap-usd 1 --no-start --goal-file "$TMP/req.md" --requires teleport --label reqbad || true)"
+grep -q "^BLOCKER: requires: teleport names a capability the toolbox does not know" <<<"$out" || fail "an unknown capability was not refused: $out"
+echo "ok - requires: is checked at kickoff where the agents run, said in SWARM.md, warned about when not met; an unknown capability is refused"

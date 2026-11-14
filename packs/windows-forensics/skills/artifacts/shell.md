@@ -3,6 +3,7 @@ id: artifacts/shell
 title: Links, Jump Lists, ShellBags
 when: Which one traces a path or share.
 needs: []
+card: lnk_parse {"path": "<file.lnk>"}, jumplist {"path": "<AutomaticDestinations>"} and shellbags {"hive": "<UsrClass.dat>"} read references the shell kept, not records that something was done: none names a person or shows a file was opened, copied or run. Say which clock each time is on; a link's own file times are not the times stored inside it. A profile that was not collected is a gap, not an empty profile.
 tools: [lnk_parse, jumplist, shellbags]
 requires_host: [lnkinfo, olecfexport]
 ---

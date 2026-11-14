@@ -328,6 +328,23 @@ test("with yara absent the extension and name matching run, the text rules do no
   });
 });
 
+test("a `yara --version` cut at its 64 KiB cap is said as a cut, not as yara missing, and yara still runs", async () => {
+  await withCwd(async (cwd, bin) => {
+    // The fake prints 200 KiB for --version and no hit for the notes.
+    await writeFile(join(bin, "yara"), `#!/bin/sh\nif [ "$1" = "--version" ]; then head -c 204800 /dev/zero | tr '\\0' '4'; exit 0; fi\nexit 0\n`, { mode: 0o755 });
+    const note = join(cwd, "info.txt");
+    await writeFile(note, "x\n");
+    const v = await values(cwd, [{ id: "N000001", file: note }]);
+    const { a } = await run(cwd, { values_file: v, extensions: [".phobos"] }, { PATH: `${bin}:${process.env.PATH}` });
+    assert.equal(a.status, "partial");
+    assert.equal(a.engine.available, true);
+    assert.equal(a.engine.ran, true);
+    assert.equal(a.engine.version, null);
+    assert.doesNotMatch(a.status_basis, /yara is not installed/);
+    assert.match(a.status_basis, /`yara --version` printed past its 64 KiB cap/);
+  });
+});
+
 test("a yara that hangs is ended at max_seconds with its tree, the answer is partial, and no process is left", async () => {
   await withCwd(async (cwd, bin) => {
     const pidFile = join(cwd, "yara.pid");

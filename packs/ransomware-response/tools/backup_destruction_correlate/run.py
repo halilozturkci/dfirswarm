@@ -191,7 +191,7 @@ from pathlib import Path
 PARSER = "backup_destruction_correlate/1"
 WORK = "correlation"
 TOOL = "backup_destruction_correlate"
-ACCEPTED = {"events": ("evtx_query/4",), "vss_inventories": ("vss_stores/5",), "service_keys": ("regkv/4",),
+ACCEPTED = {"events": ("evtx_query/4",), "vss_inventories": ("vss_stores/5",), "service_keys": ("regkv/4", "regkv/5"),
             "backup_audits": ("backup_audit_normalise/2", "backup_audit_normalise/3"), "chain_checks": ("snapshot_chain_check/2",),
             "shell_histories": ("shell_history/14",), "cloud_trails": ("cloudtrail_parse/6",)}
 KINDS = ("events", "vss_inventories", "service_keys", "backup_audits", "chain_checks", "shell_histories", "cloud_trails")
@@ -1262,6 +1262,8 @@ def cell(value):
 # the copies equal). A path is printed only through shown(): every component is judged, and no directory above a file is exempt.
 # Everything derived from a name that is withheld (an extension, a stem, a length, the place of the name among its siblings) is withheld
 # with it: a name that is withheld is replaced by one constant marker, and the order of a listing never follows the text that was withheld.
+import heapq
+
 WITHHELD = "<identifier-shaped name withheld>"
 WITHHELD_PATHS = [0]              # printed paths that had a component withheld (one per call of shown)
 _IDRUN = re.compile(r"[A-Za-z0-9]{8,}")
@@ -1399,38 +1401,87 @@ def shown(path, values=(), keep_last=False, count=True):
 
 
 _ORDER_SALT = os.urandom(16)
+# A directory is read through listing() and put in order through print_order(), both under the tool's clock (out_of_time of the STOP block, or
+# the clock a caller names): one directory of two million entries was held whole (900 MB) and had every name judged (a minute) past a clock
+# of two seconds, because a walk reads its clock between entries and the listing and the order came before the first.
+MAX_LISTED = 1 << 18              # entries of one directory held at once (an entry with its name and path is a few hundred bytes)
+NAMES_CUT = {"not_judged": 0}     # entries print_order put in order without judging their name, because the clock had run out
 
 
-def print_order(entries, judged, hidden=None):
+def _rank(path):
+    """A keyed hash of a whole path under the salt of this run: an order drawn afresh every run, unrelated to the name and to the listing."""
+    return hashlib.blake2b(path.encode("utf-8", "surrogatepass"), key=_ORDER_SALT, digest_size=8).digest()
+
+
+def listing(it, late=None):
+    """The entries of one directory (`it`, an os.scandir iterator) that a walk examines: read under the clock (`late`, the tool's out_of_time
+    unless given, read for every entry) and at most MAX_LISTED of them held. Past the bound the directory is read on only to be counted, and
+    the entries kept are the MAX_LISTED of the smallest keyed hash of their path (_rank): which entries the bound keeps follows neither a name
+    nor the order the directory lists them in. Returns (entries, not_kept, cut): not_kept is how many entries were read and not kept, and cut
+    is True when the clock ended the reading (the entries after it are not known, not even their number)."""
+    late = late or out_of_time
+    held, heap, read, cut = [], None, 0, False
+    for entry in it:
+        if late():
+            cut = True
+            break
+        read += 1
+        if heap is None:
+            held.append(entry)
+            if len(held) > MAX_LISTED:
+                heap = [(-int.from_bytes(_rank(e.path), "big"), n, e) for n, e in enumerate(held)]
+                held = None
+                heapq.heapify(heap)
+                heapq.heappop(heap)                   # the largest hash goes: the heap keeps the smallest, the largest of them on top
+        else:
+            key = -int.from_bytes(_rank(entry.path), "big")
+            if key > heap[0][0]:
+                heapq.heapreplace(heap, (key, read, entry))
+    if heap is not None:
+        held = [k[2] for k in heap]
+    return held, read - len(held), cut
+
+
+def print_order(entries, judged, hidden=None, late=None):
     """The directory entries in the order an answer prints them: by the text printed for each (the marker for a name that is judged
     and withheld, the name itself otherwise; `judged(entry)` says whether the answer prints the entry's name through the judge;
     `hidden(entry)`, when given, says that a name the first rule lets through is withheld all the same, because the note beneath it holds
     its value: it sorts as the marker does), and the entries that print alike in an order drawn afresh every run (a keyed hash of the whole
     path, the directory above included, under a salt of this run: the same name in two directories has two unrelated ranks). The rank of a
     withheld name among its siblings, the order a directory lists them in and the inode never show in what an answer lists, in the
-    order of its rows, in the numbers it hands out or in which entries a limit keeps."""
-    texts = []
-    for entry in entries:
+    order of its rows, in the numbers it hands out or in which entries a limit keeps. The judging runs under the clock (`late`, the tool's
+    out_of_time unless given), read for every entry: once it has run out, the entries not judged yet come after the judged ones in the order
+    of the keyed hash alone, each is counted in NAMES_CUT["not_judged"], and the caller says so and makes its answer partial (a walk on the
+    same clock examines none of them)."""
+    late = late or out_of_time
+    keyed, rest = [], []
+    for n, entry in enumerate(entries):
+        if rest or late():
+            rest.append((_rank(entry.path), n))
+            continue
         name = entry.name
         try:
             if hidden is not None and hidden(entry):
-                texts.append(WITHHELD)
+                text = WITHHELD
             else:
-                texts.append((_judge(name) or name) if judged(entry) else name)
+                text = (_judge(name) or name) if judged(entry) else name
         except OSError:
-            texts.append(_judge(name) or name)
-    order = sorted(range(len(entries)), key=texts.__getitem__)
+            text = _judge(name) or name
+        keyed.append((text, n))
+    NAMES_CUT["not_judged"] += len(rest)
+    keyed.sort()
     out, i = [], 0
-    while i < len(order):
+    while i < len(keyed):
         j = i + 1
-        while j < len(order) and texts[order[j]] == texts[order[i]]:
+        while j < len(keyed) and keyed[j][0] == keyed[i][0]:
             j += 1
-        group = order[i:j]
+        group = [n for _, n in keyed[i:j]]
         if len(group) > 1:
-            group.sort(key=lambda n: (hashlib.blake2b(entries[n].path.encode("utf-8", "surrogatepass"), key=_ORDER_SALT, digest_size=8).digest(), n))
+            group.sort(key=lambda n: (_rank(entries[n].path), n))
         out.extend(group)
         i = j
-    return [entries[n] for n in out]
+    rest.sort()
+    return [entries[n] for n in out] + [entries[n] for _, n in rest]
 # END SHARED NAMES
 
 
@@ -1942,9 +1993,18 @@ class Ctx:
         return row
 
 
-def read_doc(path):
+def read_doc(path, named=None, use=None):
+    """An answer document, read whole (MAX_DOC at most) and parsed. With `named` (a set) and `use` (what the call reads the document for:
+    its kind, host and the other fields of its entry), a document already read for the same use, the same file by (st_dev, st_ino), is
+    not read again: its rows would only be counted twice. Parsing 16 MiB of JSON can take about 500 MB (16 MiB of empty objects took 460
+    MB), and the caller holds one document at a time."""
     fd, st = open_regular(path)
     try:
+        if named is not None:
+            mark = (use, st.st_dev, st.st_ino)
+            if mark in named:
+                return None, "named again"
+            named.add(mark)
         data = pread_full(fd, min(st.st_size, MAX_DOC) + 1, 0)
     finally:
         os.close(fd)
@@ -2063,6 +2123,18 @@ def read_rows(handler, doc, key, rows_file, facts, cut_note):
             facts["problems"].append("the answer shows only part of its %s inline; give the file that holds the whole table to read all" % key)
         return
     stream_file(handler, rows_file, facts)
+
+
+def named_before(path, named, use):
+    """Whether a file streamed line by line (not read whole by read_doc) was read already for the same use (its kind, host and the other
+    fields of its entry), the same file by (st_dev, st_ino): its rows would only be counted twice. A file seen first is marked."""
+    fd, st = open_regular(path)
+    os.close(fd)
+    mark = (use, st.st_dev, st.st_ino)
+    if mark in named:
+        return True
+    named.add(mark)
+    return False
 
 
 def stream_file(handler, path, facts):
@@ -2337,8 +2409,11 @@ def main():
     inventories = collections.defaultdict(list)
     services = collections.defaultdict(list)
 
+    named = set()                   # (kind, host, entry, st_dev, st_ino) of every document read: one named again is not read again
+    named_again = collections.Counter()
     for kind in KINDS:
         for host, path, extra in specs[kind]:
+            doc = adoc = None                                     # one parsed document held at a time
             if out_of_time():
                 stopped["inputs_not_read"] = stopped.get("inputs_not_read", 0) + 1
                 continue
@@ -2346,6 +2421,11 @@ def main():
             facts = {"rows": 0, "skipped": 0, "problems": [], "stopped_by_clock": False, "no_command": 0}
             try:
                 if kind == "shell_histories":
+                    # The same history named again for the same host and fields is not read again (its rows would be counted twice);
+                    # it is checked before its answer is read or a row is counted.
+                    if named_before(path, named, (kind, host, json.dumps(extra, sort_keys=True))):
+                        named_again[kind] += 1
+                        continue
                     if extra["answer"] is None:
                         unchecked["shell_histories"] += 1
                     else:
@@ -2365,7 +2445,10 @@ def main():
                     if facts["stopped_by_clock"]:
                         stopped["input_cut_by_clock"] = stopped.get("input_cut_by_clock", 0) + 1
                     continue
-                doc, why = read_doc(path)
+                doc, why = read_doc(path, named, (kind, host, json.dumps(extra, sort_keys=True)))
+                if why == "named again":
+                    named_again[kind] += 1
+                    continue
                 if doc is None:
                     problems["input_unreadable:" + kind] += 1
                     continue
@@ -2462,7 +2545,9 @@ def main():
                     {"result": v["result"], "recorded": "as the caller gave it; this tool did not verify it"})
 
     # the summary per host and object, ordered as an answer prints names
-    entries = print_order([HostEntry(n) for n in ctx.hosts], judged_host)
+    entries = print_order([HostEntry(n) for n in ctx.hosts], judged_host, late=late)
+    if NAMES_CUT["not_judged"]:
+        stopped["hosts_ordered_unjudged"] = NAMES_CUT["not_judged"]
     rank = {e.name: i for i, e in enumerate(entries)}
     summary_page = NoReplacePage(TOOL, ["summary"], limit)
     flag_counts = collections.Counter()
@@ -2527,6 +2612,9 @@ def main():
         reasons.append("the time limit (max_seconds %d, and %d seconds more for the phases after the reading) was reached while the summary was written: %d host and object rows of it are not written" % (max_seconds, POST_GRACE, stopped["summary_rows_not_written"]))
     if stopped.get("input_cut_by_clock"):
         reasons.append("the time limit (max_seconds %d) was reached while %d inputs were being read: the rows after the last one read are not counted" % (max_seconds, stopped["input_cut_by_clock"]))
+    if stopped.get("hosts_ordered_unjudged"):
+        reasons.append("the time limit (max_seconds %d, and %d seconds more for the phases after the reading) was reached while the hosts were put in "
+                       "order: %d host names were not judged for it and come last, in an order drawn by a keyed hash of this run" % (max_seconds, POST_GRACE, stopped["hosts_ordered_unjudged"]))
     if not ctx.serial and not any(inputs_read.values()):
         reasons.append("nothing was read")
     if BOUNDARY["replaced"]:
@@ -2548,6 +2636,9 @@ def main():
         "observation_counts": {cls: sum(s["counts"][cls] for s in ctx.summary.values()) for cls in CLASSES},
         "flag_counts": dict(flag_counts),
         "inputs_read": dict(inputs_read),
+        **({"inputs_named_again": dict(named_again),
+            "inputs_named_again_basis": "an entry that names, for the same kind, host and fields, a file already read (the same file by device and "
+                                        "inode) was not read again: its rows would only be counted twice"} if named_again else {}),
         "inputs_whose_producer_status_is_unknown": dict(unchecked),
         "observations_left_out_by_only_objects": ctx.filtered,
         "time_limit": {"max_seconds": max_seconds, "reached": bool(stopped), **stopped},

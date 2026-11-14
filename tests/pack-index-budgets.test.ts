@@ -220,9 +220,9 @@ const routerOf = (leaves: string[], target: number): string => {
   return head + "x".repeat(pad);
 };
 
-test("the router limit is 500 for windows, linux, memory and macOS and 400 for every other pack", async () => {
+test("the router limit is 500 for windows, linux, memory and macOS and for the base, reverse engineering and ransomware routers with an Always block, and 400 for every other pack", async () => {
   assert.equal(LIMITS.router_max, 400);
-  assert.deepEqual(LIMITS.router_max_by_pack, { "windows-forensics": 500, "linux-forensics": 500, "memory-forensics": 500, "macos-forensics": 500 });
+  assert.deepEqual(LIMITS.router_max_by_pack, { "windows-forensics": 500, "linux-forensics": 500, "memory-forensics": 500, "macos-forensics": 500, "computer-forensics-base": 500, "reverse-engineering": 500, "ransomware-response": 500 });
   const files = { "INDEX.md": indexFile("t/router", ["t/a", "t/router"]), "t/a.md": skillFile("t/a") };
   // 450 tokens: within 500, over 400.
   await withFixture({ ...files, "t/router.md": routerOf(["t/a"], 450) }, async (dir) => {

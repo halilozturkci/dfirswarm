@@ -3,6 +3,7 @@ id: logs/lateral
 title: Lateral movement
 when: Shares, services, WMI, tasks across hosts.
 needs: [logs/remote-access]
+card: evtx_query {"path": "<Security.evtx>", "event_ids": [5145]}: an access check, not a read or copy. A LogonId is one host, one boot.
 tools: [evtx_query, mft_records]
 requires_host: []
 ---

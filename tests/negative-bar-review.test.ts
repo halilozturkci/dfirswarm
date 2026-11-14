@@ -32,7 +32,7 @@ const operator: Q.Actor = { kind: "human", role: "operator", person: "tester@lab
 test("a coverage record binds its results by hash: a result superseded or disputed after it takes the reviewed negative out of standing", async () => {
   const { S, a0, a1, a2, a3 } = await run();
   await planned(a0, "2");
-  const absence = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "inputs/disk.E01", evidence: "a search over the whole disk", completion: "complete", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
+  const absence = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "inputs/disk.E01", evidence: "a search over the whole disk", completion: "complete", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["2"] })).entry;
   const cov = ok(await rec(a0, coverage("2", ["input:disk.E01"], [`E-${absence.seq}`, "job:j000001/hits.txt"]))).entry;
   assert.equal(cov.coverage, "complete");
   assert.deepEqual(cov.result_bound, [{ seq: absence.seq, hash: absence.hash }], "the record names its results by hash");
@@ -42,7 +42,7 @@ test("a coverage record binds its results by hash: a result superseded or disput
   // Reviewed on its coverage record: a disposition under the bar (examination-limited: the answer does not say the event did not happen).
   assert.deepEqual([r.ok, r.outcomes["question:2"], r.dispositions["question:2"]], [true, "limited", "bounded_negative"], r.lines.join("\n"));
   // The search it rests on is corrected: it did not cover the whole disk.
-  ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "inputs/disk.E01", evidence: "a search over one volume only", completion: "partial", refs: ["job:j000001/hits.txt"], answers: ["2"], supersedes: absence.seq, because: "the search stopped at the first volume" }));
+  ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "inputs/disk.E01", evidence: "a search over one volume only", completion: "partial", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["2"], supersedes: absence.seq, because: "the search stopped at the first volume" }));
   r = await checkLedgerAnswers(S, ["2"], ["2"]);
   assert.equal(r.ok, false, r.lines.join("\n"));
   const stale = r.defects.find((d) => d.code === "coverage_stale");
@@ -55,7 +55,7 @@ test("a coverage record binds its results by hash: a result superseded or disput
   assert.equal(review.reviewed, false, "the review was of a search that no longer stands");
   // A result disputed after the record: the same.
   await planned(a0, "6");
-  const absence6 = ok(await rec(a0, { kind: "absence", value: "an upload", source: "inputs/disk.E01", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["6"] })).entry;
+  const absence6 = ok(await rec(a0, { kind: "absence", value: "an upload", source: "inputs/disk.E01", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["6"] })).entry;
   const cov6 = ok(await rec(a0, coverage("6", ["input:disk.E01"], [`E-${absence6.seq}`]))).entry;
   ok(await rec(a1, { kind: "answer", section: "question:6", value: "No evidence of an upload was found on the disk", reasoning: `E-${cov6.seq}`, ...A, result: "not_determinable" }));
   assert.ok((await P.attestEntry(a2, { seq: cov6.seq, how: "ran it again", review: REVIEW })).ok);
@@ -67,7 +67,7 @@ test("a coverage record binds its results by hash: a result superseded or disput
 test("premise_not_supported rests on a finding; on a search alone it meets the negative bar, and absolute wording is checked whatever the result", async () => {
   const { S, a0, a1, a2 } = await run();
   await planned(a0, "2");
-  const absence = ok(await rec(a0, { kind: "absence", value: "an intrusion", source: "inputs/disk.E01", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
+  const absence = ok(await rec(a0, { kind: "absence", value: "an intrusion", source: "inputs/disk.E01", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["2"] })).entry;
   const base = { kind: "answer", section: "question:2", reasoning: `E-${absence.seq}`, ...A, confidence: "high", result: "premise_not_supported" };
   refused(await rec(a1, { ...base, value: "The question's premise does not hold" }), /premise_not_supported rests on a standing finding/);
   refused(await rec(a1, { ...base, value: "The intrusion did not happen" }), /worded as the event's absence \("did not happen"\)/);
@@ -98,7 +98,7 @@ test("an acceptance is bound to the answer it accepted: a replacement negative i
   const opened = await L.openLead(a0, { title: "Search for a second tool", why: "asked", answers: [q], take: true, proposition: "a second tool was staged", negation: "no second tool was staged", routes: [{ source: "input:disk.E01", method: "search the disk" }] });
   assert.ok(opened.ok, (opened as { reason?: string }).reason);
   const lead = (opened as { lead: { id: string } }).lead.id;
-  const absence = ok(await rec(a0, { kind: "absence", value: "a second tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: [q] })).entry;
+  const absence = ok(await rec(a0, { kind: "absence", value: "a second tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: [q] })).entry;
   assert.ok((await L.closeLead(a0, lead, { disposition: "negative", ref: `E-${absence.seq}` })).ok);
   const cov = ok(await rec(a0, coverage(q, ["input:disk.E01"], [`E-${absence.seq}`]))).entry;
   const ans = ok(await rec(a1, { kind: "answer", section: `question:${section}`, value: "No evidence of a second tool was found on the disk", reasoning: `E-${cov.seq}`, ...A, contrary_none_why: "nothing points to one", result: "bounded_negative" })).entry;
@@ -120,7 +120,7 @@ test("an acceptance is bound to the answer it accepted: a replacement negative i
 test("the report states a negative in the bounded form made from its coverage record; the agents' words follow, marked as theirs", async () => {
   const { S, a0, a1 } = await run();
   await planned(a0, "2");
-  const absence = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "one volume", evidence: "a search", refs: ["job:j000003/hits.txt"], answers: ["2"] })).entry;
+  const absence = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "one volume", evidence: "a search", refs: ["job:j000003/hits.txt"], control: { ref: "job:j000003/hits.txt", found: "the same search finds a planted row" }, answers: ["2"] })).entry;
   const cov = ok(await rec(a0, coverage("2", ["input:disk.E01"], [`E-${absence.seq}`, "job:j000003/hits.txt"], { proposition: "A remote administration tool was installed.", detection_opportunity: { trace_expected: "no", why: "the tool may leave nothing on disk" } }))).entry;
   assert.equal(cov.coverage, "partial");
   ok(await rec(a1, { kind: "answer", section: "question:2", value: "No remote tool was installed on this host", reasoning: `E-${cov.seq}`, ...A, result: "bounded_negative" }));

@@ -3,6 +3,7 @@ id: persistence/cron-timers
 title: cron tables and systemd timers
 when: Inventorying scheduled jobs with cron_dump and reading what it did not read.
 needs: []
+card: cron_dump {"root": "<extracted root>"} is a candidate inventory: read unsupported (at jobs, anacron, .service ExecStart, drop-in merging) and check those by hand. A listed job is not shown to have run; @reboot and OnBootSec are not calendar times. Units under run/ exist only if /run was captured. unparsed lines keep the status partial: read them. Text needs write_text in a secret_output job. Does not show: that a job ran or when.
 tools: [cron_dump]
 requires_host: []
 ---

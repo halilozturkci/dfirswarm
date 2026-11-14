@@ -3,6 +3,7 @@ id: execution/history
 title: Shell and client histories as evidence
 when: Reading bash, zsh, fish or client histories for what was typed.
 needs: []
+card: shell_history {"root": "<home or extracted root>"}: the answer carries locators and lengths only; read the text with {"write_commands": true} in a job with secret_output: true, and cite file and record. Read each file's format first: bash has times only where HISTTIMEFORMAT was set, and a file without times gives order only. user is unknown unless the evidence's etc/passwd gives that home to one account. An empty or missing file is a question: killed or unflushed sessions, HISTCONTROL, HISTFILE unset, trimming, a link to /dev/null and concurrent shells remove commands; read the startup files. Does not show: that a command ran or succeeded, or who typed it.
 tools: [shell_history]
 requires_host: []
 ---

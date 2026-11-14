@@ -1,13 +1,14 @@
 ---
 id: data/browser-storage
 title: Browser storage in LevelDB and IndexedDB
-when: IndexedDB, Local or Session Storage of a Chromium browser or Electron app.
+when: IndexedDB, Local or Session Storage of a Chromium or Electron app.
+card: browser_storage {"path": "<the .leveldb directory>"} first: cite a record by its locator, never by a count. failed with unavailable is no reader, not an empty store; partial names the files not read to their end. A put or a delete is a state at a sequence number, the newest winning, and LevelDB gives no time. Previews withhold only by shape: where secrets matter run it as a secret_output job with {"write_values": true}. Does not show: what a page did with a record, or when it was written.
 needs: []
 tools: [browser_storage]
 requires_host: [ccl_indexeddb_dump]
 ---
 
-Use when an IndexedDB (`*.indexeddb.leveldb`), Local Storage or Session Storage directory of a Chromium browser or an Electron app may hold the answer. Not for SQLite stores (`data/sqlite`), the cache, or files that are not LevelDB.
+Use when an IndexedDB (`*.indexeddb.leveldb`), Local Storage or Session Storage directory of a Chromium browser or an Electron app may hold the answer. Not for SQLite stores (`data/sqlite`), the HTTP cache (`data/http-cache`), or files that are not LevelDB.
 
 1. Run `browser_storage` on the directory first. It lists databases, object stores, key types and, per store, puts, deletes, distinct keys and `current_keys`. Cite a record by its `locator` (file, offset, sequence number, state), never by a count alone.
 2. Read `status`. `failed` with `unavailable` means the `ccl_indexeddb_dump` venv, which holds the reader, is not installed: no inventory was made, and that is not an empty store. `partial` names the files not read to their end, with the problem and its offset (a log cut inside a record, a damaged block); a negative holds for the files that were read. A reader that left a process running after it ended makes it `partial` (`program_group`), with or without `write_values`; with it, so does a host that cannot rule one out.

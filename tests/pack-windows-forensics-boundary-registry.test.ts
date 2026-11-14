@@ -315,7 +315,7 @@ test("regkv and shellbags: the names listed when a key is not found are in the o
       const raw = firsts.map((f) => rnd24(rnd, f));
       const kids = sortedNames([...PLAIN, ...raw]).map((name) => ({ name }));
       const env = await V.write(cwd, "work/SOFTWARE", { name: "HIVE", children: kids });
-      const a = failed(await tool("regkv", cwd, { hive: "work/SOFTWARE", key: "Nope" }, env));
+      const a = body<{ subkeys_there: string[] }>(await tool("regkv", cwd, { hive: "work/SOFTWARE", key: "Nope" }, env));   // a missing key is an answer (exit 0), not a failure
       const there = a.subkeys_there as string[];
       assert.deepEqual(there.map((n) => n.startsWith("<withheld")), [true, true, true, ...PLAIN.map(() => false)], `${tree}: regkv lists the placeholders together, before the plain names`);
       assert.deepEqual(there.slice(3), PLAIN);

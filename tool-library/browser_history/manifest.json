@@ -29,8 +29,14 @@
   "example": "{\"path\": \"work/extracted/History\", \"query\": \"chrome_history\", \"limit\": 100}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 8,
-  "sha256": "69839c4791f7391758c564a26d25a135557f022c45c54f15388de82f98a8a31c",
+  "not_for": [
+    {
+      "what": "the saved logins of a Chromium profile (Login Data)",
+      "use": "chromium_logins"
+    }
+  ],
+  "version": 10,
+  "sha256": "c5e9b46ff63fd9668c516461a01cb3b417d36f034fac02432d68585dbeb22370",
   "use": {
     "names": [
       "History",

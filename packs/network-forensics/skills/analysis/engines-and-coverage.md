@@ -3,6 +3,7 @@ id: analysis/engines-and-coverage
 title: Zeek and Suricata analysis, and its coverage
 when: A finding rests on what Zeek or Suricata produced, or on their silence.
 needs: []
+card: Take the receipt first: zeek_run {"dry_run": true} and suricata_run {"dry_run": true} read no capture and give versions, digests, rule_load, script_load_status and not_covered. No alert is a statement about the ruleset: when rule_load.known is false nothing shows a rule loaded. A missing Zeek log is not a missing event: compare logs_requested_not_written with logs_empty and read engine_diagnostics. program_group.left_behind or unproven makes the answer partial: the logs are what was written when the engine was ended. Run as a job with secret_output: true. Does not show: what another build or ruleset would, or that traffic outside the rules was benign.
 tools: [zeek_run, suricata_run]
 requires_host: []
 ---

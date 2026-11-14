@@ -61,6 +61,8 @@ export const tableLockTiming = {
   waitMs: TABLE_LOCK_WAIT_MS,
   staleMs: TABLE_LOCK_STALE_MS,
   heartbeatMs: TABLE_LOCK_HEARTBEAT_MS,
+  /** How long a call waits in this process's own line for a lock before it gives up (the line is in order; see withNamedLock). */
+  queueMs: 120_000,
 };
 export const DEFAULT_SWARM_ID = "hello-n2";
 export const DEFAULT_AGENT_IDS = ["agent00", "agent01"] as const;
@@ -1227,7 +1229,65 @@ export async function withNamedLock<T>(
   fn: (lock: HeldLock) => Promise<T>,
 ): Promise<T> {
   const lockDir = join(sandboxRoot, "locks", name);
-  await mkdir(join(sandboxRoot, "locks"), { recursive: true });
+  // The place in the line is taken before anything is awaited, so the line is in the order of the calls.
+  const turn = inProcessTurn(lockDir, name);
+  turn.catch(() => undefined);
+  await mkdir(join(sandboxRoot, "locks"), { recursive: true }).catch(async (err) => {
+    (await turn.catch(() => () => undefined))();
+    throw err;
+  });
+  // The calls of one process take a lock in the order they asked, in a line of their own, and only the head of the
+  // line goes for the lock on disk. In a VM run the hub is the only writer, so every call that "timed out waiting for
+  // locks/.table.lock" (216 in the run s01a4f4, 110 in s5d814f) had lost a 20 ms poll to another call of the same
+  // process for ten seconds. waitMs now bounds only the wait for another process's lock.
+  const release = await turn;
+  try {
+    return await withLockOnDisk(sandboxRoot, name, lockDir, fn);
+  } finally {
+    release();
+  }
+}
+
+/** The line of this process's calls for each lock, by lock directory: the tail's promise, and how many wait. */
+const lockLines = new Map<string, { tail: Promise<void>; waiting: number }>();
+
+async function inProcessTurn(lockDir: string, name: string): Promise<() => void> {
+  const line = lockLines.get(lockDir) ?? { tail: Promise.resolve(), waiting: 0 };
+  lockLines.set(lockDir, line);
+  const before = line.tail;
+  let done!: () => void;
+  const mine = new Promise<void>((r) => (done = r));
+  line.tail = before.then(() => mine);
+  line.waiting += 1;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const ahead = line.waiting - 1;
+  let gaveUp = false;
+  try {
+    await Promise.race([
+      before,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`Timed out waiting for locks/${name} (${ahead} call(s) of this process were ahead for ${tableLockTiming.queueMs} ms)`)), tableLockTiming.queueMs);
+        timer.unref?.();
+      }),
+    ]);
+  } catch (err) {
+    // The turn is given up: when it comes it is passed on at once, so the line does not stop behind a call that left.
+    gaveUp = true;
+    line.waiting -= 1;
+    void before.then(done, done);
+    throw err;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+  void gaveUp;
+  return () => {
+    line.waiting -= 1;
+    done();
+    if (line.waiting === 0 && lockLines.get(lockDir) === line) lockLines.delete(lockDir);
+  };
+}
+
+async function withLockOnDisk<T>(sandboxRoot: string, name: string, lockDir: string, fn: (lock: HeldLock) => Promise<T>): Promise<T> {
   const deadline = Date.now() + tableLockTiming.waitMs;
   const token = `${process.pid}-${randomUUID()}`;
   const probe = join(sandboxRoot, "locks", `.probe.${token}`);
@@ -1996,7 +2056,8 @@ export async function claimName(
     const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
     const clash = names.find((n) => n.id !== agentId && key(n.name) === key(name));
     if (clash) {
-      return { ok: false as const, error: `${clash.id} already answers to "${name}". Pick another.`, taken_by: clash.id };
+      const taken = names.filter((n) => n.id !== agentId).map((n) => `"${n.name}"`);
+      return { ok: false as const, error: `${clash.id} already answers to "${name}". Pick another: a name none of these has (${taken.join(", ")}), for example "${name} ${agentId.slice(-2)}".`, taken_by: clash.id };
     }
     const previous = had?.name;
     const next = names.filter((n) => n.id !== agentId);
@@ -5476,6 +5537,18 @@ export function postIsFor(to: string, agentId: string, team: ReadonlyArray<{ id:
   return !team.some((m) => m.id.toLowerCase() !== me && named(m));
 }
 
+/**
+ * A harness announcement to everyone that is news for whoever looks, not a reason to wake: the catalogue's revision
+ * posts. In the run sf4406b 51 of them went to all eight seats, each waking every waiting seat for a full turn at
+ * 55,000 to 150,000 tokens; a third to a half of all waits returned within two seconds. The post is still delivered
+ * with the next inbox or wait that returns for another reason.
+ */
+export function quietAnnouncement(post: { from: string; to: string; body: string }): boolean {
+  if (post.from !== SYSTEM_AGENT) return false;
+  if (!/^\s*(all|everyone|team)?\s*$/i.test(post.to ?? "")) return false;
+  return /^Catalogue revision \d+\b/.test(post.body.trimStart());
+}
+
 export const WAIT_MAX_SECONDS = 300;
 export const WAIT_POLL_MS = 500;
 
@@ -5549,7 +5622,7 @@ async function waitLoop(
           if (!(n > (seen[thread] ?? 0) && n <= id)) continue;
           const post = await readPost(file).catch(() => null);
           // A post that cannot be read is not known to be someone else's.
-          if (!post || postIsFor(post.to, ctx.agentId, team)) {
+          if (!post || (postIsFor(post.to, ctx.agentId, team) && !quietAnnouncement(post))) {
             forMe = true;
             break;
           }
@@ -6077,6 +6150,11 @@ export type FullOutputRef = {
   sha256: string;
   /** Set when the file could not be written whole; the prefix the model saw is still on the trace. */
   write_error?: string;
+  /**
+   * Set when the output was larger than the keep bound: the file holds its first and last part with a line between them
+   * that says so, `bytes` and `sha256` are the file's, and these are the whole output's (which is kept nowhere).
+   */
+  cut?: { whole_bytes: number; whole_sha256: string; head_bytes: number; tail_bytes: number };
 };
 
 function fmtBytes(n: number): string {
@@ -6124,25 +6202,64 @@ export async function keepToolOutput(sandboxRoot: string, rel: string, data: Buf
  * tool past 50 KB) into the sandbox, streamed: the file is the record and
  * may be far larger than memory should hold.
  */
-export async function keepToolOutputFromFile(sandboxRoot: string, rel: string, source: string): Promise<FullOutputRef> {
-  const hash = createHash("sha256");
+export async function keepToolOutputFromFile(sandboxRoot: string, rel: string, source: string, keepMax: number = shellKeepMaxBytes()): Promise<FullOutputRef> {
+  const whole = createHash("sha256");
+  const kept = createHash("sha256");
   let bytes = 0;
   let lines = 0;
+  let written = 0;
+  const half = Math.max(1, Math.floor(keepMax / 2));
+  // Past the head's half the newest bytes are held, at most a half of the bound, and written last.
+  let tail: Buffer[] = [];
+  let tailBytes = 0;
   const target = join(sandboxRoot, rel);
   await mkdir(dirname(target), { recursive: true });
   const out = await open(target, "w");
+  const put = async (b: Buffer) => {
+    if (!b.length) return;
+    kept.update(b);
+    written += b.length;
+    await out.write(b);
+  };
   try {
     for await (const chunk of createReadStream(source)) {
       const buffer = chunk as Buffer;
-      hash.update(buffer);
+      whole.update(buffer);
       bytes += buffer.length;
       lines += countNewlines(buffer);
-      await out.write(buffer);
+      const room = half - written;
+      if (room > 0) await put(buffer.subarray(0, room));
+      const rest = room > 0 ? buffer.subarray(room) : buffer;
+      if (!rest.length) continue;
+      tail.push(rest);
+      tailBytes += rest.length;
+      while (tail.length > 1 && tailBytes - tail[0]!.length >= half) tailBytes -= tail.shift()!.length;
     }
+    const headBytes = written;
+    if (bytes <= keepMax) {
+      for (const b of tail) await put(b);
+      return { path: rel, bytes, lines, sha256: kept.digest("hex") };
+    }
+    let last = Buffer.concat(tail);
+    tail = [];
+    if (last.length > half) last = last.subarray(last.length - half);
+    const wholeSha = whole.digest("hex");
+    await put(Buffer.from(`\n[... ${bytes - headBytes - last.length} bytes of this output are not kept: it was ${bytes} bytes (sha256 ${wholeSha}), more than the ${keepMax} a shell's output is kept to (SWARM_SHELL_KEEP_MAX_BYTES). Above is its first ${headBytes} bytes, below its last ${last.length}. Run what wrote it as a job (job_run) to have its whole output sealed. ...]\n`, "utf8"));
+    await put(last);
+    return { path: rel, bytes: written, lines, sha256: kept.digest("hex"), cut: { whole_bytes: bytes, whole_sha256: wholeSha, head_bytes: headBytes, tail_bytes: last.length } };
   } finally {
     await out.close();
   }
-  return { path: rel, bytes, lines, sha256: hash.digest("hex") };
+}
+
+/**
+ * How much of a seat's shell output is kept (SWARM_SHELL_KEEP_MAX_BYTES, 64 MiB): its first and last half of that.
+ * Four kept outputs of one run were 170 to 202 MB each, and every store sweep read them. A job's output is not bounded
+ * here: it is sealed whole.
+ */
+export function shellKeepMaxBytes(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(env.SWARM_SHELL_KEEP_MAX_BYTES);
+  return Number.isFinite(n) && n >= 4096 ? Math.floor(n) : 64 * 1024 * 1024;
 }
 
 /** The line a prefix result ends with, so the model knows what it has and where the rest is. */
@@ -6179,7 +6296,7 @@ export const TOOL_RESERVED_NAMES = new Set([
   "post", "inbox", "wait", "claim_file", "release_file", "claims", "list_team", "budget",
   "file_history", "file_restore", "file_diff", "thread_open", "thread_join", "done",
   "playwright", "browser_check", "make_tool", "tools", "system", "inputs", "name", "record", "ledger",
-  "attest", "dispute",
+  "attest", "dispute", "record_finding", "record_answer", "record_coverage", "record_limitation", "record_absence",
   // the harness's own trace events: a forged tool with one of these names
   // would land its calls under the same name and be counted as the event
   "agent_start", "agent_stop", "thinking", "claim_violation", "inputs_guard", "inputs_violation",
@@ -6196,6 +6313,10 @@ export const TOOL_RESERVED_NAMES = new Set([
   // The keeper restarting the collector, an operator's own command or
   // console action, and the console opening an artifact with its scripts.
   "collector_restarted", "operator_action", "artifact_scripts",
+  // A seat's shell call past its limit, its images left out of a model call and the cap a provider set, a card shown with a tool's
+  // result, a seat silent in one call (the watchdog), and the hub's heap past three quarters of its limit.
+  "shell_timeout", "image_cap", "images_left_out", "skill_card", "call_stalled", "hub_memory_high",
+  "seat_down", "seat_relaunched", "seat_dead", "all_agents_dead", "answer_too_large", "image_scaled", "hub_health", "hub_heap_snapshot", "hub_recycled",
   // A long command run again pointed at its kept output, a seat stopped
   // before a model call, a ledger correction, the operator's --notify hook,
   // the hub's history quota and a connection refused its seat token; a
@@ -6205,7 +6326,7 @@ export const TOOL_RESERVED_NAMES = new Set([
   // hypothesis), its hash on the trace (HARNESS_RECORD_TOOL).
   "harness_record",
   // Tool jobs in worker VMs and the catalogue they grow (scripts/job-service.ts).
-  "job_run", "job_status", "catalog_request",
+  "job_run", "job_status", "store_find", "jobs", "image_crop", "catalog_request",
   // The hub's note of a seat's access to a sensitive output (scripts/sensitive-access.ts).
   "sensitive_access",
   // The host-side model gateway (scripts/model-gateway.ts).
@@ -6286,7 +6407,21 @@ export type ForgedToolManifest = {
    * (`*` for any run of characters). Matched, never enforced.
    */
   use?: { extensions?: string[]; magic?: Array<{ offset: number; hex: string }>; names?: string[] };
+  /**
+   * What the tool is not for, and the tool that is (IMPROVEMENT-PLAN-2 D4):
+   * at most four lines, each `{what, use}` with `use` another tool of the
+   * library. Shown in the tool's description; tests/tool-not-for.test.ts
+   * holds every pack's lines to a tool that exists.
+   */
+  not_for?: Array<{ what: string; use: string }>;
 };
+
+/** A manifest's not_for lines, as its description shows them: "" when it has none. */
+export function notForWords(m: { not_for?: unknown }): string {
+  const rows = Array.isArray(m.not_for) ? m.not_for.filter((r): r is { what: string; use: string } => Boolean(r) && typeof r === "object" && typeof (r as { what?: unknown }).what === "string" && typeof (r as { use?: unknown }).use === "string") : [];
+  if (!rows.length) return "";
+  return ` Not for: ${rows.slice(0, 4).map((r) => `${r.what.slice(0, 160)} (use ${r.use.slice(0, 64)})`).join("; ")}.`;
+}
 
 export type ForgeToolSpec = {
   name: string;
@@ -8182,6 +8317,29 @@ export type LedgerEntry = {
   /** A coverage record, written by the hub: the planned routes of its questions that nothing under them examined. */
   not_examined?: Array<{ source: string; method: string; why: string }>;
   /** An external entry: where the material came from (LEDGER_SOURCE_CLASSES), written by the harness. */
+  /** An answer's qualifier (candidate, partial, the open part), apart from its value; and why a revision changed a value that was in the asked format. */
+  qualifier?: string;
+  value_changed_because?: string;
+  /** A negative that rests on the seat's own scanner: the control runs that show the scanner finds what it looks for. */
+  control?: Array<{ ref: string; found: string }>;
+  /** A negative that rests on pictures: the ones the recording seat was handed, and those of the same job and directory it was not. */
+  images_read?: string[];
+  images_unread?: Array<{ job: string; dir: string; total: number; unread: string[] }>;
+  /** A finding's carriers of a value, each decoded, undecodable or not examined. */
+  carriers?: Array<{ carrier: string; state: "decoded" | "undecodable" | "not_examined"; why: string }>;
+  /**
+   * An answer's or a finding's candidate values beside its value: each still
+   * open, ruled out by a machine check it names (by: job:<id>/<path> or
+   * E-<seq>), or a decoy (a payload that declares itself fake, a test or a
+   * vendor's sample). A revision carries them; only a check removes one.
+   */
+  candidates?: Array<{ value: string; state: "open" | "ruled_out" | "decoy"; why: string; by?: string }>;
+  /** An answer's: the carriers its value could be in, by name; "nothing open" and established wait for a carrier-table row for each. */
+  carrier_names?: string[];
+  /** A finding's: what in the artefact declares it fake, a test or a vendor's sample (a decoy candidate). */
+  decoy?: string;
+  /** An answer's whose value rests on a decoy: the machine check that shows it is the answer all the same. */
+  decoy_check?: { by: string; why: string };
   source_class?: (typeof LEDGER_SOURCE_CLASSES)[number];
   /** An external entry: who supplied it, when, from where, its sha256, what it may be used for (and, for a capture, its grant and request). */
   provenance?: { supplied_by: string; at: string; from: string; sha256?: string; permitted_use: string } & Record<string, unknown>;
@@ -8276,6 +8434,19 @@ function ledgerV4Fields(e: LedgerEntry): Record<string, unknown> {
     ...coverageFields(e),
     ...(e.source_class ? { source_class: e.source_class } : {}),
     ...(e.provenance ? { provenance: canonicalValue(e.provenance) } : {}),
+    // An answer's qualifier and why its value changed, a negative's control and the images read and not read for it, a
+    // finding's carriers: each only when present, so an entry from before them has the core it always had.
+    ...(e.qualifier ? { qualifier: e.qualifier } : {}),
+    ...(e.value_changed_because ? { value_changed_because: e.value_changed_because } : {}),
+    ...(e.control?.length ? { control: e.control.map((c) => ({ ref: c.ref, found: c.found })) } : {}),
+    ...(e.images_read?.length ? { images_read: e.images_read } : {}),
+    ...(e.images_unread?.length ? { images_unread: e.images_unread.map((x) => ({ job: x.job, dir: x.dir, total: x.total, unread: x.unread })) } : {}),
+    ...(e.carriers?.length ? { carriers: e.carriers.map((c) => ({ carrier: c.carrier, state: c.state, why: c.why })) } : {}),
+    // A record's candidates, an answer's carrier names and decoy check, a finding's decoy mark: each only when present.
+    ...(e.candidates?.length ? { candidates: e.candidates.map((c) => ({ value: c.value, state: c.state, why: c.why, ...(c.by ? { by: c.by } : {}) })) } : {}),
+    ...(e.carrier_names?.length ? { carrier_names: e.carrier_names } : {}),
+    ...(e.decoy ? { decoy: e.decoy } : {}),
+    ...(e.decoy_check ? { decoy_check: { by: e.decoy_check.by, why: e.decoy_check.why } } : {}),
   };
 }
 

@@ -3,6 +3,7 @@ id: ios/containers-and-time
 title: iOS containers and time conversion
 when: You must attribute an app container or convert an iOS time.
 needs: []
+card: A Data/Application or Shared/AppGroup uuid is not an identity: map it with the container's metadata plist (plist_read {"path": "<plist>"}), the installation records, or in a backup the domain manifest_db lists. timestamp_decode {"value": "<raw>"} lists candidates under several epochs and does not say which is right: choose the epoch from the field's schema (sqlite_query on the table definition and a documented value), never from a plausible date. Keep raw value, precision, clock and zone beside a conversion. Does not show: that two stores share a clock, that a converted time is when a person acted, or that a plausible date is the right epoch.
 tools: [plist_read, manifest_db, timestamp_decode, sqlite_query]
 requires_host: []
 ---

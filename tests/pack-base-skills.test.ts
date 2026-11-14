@@ -72,11 +72,11 @@ const NEW = [
 // A leaf is at most 800 tokens (a warning above, a refusal above 1,000) and the router at most 400. The three leaves the review of
 // #133 left above 800 (layers, sqlite, clocks) were split into second-level leaves, so no leaf has a ceiling of its own any more.
 const LEAF_MAX = 800;
-const ROUTER_MAX = 400;
+const ROUTER_MAX = 500; // scripts/skill-budgets.json: the base router opens with an Always block
 
 test("every skill is a leaf within the budget, opens with Use when ... Not for ..., and has a short index entry", async () => {
   const skills = await load(SKILLS);
-  assert.equal(skills.size, 30);
+  assert.equal(skills.size, 35);
   for (const s of skills.values()) {
     assert.ok(TOKENS(s.text) <= (s.id === ROUTER ? ROUTER_MAX : LEAF_MAX), `${s.id} is ${Math.round(TOKENS(s.text))} tokens`);
     assert.ok(TOKENS(s.text) <= 1000, `${s.id} is over the 1,000 a skill may have`);
@@ -95,7 +95,7 @@ test("every skill is a leaf within the budget, opens with Use when ... Not for .
   for (const id of skills.keys()) assert.ok(index.includes(`\`${id}\``), `${id} is in the index`);
   // The pack budget is the harness's own count of the index entries (extensions/skills.ts), not the file's size: past it a pack shows its router only.
   const parsed = await readPackIndex(PACK);
-  assert.equal(parsed.entries.length, 30);
+  assert.equal(parsed.entries.length, 35);
   assert.ok(parsed.tokens <= SKILL_BUDGET.pack, `the pack index is ${Math.round(parsed.tokens)} tokens of entries`);
 });
 
@@ -485,7 +485,7 @@ test("scope routes a lookup the evidence suggests as the worker prompt does: net
 
 // ---- The router: the one entry a run shows for this pack when its index is over the run's budget. ----
 
-test("the router is the pack's only router, within 400 tokens, and names every other skill exactly once; every old id is alive", async () => {
+test("the router is the pack's only router, within 500 tokens, and names every other skill exactly once; every old id is alive", async () => {
   const skills = await load(SKILLS);
   const routers = [...skills.values()].filter((s) => s.meta.router === "true");
   assert.deepEqual(routers.map((s) => s.id), [ROUTER], "one router, and it is base/router");

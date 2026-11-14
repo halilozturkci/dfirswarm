@@ -52,12 +52,12 @@ test("new evidence stales every standing negative, not-determinable and partial 
   await planned(a0, "2");
   await planned(a3, "4");
   // A bounded negative, reviewed.
-  const abs2 = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "inputs/disk.E01", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
+  const abs2 = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "inputs/disk.E01", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["2"] })).entry;
   const cov2 = ok(await rec(a0, coverage("2", ["input:disk.E01"], [`E-${abs2.seq}`, "job:j000001/hits.txt"]))).entry;
   const ans2 = ok(await rec(a1, { kind: "answer", section: "question:2", value: "No evidence of a remote tool was found on the disk", reasoning: `E-${cov2.seq}`, ...A, result: "bounded_negative" })).entry;
   await attested(a2, { seq: cov2.seq, how: "ran the search again from job:j000001", review: REVIEW });
   // A not determinable, reviewed, its coverage saying why no source was asked for.
-  const abs4 = ok(await rec(a3, { kind: "absence", value: "a start time", source: "inputs/logs/a.log", evidence: "a search", refs: ["job:j000002/hits.txt"], answers: ["4"] })).entry;
+  const abs4 = ok(await rec(a3, { kind: "absence", value: "a start time", source: "inputs/logs/a.log", evidence: "a search", refs: ["job:j000002/hits.txt"], control: { ref: "job:j000002/hits.txt", found: "the same search finds a planted row" }, answers: ["4"] })).entry;
   const cov4 = ok(await rec(a3, coverage("4", ["input:logs/a.log"], [`E-${abs4.seq}`, "job:j000002/hits.txt"], { acquisition_none_why: "no source outside the evidence records when it started" }))).entry;
   const ans4 = ok(await rec(a1, { kind: "answer", section: "question:4", value: "No evidence of when it started was found in the log", reasoning: `E-${cov4.seq}`, ...A, result: "not_determinable" })).entry;
   await attested(a2, { seq: cov4.seq, how: "ran the search again from job:j000002", review: REVIEW });
@@ -165,7 +165,7 @@ const OPERATOR: Q.Actor = { kind: "human", role: "operator", person: "ops@lab", 
 test("the operator's lever on stale evidence: an acceptance made after the evidence came excuses evidence_stale on its question, one made before does not, and the reply says what the finish line still holds (the Fable review, P2 3a)", async () => {
   const { S, a0, a1, a2 } = await run();
   const lead = await planned(a0, "2");
-  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
+  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["2"] })).entry;
   assert.ok((await L.closeLead(a0, lead, { disposition: "negative", ref: `E-${abs.seq}` })).ok);
   const cov = ok(await rec(a0, coverage("2", ["input:disk.E01"], [`E-${abs.seq}`]))).entry;
   ok(await rec(a1, { kind: "answer", section: "question:2", value: "No evidence of a remote tool was found on the disk", reasoning: `E-${cov.seq}`, ...A, result: "bounded_negative" }));
@@ -354,7 +354,7 @@ test("the run records a high confidence only on an established answer another se
   const est = ok(await rec(a1, { kind: "answer", section: "question:1", value: "alice", reasoning: `E-${f.seq}`, ...HIGH, result: "established" }));
   await covers(a0, "1");
   assert.match(est.note ?? "", /confidence high is recorded as medium until another seat attests this answer established, naming the alternatives it weighed/);
-  const abs = ok(await rec(a3, { kind: "absence", value: "a start time", source: "inputs/logs/a.log", evidence: "a search", refs: ["job:j000002/hits.txt"], answers: ["4"] })).entry;
+  const abs = ok(await rec(a3, { kind: "absence", value: "a start time", source: "inputs/logs/a.log", evidence: "a search", refs: ["job:j000002/hits.txt"], control: { ref: "job:j000002/hits.txt", found: "the same search finds a planted row" }, answers: ["4"] })).entry;
   const cov = ok(await rec(a3, coverage("4", ["input:logs/a.log"], [`E-${abs.seq}`], { acquisition_none_why: "no other source records it" }))).entry;
   const nd = ok(await rec(a1, { kind: "answer", section: "question:4", value: "No evidence of when it started was found in the log", reasoning: `E-${cov.seq}`, ...HIGH, result: "not_determinable" }));
   assert.match(nd.note ?? "", /confidence high is recorded as medium: high is kept only by an established answer, and this one is not determinable/);
@@ -393,7 +393,7 @@ test("the run records a high confidence only on an established answer another se
 test("a not-determinable answer's coverage names the acquisition ask, or why none: the answers check warns of one that does neither and holds nothing; the finish line's note repeats it", async () => {
   const { S, a0, a1, a2 } = await run();
   await planned(a0, "4");
-  const abs = ok(await rec(a0, { kind: "absence", value: "a start time", source: "inputs/logs/a.log", evidence: "a search", refs: ["job:j000002/hits.txt"], answers: ["4"] })).entry;
+  const abs = ok(await rec(a0, { kind: "absence", value: "a start time", source: "inputs/logs/a.log", evidence: "a search", refs: ["job:j000002/hits.txt"], control: { ref: "job:j000002/hits.txt", found: "the same search finds a planted row" }, answers: ["4"] })).entry;
   const cov = ok(await rec(a0, coverage("4", ["input:logs/a.log"], [`E-${abs.seq}`]))).entry;
   const ans = ok(await rec(a1, { kind: "answer", section: "question:4", value: "No evidence of when it started was found in the log", reasoning: `E-${cov.seq}`, ...A, result: "not_determinable" }));
   assert.match(ans.note ?? "", /not determinable for want of a source the evidence does not hold\? Ask for it first: lead_close needs_operator with ask \{kind: acquisition/);
@@ -431,7 +431,7 @@ test("under the case policy's more_evidence: no, acquisition_none_why naming the
   await mkdir(join(S, "network"), { recursive: true });
   await writeFile(join(S, "network", "policy.json"), JSON.stringify({ policy: "ctf", more_evidence: "no" }));
   await planned(a0, "4");
-  const abs = ok(await rec(a0, { kind: "absence", value: "a start time", source: "inputs/logs/a.log", evidence: "a search", refs: ["job:j000002/hits.txt"], answers: ["4"] })).entry;
+  const abs = ok(await rec(a0, { kind: "absence", value: "a start time", source: "inputs/logs/a.log", evidence: "a search", refs: ["job:j000002/hits.txt"], control: { ref: "job:j000002/hits.txt", found: "the same search finds a planted row" }, answers: ["4"] })).entry;
   const cov = ok(await rec(a0, coverage("4", ["input:logs/a.log"], [`E-${abs.seq}`]))).entry;
   const ans = ok(await rec(a1, { kind: "answer", section: "question:4", value: "No evidence of when it started was found in the log", reasoning: `E-${cov.seq}`, ...A, result: "not_determinable" }));
   assert.match(ans.note ?? "", new RegExp(`this case admits no further evidence \\(more_evidence: no\\), so open no acquisition ask: the coverage record behind this answer says so in acquisition_none_why \\("${P.NO_MORE_EVIDENCE_NONE_WHY.replace(/[()]/g, "\\$&")}"\\)`));

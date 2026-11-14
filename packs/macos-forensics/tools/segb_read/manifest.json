@@ -33,8 +33,8 @@
   "example": "{\"path\": \"work/extracted/Users/alice/Library/Biome/streams\", \"out_file\": \"work/<your id>/segb.jsonl\"}",
   "by": "maintainer",
   "at": "2026-11-03T12:00:00.000Z",
-  "version": 2,
-  "sha256": "e53d96a0a67ffed936c9b68566a761ba3d46c55553dcc2a09e58da60031df1c3",
+  "version": 4,
+  "sha256": "739a65079dc36930864109723bdb3aaac9a84f98d3cf04d982a14beafcaab82a",
   "use": {
     "extensions": [],
     "magic": [

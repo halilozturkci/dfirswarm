@@ -3,6 +3,7 @@ id: capture/carve-from-images
 title: Recovering packet records from disk or memory
 when: No capture was supplied, but a memory image or disk image may retain packet buffers.
 needs: [capture/what-you-have, evidence/captured-secrets]
+card: feature_scan {"path": "<image>", "only": ["net"], "out_dir": "<empty dir under $OUT>"} runs bulk_extractor, in a job with secret_output: true; a successful call is not a complete scan: read the exit code, diagnostics and completion record. A non-empty packets.pcap is a carved derivative: hash it, then pcap_summary it. Say whether each time is intact, made up by the scanner or zero. Does not show: capture point, completeness, that the machine sent the bytes, or absence.
 tools: [feature_scan, pcap_summary]
 requires_host: [bulk_extractor, capinfos, tshark]
 ---

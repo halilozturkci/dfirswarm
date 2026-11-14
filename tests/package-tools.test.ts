@@ -16,8 +16,8 @@ import { appendFileSync } from "node:fs";
 import { chmod, cp, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { disputeEntry, initSandbox, recordEntry } from "../extensions/protocol.ts";
-import { hygieneReport, ledgerChain, makeDigestReplacer, packSessions, redactPackage, type Replaced, SESSIONS_ARCHIVE, SESSIONS_MANIFEST, type SessionsManifest, verifyPackage, verifySessions, writeComponents } from "../scripts/package-tools.ts";
+import { disputeEntry, initSandbox, recordEntry, type LedgerEntry } from "../extensions/protocol.ts";
+import { copySweepLists, hygieneReport, ledgerChain, makeDigestReplacer, packSessions, redactPackage, type Replaced, SESSIONS_ARCHIVE, SESSIONS_MANIFEST, type SessionsManifest, verifyPackage, verifySessions, writeComponents } from "../scripts/package-tools.ts";
 import { takeCustody } from "../scripts/custody.ts";
 import { T, fixtureFiles, hubLine, jl, traceRow, writeFiles } from "./sensitive-access-fixture.ts";
 import { sealTree, storePaths } from "../scripts/evidence-store.ts";
@@ -159,6 +159,84 @@ test("a part the verdict sealed, or one the package lists as present, cannot be 
   v = verifyPackage(pkg);
   assert.equal(v.ok, false);
   assert.match(v.lines.join("\n"), /trace\/events\.jsonl \(the verdict sealed 3 trace lines; declared absent: the run has no trace\)/);
+});
+
+test("a package carries the store sweeps' side lists (what a sweep did not search, what it found) and its verify holds each to the sha256 its line names; a line redacted for a word past its first few hits takes its side lists with it", async () => {
+  const { root, pkg } = await packaged();
+  // A job of 60 files that hold the string, the last of them named with a sensitive entry's words; and 80 objects too large for a pass.
+  const hitDir = join(root, "store", "jobs", "j000010");
+  const files: Array<{ path: string; sha256: string; bytes: number }> = [];
+  for (let i = 0; i < 60; i++) {
+    const path = i === 59 ? `export/zz-${SECRET}.txt` : `export/row-${String(i).padStart(3, "0")}.txt`;
+    const body = `row ${i}: mallory\n`;
+    await mkdir(join(hitDir, "out", "export"), { recursive: true });
+    await writeFile(join(hitDir, "out", path), body);
+    files.push({ path, sha256: sha(body), bytes: body.length });
+  }
+  await writeFile(join(hitDir, "manifest.json"), JSON.stringify({ files }));
+  await writeFile(join(hitDir, "job.json"), JSON.stringify({ id: "j000010", state: "committed", status: "ok", exit: 0, spec: { kind: "command", scope: "declared", inputs: ["input:disk.E01"], command: "export" } }));
+  await mkdir(join(root, "store", "jobs", "j000011", "out"), { recursive: true });
+  await writeFile(join(root, "store", "jobs", "j000011", "manifest.json"), JSON.stringify({ files: Array.from({ length: 80 }, (_, i) => ({ path: `big/${i}.bin`, sha256: sha(`big ${i}`), bytes: 64 * 1024 * 1024 })) }));
+  const SW = await import("../extensions/store-sweep.ts");
+  process.env.SWARM_SWEEP_MAX_BYTES = String(32 * 1024 * 1024);
+  try {
+    const line = await SW.startSweep(root, { seq: 99, hash: sha("coverage 99"), kind: "coverage", refs: ["input:disk.E01"], result_refs: [], looked_for: ["mallory"], at: new Date().toISOString() } as unknown as LedgerEntry);
+    assert.deepEqual([line?.hits.length, SW.unsearchedTotal(line)], [60, 80]);
+  } finally {
+    delete process.env.SWARM_SWEEP_MAX_BYTES;
+  }
+  const text = await readFile(join(root, "ledger", "sweeps.jsonl"), "utf8");
+  assert.doesNotMatch(text, new RegExp(SECRET), "the line names its first few hits, not the last");
+  await cp(join(root, "ledger", "sweeps.jsonl"), join(pkg, "ledger-sweeps.jsonl"));
+  // As swarm.sh package copies them.
+  const copied = spawnSync(process.execPath, ["--experimental-strip-types", "--no-warnings", join(import.meta.dirname, "..", "scripts", "package-tools.ts"), "sweep-lists", root, pkg], { encoding: "utf8" });
+  assert.equal(copied.status, 0, copied.stderr);
+  assert.deepEqual(JSON.parse(copied.stdout), { named: 2, copied: 2, missing: [] });
+  const names = (await readdir(join(pkg, "ledger-sweeps"))).sort();
+  assert.equal(names.length, 2);
+  assert.match(names.join(" "), /^hits-[0-9a-f]{64}\.jsonl unsearched-[0-9a-f]{64}\.jsonl$/);
+  writeComponents(root, pkg);
+  let v = verifyPackage(pkg);
+  assert.equal(v.ok, true, v.lines.join("\n"));
+  assert.match(v.lines.join("\n"), /Sweep lists:  2 side list\(s\) named by the sweep lines, each in ledger-sweeps\/ as its line names it/);
+  // A side list changed after it was packaged, or taken out, is named and fails the package.
+  const hitsFile = join(pkg, "ledger-sweeps", names[0]!);
+  const kept = await readFile(hitsFile);
+  await writeFile(hitsFile, kept.toString("utf8").replace("row-000", "row-999"));
+  v = verifyPackage(pkg);
+  assert.equal(v.ok, false);
+  assert.match(v.lines.join("\n"), new RegExp(`Sweep lists:  2 side list\\(s\\) named by the sweep lines, 1 NOT AS NAMED in ledger-sweeps/ \\(ledger/sweeps/${names[0]}: its bytes are not the`));
+  await rm(hitsFile);
+  assert.match(verifyPackage(pkg).lines.join("\n"), new RegExp(`ledger/sweeps/${names[0]}: missing`));
+  await writeFile(hitsFile, kept);
+  // A package from before the side lists were carried says so and is not failed for them.
+  const components = JSON.parse(await readFile(join(pkg, "COMPONENTS.json"), "utf8")) as { components: Array<{ path: string }> };
+  const withList = JSON.stringify(components);
+  await writeFile(join(pkg, "COMPONENTS.json"), JSON.stringify({ ...components, components: components.components.filter((c) => c.path !== "ledger-sweeps") }));
+  await rm(join(pkg, "ledger-sweeps"), { recursive: true });
+  v = verifyPackage(pkg);
+  assert.equal(v.ok, true, v.lines.join("\n"));
+  assert.match(v.lines.join("\n"), /Sweep lists:  2 side list\(s\) named by the sweep lines, not carried \(a package from before 2026-11-14/);
+  await writeFile(join(pkg, "COMPONENTS.json"), withList);
+  assert.equal(copySweepLists(root, pkg).copied, 2);
+  // Redacted: the sensitive words stand in the hits' file only, past the line's first few; the line is redacted for them, and its side lists withheld with it.
+  const r = await redactPackage(root, pkg);
+  assert.deepEqual(r.leaks, [], "nothing of it is left anywhere in the package");
+  const sweepsAfter = await readFile(join(pkg, "ledger-sweeps.jsonl"), "utf8");
+  assert.match(sweepsAfter, /"redacted":true/);
+  assert.doesNotMatch(sweepsAfter, /hits_all/);
+  for (const n of names) {
+    const body = await readFile(join(pkg, "ledger-sweeps", n), "utf8");
+    assert.doesNotMatch(body, new RegExp(SECRET));
+    assert.match(body, /withheld with them/);
+  }
+  const json = JSON.parse(await readFile(join(pkg, "REDACTIONS.json"), "utf8")) as { changes: Array<{ path: string; why: string }> };
+  assert.ok(json.changes.some((c) => c.path === "ledger-sweeps.jsonl" && /side list/.test(c.why)), JSON.stringify(json.changes.map((c) => [c.path, c.why])));
+  assert.deepEqual(json.changes.filter((c) => c.path.startsWith("ledger-sweeps/")).length, 2);
+  v = verifyPackage(pkg);
+  assert.equal(v.ok, true, v.lines.join("\n"));
+  assert.match(v.lines.join("\n"), /Sweeps:       1 lines, chain intact, 1 redacted \(their hashes kept\)/);
+  assert.doesNotMatch(v.lines.join("\n"), /Sweep lists:/, "a redacted line names no side list to hold");
 });
 
 /** A run with custody taken and an examiner's sign-off, packaged as swarm.sh package lays it out. */

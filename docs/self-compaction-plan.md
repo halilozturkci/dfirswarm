@@ -268,8 +268,8 @@ The harness owns a small table, `extensions/context-ceiling.ts`, consulted at
 | `openai/gpt-5.4`, `openai/gpt-5.5` | 272,000 | 272,000 | price doubles above it |
 | `openai/gpt-5.4-mini` | 400,000 | 272,000 | measured overflow at ~215k plus one result |
 | `grok-4.6` (any provider) | 500,000 | 200,000 | price doubles above it |
-| DeepSeek V4 family | 1,000,000 | 300,000 | rot ceiling; the video's 30% of 1M; observed max 262k |
-| anything else | declared | `min(declared, 300,000)` | rot ceiling |
+| DeepSeek V4 family | 1,000,000 | 400,000 | rot ceiling (was 300,000: the hand-off line at 150k left 73k to work in); observed max 262k |
+| anything else | declared | `min(declared, 400,000)` | rot ceiling |
 
 Thresholds default to fractions of the effective ceiling: **notice 40%,
 warning 50%, compact line 60%** (Halil's decision over the proposal's

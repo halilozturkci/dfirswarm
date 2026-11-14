@@ -1,7 +1,7 @@
 ---
 id: acquire/images
 title: Memory acquisition methods and their limits
-when: The operator is choosing how to capture memory, or you must judge how a capture was made and trusted.
+when: The operator is choosing how to capture memory, or you judge how a capture was made.
 needs: []
 tools: []
 requires_host: []

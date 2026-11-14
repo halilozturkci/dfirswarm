@@ -1,7 +1,7 @@
 ---
 id: filesystem/encrypted-metadata
 title: Encryption metadata, protectors and keys
-when: A header identifies BitLocker, LUKS or FileVault: protectors, or a key you are given.
+when: A header identifies BitLocker, LUKS or FileVault.
 needs: []
 tools: []
 requires_host: [bdeinfo, dislocker, cryptsetup, luksdeinfo, fvdeinfo, fsapfsinfo]

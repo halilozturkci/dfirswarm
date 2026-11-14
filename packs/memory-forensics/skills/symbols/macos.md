@@ -1,8 +1,9 @@
 ---
 id: symbols/macos
 title: macOS memory and kernel symbols, with no support claim
-when: The capture is from a Mac, or you are asked whether a macOS image can be read.
+when: The capture is from a Mac, or you are asked if a macOS image can be read.
 needs: []
+card: No support claim for any macOS version: this pack has no macOS ISF set or converter (isf_intake makes Linux tables), and a listed macOS plugin does not show the kernel is supported. mem_profile {"path": "<image>"} counting "Darwin Kernel Version" is an OS hint, not an identity: record the kernel string with its offset. Do not carry an Intel statement to Apple silicon or infer the architecture from the version. Without a matching table, report symbol-dependent analysis as unexamined. Does not show: support, the architecture, or that a matching table exists.
 tools: [mem_profile, isf_intake]
 requires_host: [vol]
 ---

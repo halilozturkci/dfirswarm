@@ -3,6 +3,7 @@ id: ios/unified-logs
 title: iOS unified logs on Linux
 when: An iOS question depends on retained diagnostic logs.
 needs: [extractions/what-you-have]
+card: unified_log {"path": "<dir holding diagnostics and uuidtext>", "out_dir": "work/<your id>/ulog"} runs in a job; out_dir is required (in a job, under $OUT). On Linux predicate, start and end are refused: filter the kept JSONL afterwards and keep the exact expression. status complete or no unparsed line does not show every record rendered; report the unresolved-format count as unknown. If the reader stopped, name the partial output and the excluded scope; claim no absence. Minimum and maximum times do not show continuous coverage between them. Does not show: a complete audit of what a user did.
 tools: [unified_log]
 requires_host: [unifiedlog_iterator]
 ---

@@ -3,6 +3,7 @@ id: pe/authenticode
 title: Reading authenticode_verify and what a verified signature supports
 when: A PE signature must be checked, or authenticode_verify's answer must be read.
 needs: [triage/quarantine]
+card: Trust comes only from the call: authenticode_verify ({"path": "<pe>", "trust_ca": "<roots.pem>", "tsa_ca": "<tsa.pem>", "crl": "<crl.pem>"}) reads no default CA store. A part given no material is not_checked, never verified: write "not verified", and report verification, chain, timestamp and revocation separately. unsigned does not exclude catalog signing. Network use is unmeasured: do not call a run offline. Does not show: that a file is benign, or publisher trust.
 tools: [authenticode_verify]
 requires_host: [osslsigncode]
 ---

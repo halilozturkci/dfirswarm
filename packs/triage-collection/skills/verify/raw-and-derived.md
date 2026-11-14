@@ -3,6 +3,7 @@ id: verify/raw-and-derived
 title: Raw artefacts, companions and derived reports
 when: A delivery mixes collected artefacts with parsed output.
 needs: []
+card: Class each object as collected, parsed output or replayed/repaired. collection_path_map {"root": "<collection dir>"} gives an observed source path only where a record names the file; hypothesis_only is a convention's guess, and output with no observed source path is not shown to be a copy of anything. A parsed row does not show its source file was delivered, and a missing row is not a missing artefact. collection_manifest_verify matched is agreement with the collector's record, not that a report made from that file is right. Replay only on a derived copy, with tool, version and hashes. Does not show: that a parsed report is complete or right.
 tools: [collection_path_map, collection_manifest_verify]
 requires_host: []
 mentions: [KAPE]

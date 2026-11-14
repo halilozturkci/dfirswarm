@@ -1,6 +1,6 @@
 # Ransomware Response Pack
 
-Evidence-led ransomware examination. Its eight tools return candidates, measurements and counts; what a
+Evidence-led ransomware examination. Its eleven tools return candidates, measurements and counts; what a
 candidate shows has to be validated before anyone acts on it.
 
 Depends on the Computer Forensics Base Pack. It does not repeat the intrusion
@@ -10,9 +10,9 @@ says "if that pack is loaded" and asks you to check the run's tool inventory.
 
 ## What it carries
 
-**Twenty-five skills**: seven decision leaves, each a question of a case, eleven
-second-level leaves they point to ("only if X"), six more leaves that the router and the index
-name (`intrusion/entry-and-spread`, `recovery/preserve-and-restore`, `platforms/esxi-hypervisors`, `platforms/nas-storage`, `impact/services-and-data`, `recovery/public-decryptors`),
+**Twenty-six skills**: seven decision leaves, each a question of a case, eleven
+second-level leaves they point to ("only if X"), seven more leaves that the router and the index
+name (`intrusion/entry-and-spread`, `recovery/preserve-and-restore`, `platforms/esxi-hypervisors`, `platforms/nas-storage`, `impact/services-and-data`, `recovery/public-decryptors`, `recovery/scheme-from-sample`),
 and the router `ransomware/router` (at most 400 tokens; the prompt shows this one line for the pack when the run's index is over its budget, and it names every leaf); every leaf is at most 800 tokens.
 `scope/first-hour` (`scope/triage-tools`, `scope/phase-timeline`),
 `exfil/before-encryption` (`exfil/measure-and-claims`),
@@ -23,7 +23,17 @@ and the router `ransomware/router` (at most 400 tokens; the prompt shows this on
 `reporting/for-regulators` (`reporting/notification-register`,
 `reporting/conclusions-and-controls`).
 
-**Eight tools.** `backup_destruction_correlate` keeps five observations apart per host and
+**Eleven tools.** Three of them are a chain for an encrypted-file family whose key scheme can be read from the evidence
+(`recovery/scheme-from-sample` is their method): `cipher_state_scan` reads a process dump or any binary once and lists, by offset, ChaCha and
+Salsa20 states, AES key schedules, 256-byte permutations and constant tables, after a planted control that proves the scanner on every
+shape it claims (a `complete` answer with no hit is a negative for those shapes only); `stream_kpa_check` tries key and nonce sources (the
+scan's values file, a constant, a slice of each member, optionally XORed with a constant) on every member against the first bytes its type
+should have, reports a verdict per member with the crib length and the false positives to expect, forms the footer hypothesis by itself
+when a dump key opens one member, and writes a recipe; `family_decrypt` applies the recipe to every member with a receipt each and says
+that it authenticates nothing. Keys, nonces and decrypted content are written only to the files of a job run as secret output (the three
+manifests make every job one) and never appear in an answer. The ciphers (ChaCha20 in both layouts, Salsa20, AES-CTR, RC4) are pure
+Python, standard library only, checked against RFC 8439, the ECRYPT Salsa20 vectors, FIPS-197 and RFC 6229.
+`backup_destruction_correlate` keeps five observations apart per host and
 object (command seen, action attempted, reported outcome, inventory change, verified loss)
 from the answers of other packs' tools given by reference, each versioned by its `parser`.
 It copies no event text, reports a command with no change and a change with no command as
@@ -60,7 +70,8 @@ plaintext counterpart when one is given, and judges a supplied layout. Its
 encrypted, and an intermittent pattern is an observed block pattern, never a family.
 `encrypted_survey` identifies candidate files using extension and
 entropy heuristics, samples selected windows and tails of the first candidates,
-and groups filesystem modification times by hour. These results guide the
+and groups filesystem modification times by hour. It also reports what points at the scheme (`scheme_pointers`): the smallest member,
+the bytes a member gained over a same-name plaintext twin, and whether the last bytes are unique per file, for small members too. These results guide the
 examination; they do not establish how much was encrypted, whether a file is
 recoverable, an encryption window or a family. Files it did not match, could not
 measure or could not read have buckets of their own, and a census of every entry

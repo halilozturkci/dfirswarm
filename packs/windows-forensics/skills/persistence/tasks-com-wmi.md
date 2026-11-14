@@ -3,6 +3,7 @@ id: persistence/tasks-com-wmi
 title: Tasks, COM, WMI, replaced binaries
 when: Persistence kept there.
 needs: [persistence/mechanisms]
+card: persistence_normalise {"software": "<SOFTWARE>", "tasks_dir": "<Tasks>", "evtx_results": "<evtx_query result file>"}: its observations are facts about the inputs, not verdicts: name no cause. The WMI repository is not examined: say so.
 tools: [persistence_normalise, regkv, evtx_query, ioc_scan, mft_records]
 requires_host: []
 ---

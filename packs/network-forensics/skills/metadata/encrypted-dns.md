@@ -3,6 +3,7 @@ id: metadata/encrypted-dns
 title: Encrypted DNS, what is and is not recoverable
 when: Resolver traffic may be DoH, DoT or DoQ, or a finding says "no DNS queries".
 needs: []
+card: "No DNS queries" is wrong when only port 53 was examined: list resolver endpoints and ports from pcap_summary {"path": "<capture>"} and zeek_run conn.log and ssl.log. DoT and DoQ use 853 by default, DoH is HTTPS on 443. Identifying the transport recovers no query: names come from resolver logs, the client's cache or authorised session secrets; say which supplied them. A resolver's SNI names the resolver, not what was asked. Settle the client's resolver configuration before reading absence. Does not show: the names asked or the user's intent.
 tools: [pcap_summary, zeek_run]
 requires_host: [tshark]
 ---

@@ -850,7 +850,9 @@ test("the hand-off header lists what the seat read: sizes, which it marked done,
       await seat.endTurn();
       seat.session.context = [{ type: "compaction", id: "k", firstKeptEntryId: null }];
       await seat.fire("session_compact", {});
-      const header = seat.handle.handoffLine();
+      // The account, then the cards of the notes taken out (--skill-cards, on by default): the account is read on its own here.
+      const [header, cards] = seat.handle.handoffLine().split("\nCards of the notes you were working with");
+      assert.match(cards ?? "", /pack-a:evidence\/two/, "the hand-off carries the card of the note taken out and not marked done");
       assert.equal(
         header.replace(/ \d+ \(/g, " N ("),
         "Method notes you read since your last compaction, with their size in tokens (never their text): pack-a:evidence/two N (taken out of your context, not marked done), pack-a:evidence/one N (marked done, released earlier).\n" +

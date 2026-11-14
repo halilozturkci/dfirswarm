@@ -3,6 +3,7 @@ id: volumes/bitlocker-opening
 title: Opening a BitLocker volume with supplied material
 when: The case supplies a recovery password, key file or escrow export to open the volume.
 needs: []
+card: With material the case supplies, in a job with secret_output: true, materialise_decrypted {"operation": "bitlocker_image", "source": "<image>", "offset": <bytes>, "key_kind": "recovery_password", "key_ref": "<sealed 0600 file>"} writes a raw image under $OUT. A recovery_key_scan hit is a transcription, not a working key. Does not show: that a failed route means the volume cannot be opened.
 tools: [materialise_decrypted, recovery_key_scan]
 requires_host: [bdemount, dislocker]
 ---

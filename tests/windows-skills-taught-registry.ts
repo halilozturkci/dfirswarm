@@ -10,7 +10,7 @@ export const TAUGHT: Array<[tool: string, skillId: string, names: string[]]> = [
     "registry/readers",
     [
       "deepest_found", "missing", "subkeys_there", "value_types", "value_lengths", "corrupted_values", "stopped_branches", "tree_complete",
-      "all_subkeys", "all_nodes", "sensitive_values_withheld", "not_attempted",
+      "all_subkeys", "all_nodes", "sensitive_values_withheld", "not_attempted", "found",
     ],
   ],
 ];

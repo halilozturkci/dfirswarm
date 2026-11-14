@@ -1,7 +1,7 @@
 ---
 id: evidence/provenance
 title: Hash domains and the provenance chain
-when: Quoting a digest, comparing one, or showing how a result traces back to a delivered exhibit.
+when: Quoting or comparing a digest, or tracing a result to an exhibit.
 needs: []
 tools: [check_inputs, image_verify, icat_extract, archive_extract, sqlite_snapshot]
 requires_host: [ewfinfo, ewfverify]

@@ -62,7 +62,13 @@
   "example": "{\"root\": \"work/extracted/vm\"}",
   "by": "maintainer",
   "at": "2026-10-15T09:00:00.000Z",
-  "version": 15,
+  "not_for": [
+    {
+      "what": "the VMs, disks and snapshots a configuration or inventory file names",
+      "use": "virtualization_inventory"
+    }
+  ],
+  "version": 19,
   "use": {
     "extensions": [
       ".vmdk",
@@ -94,5 +100,5 @@
       }
     ]
   },
-  "sha256": "3dadba6cba73c1929e93663ed3a958f0dce2901932068cace838a04cb8f5dcb3"
+  "sha256": "6b40ddaeefa6d83b1b13849408195a57b51d283b7324c47d5e9e03c58188439b"
 }

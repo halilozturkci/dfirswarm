@@ -10,11 +10,11 @@
  * Imager writes where the synthetic ones only mirror its assumptions. No case
  * evidence is read.
  */
-import test from "node:test";
+import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmodSync, cpSync, existsSync, mkdirSync, symlinkSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, symlinkSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, statfsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deflateSync } from "node:zlib";
@@ -59,9 +59,20 @@ function tree(): Ad1Node[] {
   }];
 }
 
+/** Every directory dir() made, removed when this file's tests end (left behind, they came to 18 GB on a host that ran the suite often). */
+const made: string[] = [];
 function dir(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), prefix));
+  const d = mkdtempSync(join(tmpdir(), prefix));
+  made.push(d);
+  return d;
 }
+after(() => {
+  for (const d of made) {
+    // A test may leave a directory read-only (a sealed tree, a refused write): make it writable first.
+    spawnSync("chmod", ["-R", "u+w", d]);
+    rmSync(d, { recursive: true, force: true });
+  }
+});
 
 function py(script: string, args: string[], env: Record<string, string> = {}): { code: number | null; out: string; err: string } {
   const r = spawnSync("python3", [script, ...args], { encoding: "utf8", env: { ...process.env, ...env } });
@@ -272,7 +283,7 @@ test("ad1_extract takes the items named, a folder with its subtree, and refuses 
     assert.match(JSON.parse(r.stdout).error, why, out_dir);
   }
   const none = await runPy(TOOL, cwd, { image: "inputs/case.ad1", members: [] }, undefined, { AGENT_ID: "s1" });
-  assert.match(JSON.parse(none.stdout).error, /members is a non-empty list of item numbers \(n\) or locators \(ad1:item=<address>\).*leave it out to take every item/);
+  assert.match(JSON.parse(none.stdout).error, /members is a non-empty list of item numbers \(n\) or locators \(ad1:item=<address>\).*leave it out and name paths or members_file, or pass whole: true for every item/);
   const notAd1 = await runPy(TOOL, cwd, { image: "inputs/../work/s1/some/ad1_extract.tsv" }, undefined, { AGENT_ID: "s1" });
   assert.match(JSON.parse(notAd1.stdout).error, /not an AD1 image this tool reads: no ADSEGMENTEDFILE header/);
   assert.deepEqual(readdirSync(join(cwd, "inputs")), ["case.ad1"]);
@@ -288,7 +299,9 @@ test("in a job ad1_extract writes under $OUT, and a file whose content breaks is
   const r = await runPy(TOOL, cwd, { image: "inputs/bad.ad1" }, undefined, { AGENT_ID: "s1", JOB_ID: "j000007", OUT: out });
   assert.equal(r.code, 1, "an item that broke fails the call, after the rest is written");
   const res = JSON.parse(r.stdout);
-  assert.equal(res.out_dir, join(out, "bad"));
+  assert.equal(res.out_dir, "job:j000007/bad", "named as the store will cite it, never by the staging path, which is gone once the job is sealed");
+  assert.deepEqual([res.out_relative, res.manifest, res.coverage], ["bad", "job:j000007/bad/ad1_extract.tsv", "job:j000007/bad/ad1_extract.coverage.json"]);
+  assert.ok(!r.stdout.includes(out), "no staging path anywhere in the answer");
   assert.equal(res.note, undefined, "in a job there is nothing to say about work/");
   assert.match(res.errors[0], /item 8 \(C:\/Users\/alice\/bomb\.bin, ad1:item=\d+\): its chunk 0 inflates past the chunk size of 1024/);
   assert.ok(existsSync(join(out, "bad", "C:", "Users", "alice", "bomb.bin.partial")));
@@ -296,10 +309,33 @@ test("in a job ad1_extract writes under $OUT, and a file whose content breaks is
   const row = tsv(join(out, "bad", "ad1_extract.tsv")).find((x) => x.n === "8")!;
   assert.deepEqual([row.written, row.check, row.note], ["C:/Users/alice/bomb.bin.partial", "not-read", "partial: 0 of 10000 bytes kept"]);
   assert.deepEqual(readFileSync(join(out, "bad", "C:", "Users", "alice", "notes.txt")), notes, "the rest is whole");
-  // In a job only $OUT is written: a place under work/ is refused before anything is read.
-  const elsewhere = await runPy(TOOL, cwd, { image: "inputs/case.ad1", out_dir: "work/s1/x" }, undefined, { AGENT_ID: "s1", JOB_ID: "j000007", OUT: out });
+  // In a job only $OUT is written: an absolute place outside it is refused before anything is read.
+  const elsewhere = await runPy(TOOL, cwd, { image: "inputs/case.ad1", out_dir: join(cwd, "work", "s1", "x") }, undefined, { AGENT_ID: "s1", JOB_ID: "j000007", OUT: out });
   assert.equal(elsewhere.code, 1);
   assert.match(JSON.parse(elsewhere.stdout).error, /in a job out_dir must be inside \$OUT/);
+  // A relative one is taken under $OUT, and a budget over the ceiling is held to it, each said (the run s571aaa's seats were refused both).
+  writeFileSync(join(cwd, "inputs", "ok.ad1"), ad1Image(tree()));
+  const relative = await runPy(TOOL, cwd, { image: "inputs/ok.ad1", out_dir: "tree", max_seconds: 3000 }, undefined, { AGENT_ID: "s1", JOB_ID: "j000007", OUT: out });
+  assert.equal(relative.code, 0, relative.stdout);
+  const rel = JSON.parse(relative.stdout);
+  assert.equal(rel.out_dir, "job:j000007/tree");
+  assert.ok(!relative.stdout.includes(out), "no staging path anywhere in the answer, the adjusted note included");
+  assert.ok(existsSync(join(out, "tree", "ad1_extract.tsv")));
+  assert.equal(rel.budgets.max_seconds, 1700);
+  assert.ok(rel.adjusted.includes("max_seconds 3000 is over this tool's ceiling of 1700: held to 1700"), rel.adjusted);
+  assert.ok(rel.adjusted.some((x: string) => x === "out_dir 'tree' is relative: in a job it is taken under $OUT, as $OUT/tree (job:j000007/tree once the job is sealed)"), rel.adjusted);
+  // The bytes written are held to the room where $OUT is, less a margin, and said.
+  const fs = statfsSync(out);
+  const free = Number(fs.bavail) * Number(fs.bsize);
+  const big = await runPy(TOOL, cwd, { image: "inputs/ok.ad1", out_dir: "tree2", max_bytes: 1024 ** 4 }, undefined, { AGENT_ID: "s1", JOB_ID: "j000007", OUT: out });
+  const bigRes = JSON.parse(big.stdout);
+  if (free < 1024 ** 4) {
+    assert.ok(bigRes.budgets.max_bytes < free && bigRes.budgets.max_bytes > free - 2 * 64 * 1024 ** 2, JSON.stringify(bigRes.budgets));
+    assert.ok(bigRes.adjusted.some((x: string) => /^max_bytes 1099511627776 is more than the \d+ bytes free where \$OUT is, less a margin of 67108864: held to \d+, so the call stops by its budget/.test(x)), bigRes.adjusted);
+  }
+  // Called directly nothing is adjusted: a relative out_dir is under the run directory.
+  const direct = await runPy(TOOL, cwd, { image: "inputs/ok.ad1", out_dir: "work/s1/direct" }, undefined, { AGENT_ID: "s1" });
+  assert.equal(JSON.parse(direct.stdout).adjusted, undefined);
 });
 
 test("a real FTK Imager image reads as dissect.evidence reads it: its items, content, digests and the time keys", async () => {
@@ -437,7 +473,7 @@ test("an item's locator names it in a partial read and in a whole one alike, whe
   const byNumber = await runPy(TOOL, cwd, { image: "inputs/n.ad1", members: [1], out_dir: "work/s1/num" }, undefined, { AGENT_ID: "s1" });
   assert.deepEqual(tsv(join(cwd, "work", "s1", "num", "ad1_extract.tsv")).map((x) => x.path), ["A/B.txt"]);
   const unknown = await runPy(TOOL, cwd, { image: "inputs/n.ad1", members: ["ad1:item=7"], out_dir: "work/s1/none" }, undefined, { AGENT_ID: "s1" });
-  assert.match(JSON.parse(unknown.stdout).errors[0], /no item at ad1:item=7 in this read of the image/);
+  assert.match(JSON.parse(unknown.stdout).errors[0], /no item at ad1:item=7 in this read of the image; the nearest items this read holds are at ad1:item=\d+\. A locator is an item's address as the ad1-items generation's members\.tsv lists it \(catalog_search which=members\) or as a list: true call does, not an item number and not an offset in a segment file/);
 });
 
 test("ad1_extract renames every name a file system cannot hold, keeps a file's children beside it, and a name a sibling took stays taken", async () => {
@@ -569,10 +605,14 @@ test("the item budget and the byte budget stop ad1_extract, keep what it wrote, 
   const base = join(cwd, "work", "s1", "ad1", "two");
   assert.ok(existsSync(join(base, "a.bin.partial")) && !existsSync(join(base, "a.bin")) && !existsSync(join(base, "b.bin")));
   assert.ok(readFileSync(join(base, "a.bin.partial")).length <= 1000 + 512, "what was kept is within a chunk of the budget");
-  for (const bad of [{ max_items: 0 }, { max_bytes: -1 }, { max_seconds: 10 ** 9 }]) {
+  for (const bad of [{ max_items: 0 }, { max_bytes: -1 }, { max_seconds: 1.5 }]) {
     const r = await runPy(TOOL, cwd, { image: "inputs/case.ad1", out_dir: `work/s1/bad${Object.keys(bad)[0]}`, ...bad }, undefined, { AGENT_ID: "s1" });
     assert.equal(r.code, 1, JSON.stringify(bad));
   }
+  // Over the ceiling is held to it, and said.
+  const held = await runPy(TOOL, cwd, { image: "inputs/case.ad1", out_dir: "work/s1/held", max_seconds: 10 ** 9 }, undefined, { AGENT_ID: "s1" });
+  assert.equal(held.code, 0, held.stdout);
+  assert.deepEqual(JSON.parse(held.stdout).adjusted, ["max_seconds 1000000000 is over this tool's ceiling of 1700: held to 1700"]);
 });
 
 test("an item the walk did not reach before a budget stop is not claimed absent", async () => {
@@ -615,7 +655,7 @@ test("what ad1_extract holds while it walks is the depth of the tree, not the nu
   const wrapper = peakRssPrelude() + "import json, subprocess\n" +
     "p, peak = run_peak([sys.executable, sys.argv[1]], input=sys.argv[2], capture_output=True, text=True)\n" +
     "print(json.dumps({'out': p.stdout, 'peak': peak}))\n";
-  const r = spawnSync("python3", ["-c", wrapper, TOOL, JSON.stringify({ image: "inputs/big.ad1" })], { cwd: d, encoding: "utf8", env: { ...process.env, AGENT_ID: "s1" } });
+  const r = spawnSync("python3", ["-c", wrapper, TOOL, JSON.stringify({ image: "inputs/big.ad1", whole: true })], { cwd: d, encoding: "utf8", env: { ...process.env, AGENT_ID: "s1" } });
   const got = JSON.parse(r.stdout) as { out: string; peak: number };
   const res = JSON.parse(got.out);
   assert.deepEqual([res.processing_status, res.items, res.files, res.folders], ["complete", 100100, 100000, 100]);
@@ -629,7 +669,7 @@ test("a locator with a digit that is not a decimal digit is refused with a messa
     const r = await runPy(TOOL, cwd, { image: "inputs/case.ad1", members: [bad] }, undefined, { AGENT_ID: "s1" });
     assert.equal(r.code, 1, bad);
     assert.doesNotMatch(r.stderr, /Traceback/, bad);
-    assert.match(JSON.parse(r.stdout).error, /an item number \(n\) or a locator/, bad);
+    assert.match(JSON.parse(r.stdout).error, /an item number \(n, as a number: 1234\) or a locator/, bad);
   }
 });
 
@@ -765,6 +805,44 @@ test("a zeroed next pointer does not leave a complete, verified answer: the data
   assert.equal(JSON.parse(whole.stdout).processing_status, "complete");
 });
 
+test("the parent folder's address FTK Imager writes after each item's name is accounted for, and a wrong one is left to the unreferenced-data check", async () => {
+  // Nested folders, so the parent fields are not zero (a top-level item's is, and reads as padding): before the reader took them,
+  // every nested item left 8 non-zero bytes "reached by no item" and a whole, verified image came out partial and unverified.
+  const nested = (): Ad1Node[] => [{ name: "C:", folder: true, children: [
+    { name: "Users", folder: true, children: [
+      { name: "bob", folder: true, children: [{ name: "a.txt", content: B("first") }, { name: "b.txt", content: B("second") }] },
+    ] },
+    { name: "top.txt", content: B("third") },
+  ] }];
+  const good = ad1Data(nested());
+  const d = dir("ad1-parent-");
+  writeFileSync(join(d, "good.ad1"), ad1Segments(good.data)[0]);
+  const ok = runRecipe([join(d, "good.ad1")]);
+  assert.equal(ok.cov.status, "complete", ok.cov.errors.join("\n"));
+  assert.equal((ok.cov as Record<string, unknown>).unreferenced_nonzero_bytes, 0);
+  const cwd = runDir();
+  writeFileSync(join(cwd, "inputs", "good.ad1"), ad1Segments(good.data)[0]);
+  const r = await runPy(TOOL, cwd, { image: "inputs/good.ad1" }, undefined, { AGENT_ID: "s1" });
+  const res = JSON.parse(r.stdout);
+  assert.deepEqual([r.code, res.processing_status, res.integrity_status, res.files], [0, "complete", "verified", 3], r.stdout);
+  // One nested item says another folder is its parent: those 8 bytes are not taken as the parent field, so the check names them.
+  const t = nested();
+  const bob = t[0].children![0].children![0];
+  const first = ad1Data(t);
+  const liar = { ...bob.children![0], parentField: first.addr.get(t[0])! };
+  bob.children![0] = liar;
+  const bad = ad1Data(t);
+  const at = bad.addr.get(liar)! + 48 + Buffer.from("a.txt").length;
+  writeFileSync(join(cwd, "inputs", "bad.ad1"), ad1Segments(bad.data)[0]);
+  const b = await runPy(TOOL, cwd, { image: "inputs/bad.ad1", out_dir: "work/s1/bad" }, undefined, { AGENT_ID: "s1" });
+  const bres = JSON.parse(b.stdout);
+  assert.deepEqual([bres.processing_status, bres.integrity_status], ["partial", "unverified"], b.stdout);
+  assert.deepEqual(bres.unreferenced_data.listed.map((g: { from: number; to: number }) => [g.from, g.to]), [[at, at + 8]], "the one wrong parent field, and nothing else");
+  const { cov } = runRecipe([join(cwd, "inputs", "bad.ad1")]);
+  assert.equal(cov.status, "partial");
+  assert.equal((cov as Record<string, unknown>).unreferenced_nonzero_bytes, Buffer.from(bad.data.subarray(at, at + 8)).filter((x) => x !== 0).length);
+});
+
 /** Four file items f0..f3 after `pad` zero bytes, linked f1 -> f2 -> f3 and f0 left without a next pointer (a zeroed one): f1..f3 are lost with no error. */
 function paddedCutImage(pad: number, linked: boolean): Buffer {
   const data = ad1Logical((put) => {
@@ -878,10 +956,12 @@ test("ad1_extract holds what it writes to a ratio of what it read: a chunk seque
   // The default (1000) lets an ordinary image through, and the parameter is bounded.
   const fine = await runPy(TOOL, cwd, { image: "inputs/case.ad1", out_dir: "work/s1/fine" }, undefined, { AGENT_ID: "s1" });
   assert.equal(JSON.parse(fine.stdout).processing_status, "complete");
-  for (const bad of [0, -1, 1_000_001, 1.5, "10", true]) {
+  for (const bad of [0, -1, 1.5, "10", true]) {
     const refused = await runPy(TOOL, cwd, { image: "inputs/zeros.ad1", max_ratio: bad, out_dir: "work/s1/bad" }, undefined, { AGENT_ID: "s1" });
     assert.equal(JSON.parse(refused.stdout).ok, false, String(bad));
   }
+  const over = await runPy(TOOL, cwd, { image: "inputs/case.ad1", max_ratio: 1_000_001, out_dir: "work/s1/over" }, undefined, { AGENT_ID: "s1" });
+  assert.deepEqual(JSON.parse(over.stdout).adjusted, ["max_ratio 1000001 is over this tool's ceiling of 1000000: held to 1000000"]);
 });
 
 /** An image whose second file is 512 MiB of zeros (8,192 small chunks): reading it takes seconds, so a stop can come in the middle of it. */
@@ -1005,8 +1085,8 @@ test("the census catalogues an AD1 input with the base pack's recipe, and names 
   const rows = Object.fromEntries(readFileSync(join(sb, "catalog", "coverage.tsv"), "utf8").trimEnd().split("\n").slice(1).map((l) => { const [p, , status, why] = l.split("\t"); return [p, [status, why]]; }));
   assert.deepEqual(rows["inputs/case.ad1"], ["catalogued", "under catalog/case.ad1/ by computer-forensics-base/ad1-items:complete"]);
   assert.deepEqual(rows["inputs/split.ad1"], ["catalogued", "under catalog/split.ad1/ by computer-forensics-base/ad1-items:complete"], "its second segment is read from beside it");
-  assert.equal(rows["inputs/split.ad2"][0], "not catalogued");
-  assert.match(rows["inputs/split.ad2"][1], /computer-forensics-base\/ad1-items: segment 2 of 2 of an AD1 image: the image is read, and catalogued, from its first segment/);
+  // A further segment is one of the set (the census knows .adN): named, not handed to a recipe.
+  assert.deepEqual(rows["inputs/split.ad2"], ["segment", "a further segment of split.ad1: the set is read, and catalogued, from that one"]);
   assert.equal(tsv(join(sb, "catalog", "case.ad1", "members.tsv")).length, 12);
   assert.match(readFileSync(join(sb, "catalog", "README.md"), "utf8"), /^Summary: .*, 2 AD1 logical image\(s\), /m);
 });

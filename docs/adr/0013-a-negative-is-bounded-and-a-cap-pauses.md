@@ -874,7 +874,13 @@ clears.
   the addition's lock with the store sweep's budget (16 GiB, 30 minutes),
   holding the addition's post, the operator's reply and the hub's round as
   long, and partial for good past it. A pass already recorded is not run
-  again; a failure is run again at the next round.
+  again; a failure is run again at the next round. Since 2026-11-14 the
+  hub's pass is searched in a process of its own
+  (`scripts/reverse-sweep-pass.ts`), as the store sweep's passes are: the
+  hub's loop held the listing of the whole store and the search of every
+  object of the import, and its loop delay grew with the store. What each
+  object holds of each string is kept, so a pass started again after a
+  restart reads only what no pass got to, and writes the same line.
 - **Where the hits go.** To the re-examination of the questions they bear
   on, and nowhere as a hold: each pass's board post says its hits by
   question when it completes (each with the records whose strings it

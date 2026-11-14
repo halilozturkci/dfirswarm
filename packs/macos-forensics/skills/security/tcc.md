@@ -3,6 +3,7 @@ id: security/tcc
 title: TCC privacy permission records
 when: An answer depends on which application was allowed or refused camera, disk, accessibility or other privacy access.
 needs: []
+card: macos_tcc reads one TCC.db per call and never merges the system and user stores; cite the columns the file has. auth_value 0 to 3 is decoded in auth_value_meaning; any other number stays raw and makes the answer partial. last_modified_utc is when the row was last written, not the grant time. managed means policy_id is set. A partial read goes on with after_rowid. Does not show: use of the permission, who approved it, or a store not acquired.
 tools: [macos_tcc]
 requires_host: []
 ---

@@ -3,6 +3,7 @@ id: gaps/coverage-statement
 title: The coverage statement for one question
 when: An answer is a negative or a completeness claim.
 needs: []
+card: Bound one answer in three scopes: intended (the profile), delivered (collection_id {"root": "<collection dir>"} and the census) and examined (your record). failed_target_count null is not determined, never zero; a zero is "none in the rows read". Keep not delivered, not examined, failed to parse and searched without a match apart; mark unallocated, slack and secondary areas searched, skipped or not_applicable. Before a negative write the kind=coverage entry with detection_opportunity, and an acquisition_ask or acquisition_none_why. Never infer why a copy failed. Does not show: that the event did not happen, or that an unexamined source is empty.
 tools: [collection_id, collection_coverage]
 requires_host: []
 ---

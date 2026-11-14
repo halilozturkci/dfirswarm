@@ -275,7 +275,8 @@ test("a run that judged more than its cap withholds the strings after it by thei
   assert.equal(r.cap.status, "partial");
   assert.match(r.cap.stopped_by, /^the cap of \d+ characters judged in one run$/);
   assert.equal(r.cap.strings, r.cap.withheld);
-  assert.match(r.cap.basis, /^all the rows; \d+ string\(s\) still held a secret-shaped text when the answer was checked on its way out and were replaced; judging the strings stopped at the cap of \d+ characters judged in one run: \d+ string\(s\) after it were withheld by their size \(see boundary\)$/);
+  // the strings withheld unjudged by the stop held nothing that was seen: status_basis does not count them as secret-shaped texts
+  assert.match(r.cap.basis, /^all the rows; judging the strings stopped at the cap of \d+ characters judged in one run: \d+ string\(s\) after it were withheld by their size \(see boundary\)$/);
 });
 
 // ---- a carrier defines no name of its own that the one text defines ---------------------------------------------------------------------------------

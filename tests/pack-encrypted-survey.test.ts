@@ -36,7 +36,9 @@ type SurveyRow = {
   windows_overlap?: boolean;
   profiled?: boolean;
   profile_skipped?: string;
-  tail_hex?: string;
+  tail?: { bytes: number; distinct_byte_values: number; entropy_bits_per_byte: number; entropy_ceiling_for_this_length: number };
+  small_profile?: Record<string, number>;
+  small_profile_skipped?: string;
   name_reasons?: string[];
   error?: string;
   rows?: number;
@@ -56,7 +58,7 @@ type Survey = {
   all_files_mtime_hourly: { hour_utc: string; files: number }[];
   candidate_mtime_hourly: { hour_utc: string; files: number }[];
   clock: string;
-  repeated_tails: { tail_hex: string; files: number }[];
+  repeated_tails: { bytes: number; distinct_byte_values: number; files: number }[];
   shared_tail_suffix: { suffix_hex: string; bytes: number; across_files: number; basis: string } | null;
   low_entropy_tail_candidates: { file: string }[];
   note_name_candidates: { file: string }[];
@@ -161,7 +163,9 @@ test("encrypted_survey says what it read, where, and that three windows can over
     ]);
     assert.equal(byName["big.xlsx.locked"].windows_overlap, false);
     assert.equal(byName["small.xlsx.locked"].windows_overlap, true);
-    assert.equal(byName["big.xlsx.locked"].tail_hex, big.subarray(-16).toString("hex"));
+    // The last bytes are measured, not printed: they are where per-file key material is usually kept.
+    assert.deepEqual([byName["big.xlsx.locked"].tail?.bytes, byName["big.xlsx.locked"].tail?.distinct_byte_values], [16, new Set(big.subarray(-16)).size]);
+    assert.equal("tail_hex" in byName["big.xlsx.locked"], false);
     assert.equal(survey.sampling.profiled, 2);
     assert.match(survey.sampling.method, /first .* candidates .* print order/);
   });
@@ -178,18 +182,23 @@ test("encrypted_survey calls a shared trailer an observation pending a reference
     await writeFile(join(ev, "other.pdf.lockd"), Buffer.concat([randomBytes(80_000), randomBytes(8)]));
     const solo = body<Survey>(await tool(SURVEY, cwd, { root: "work/ev", tail_bytes: 8 }));
     assert.equal(solo.shared_tail_suffix, null, "three files do not share one trailer");
-    assert.deepEqual(solo.repeated_tails.map((t) => [t.tail_hex, t.files]), [[trailer.toString("hex"), 2]]);
+    assert.deepEqual(solo.repeated_tails.map((t) => [t.bytes, t.distinct_byte_values, t.files]), [[8, new Set(trailer).size, 2]]);
+    assert.ok(!JSON.stringify(solo).includes(trailer.toString("hex")), "a tail two of three files share is counted and measured, not printed");
     await writeFile(join(ev, "other.pdf.lockd"), Buffer.concat([randomBytes(80_000), Buffer.from([0x33]), trailer]));
-    const out = await tool(SURVEY, cwd, { root: "work/ev", tail_bytes: 8 });
-    const survey = body<Survey>(out);
-    assert.deepEqual(survey.shared_tail_suffix && [survey.shared_tail_suffix.suffix_hex, survey.shared_tail_suffix.basis, survey.shared_tail_suffix.across_files],
+    // With tail_bytes 8 the three tails are one tail: what copies of one file would show. The common suffix is taken over different tails
+    // only (from version 14), so a whole tail is not printed: it is counted and measured.
+    const same = await tool(SURVEY, cwd, { root: "work/ev", tail_bytes: 8 });
+    const one = body<Survey>(same);
+    assert.equal(one.shared_tail_suffix, null, "one tail seen three times is not a suffix shared by different tails");
+    assert.ok(!same.stdout.includes(trailer.toString("hex")));
+    assert.deepEqual(one.repeated_tails.map((t) => t.files), [3]);
+    assert.deepEqual(one.appended_extension_observations, [{ extension: ".lockd", files: 3 }]);
+    // With the default tail the random bytes before the trailer differ, and the common suffix of the three different tails is the trailer.
+    const out = await tool(SURVEY, cwd, { root: "work/ev" });
+    const wide = body<Survey>(out);
+    assert.deepEqual(wide.shared_tail_suffix && [wide.shared_tail_suffix.suffix_hex, wide.shared_tail_suffix.basis, wide.shared_tail_suffix.across_files],
       [trailer.toString("hex"), "observation", 3]);
     assert.doesNotMatch(out.stdout, /family marker|better identifier/);
-    assert.deepEqual(survey.repeated_tails.map((t) => t.files), [3]);
-    assert.deepEqual(survey.appended_extension_observations, [{ extension: ".lockd", files: 3 }]);
-    // With the default tail the random bytes before the trailer differ, and the common suffix is still the trailer.
-    const wide = body<Survey>(await tool(SURVEY, cwd, { root: "work/ev" }));
-    assert.equal(wide.shared_tail_suffix?.suffix_hex, trailer.toString("hex"));
     assert.deepEqual(wide.repeated_tails, []);
   });
 });
@@ -515,5 +524,64 @@ test("a permissions refusal is a read failure too, where the user is not root", 
     } finally {
       await chmod(join(ev, "locked.db.crypt"), 0o600);
     }
+  });
+});
+
+test("the last bytes of a member are measured and never printed, in the answer, the census or a page: an unmasked trailer is the key", async () => {
+  await withCwd(async (cwd) => {
+    const ev = join(cwd, "work", "ev");
+    await mkdir(ev, { recursive: true });
+    // Members of 20 KB whose last 32 bytes are a per-file key kept as it is (the test's own random bytes), and one of them copied.
+    const trailers: Buffer[] = [];
+    for (let i = 0; i < 5; i++) {
+      const trailer = randomBytes(32);
+      trailers.push(trailer);
+      await writeFile(join(ev, `doc${i}.pdf.enc`), Buffer.concat([randomBytes(20_000 + i), trailer]));
+    }
+    await writeFile(join(ev, "copy.pdf.enc"), await readFile(join(ev, "doc0.pdf.enc")));
+    const out = await tool(SURVEY, cwd, { root: "work/ev" });
+    const survey = body<Survey & { scheme_pointers: { tails: Record<string, unknown> } }>(out);
+    const written = spawnSync("grep", ["-rlIa", "", join(cwd, "work", "s1")], { encoding: "utf8" }).stdout.trim().split("\n").filter(Boolean);
+    assert.ok(written.length >= 1, "the census was written");
+    let all = out.stdout;
+    for (const file of written) all += await readFile(file, "utf8");
+    const lower = all.toLowerCase();
+    for (const trailer of trailers) {
+      const hex = trailer.toString("hex");
+      for (let i = 0; i + 16 <= hex.length; i += 2) assert.ok(!lower.includes(hex.slice(i, i + 16)), "8 bytes of a member's last 32 are in the answer or in a file it wrote");
+      assert.ok(!all.includes(trailer.toString("base64").slice(0, 12)));
+    }
+    assert.doesNotMatch(all, /tail_hex/);
+    const rows = survey.candidates.filter((r) => r.profiled);
+    assert.equal(rows.length, 6);
+    for (const r of rows) {
+      assert.equal(r.tail?.bytes, 32);
+      assert.ok(r.tail!.distinct_byte_values >= 16 && r.tail!.entropy_bits_per_byte > 4 && r.tail!.entropy_ceiling_for_this_length === 5, JSON.stringify(r.tail));
+    }
+    // The copied member's tail is seen twice: counted and measured, not printed; and since not every tail is the same, nothing is shared.
+    assert.deepEqual(survey.repeated_tails.map((t) => [t.files, t.bytes]), [[2, 32]]);
+    assert.equal(survey.shared_tail_suffix, null);
+    assert.equal(survey.scheme_pointers.tails.unique_per_file, false);
+  });
+});
+
+test("the small members read whole for their tails are inside read_budget_bytes and counted in bytes_read", async () => {
+  await withCwd(async (cwd) => {
+    const ev = join(cwd, "work", "ev");
+    await mkdir(ev, { recursive: true });
+    for (let i = 0; i < 6; i++) await writeFile(join(ev, `s${i}.png.enc`), randomBytes(3000));
+    type Pointers = { scheme_pointers: { tails: Record<string, number> }; coverage: Record<string, number>; status: string; status_basis: string };
+    const whole = body<Survey & Pointers>(await tool(SURVEY, cwd, { root: "work/ev" }));
+    assert.equal(whole.scheme_pointers.tails.small_members_read, 6);
+    assert.equal(whole.coverage.bytes_read, 18_000, "what was read of the small members is in bytes_read");
+    assert.equal(whole.scheme_pointers.tails.small_members_bytes_read, 18_000);
+    // A budget of 7000 bytes lets two members of 3000 bytes be read; the other four are said, and the answer is partial for it.
+    const tight = body<Survey & Pointers>(await tool(SURVEY, cwd, { root: "work/ev", read_budget_bytes: 7000 }));
+    assert.equal(tight.coverage.bytes_read, 6000);
+    assert.ok(tight.coverage.bytes_read <= 7000);
+    assert.deepEqual([tight.scheme_pointers.tails.small_members_read, tight.scheme_pointers.tails.small_members_not_read_budget], [2, 4]);
+    assert.equal(tight.status, "partial");
+    assert.match(tight.status_basis, /the read budget \(7000 bytes\) was spent: 4 members of 4096 bytes or less were not read for their tails/);
+    assert.equal(tight.candidates.filter((r) => r.small_profile_skipped === "read_budget_spent").length, 4);
   });
 });

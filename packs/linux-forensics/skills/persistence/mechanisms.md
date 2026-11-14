@@ -3,6 +3,7 @@ id: persistence/mechanisms
 title: Persistence examination and bounded coverage
 when: Finding configured execution mechanisms and separating presence from observed execution.
 needs: []
+card: Keep apart: present, effective configuration, activation route, evidence it ran. linux_persistence {"root": "<extracted root>"}: execution is not_attempted without execution_rows, and the effective state is never resolved. linux_triage's persistence family is cronjobs and services only. shell_history and cron_dump corroborate; they prove no run. Does not show: that it ran, or who added it.
 tools: [cron_dump, linux_persistence, linux_triage, shell_history]
 requires_host: []
 ---

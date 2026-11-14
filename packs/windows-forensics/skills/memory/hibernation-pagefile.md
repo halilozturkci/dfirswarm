@@ -3,6 +3,7 @@ id: memory/hibernation-pagefile
 title: Hibernation, pagefile
 when: hiberfil.sys, pagefile.sys, swap.
 needs: [memory/windows]
+card: evtx_carve {"path": "<pagefile.sys>"} and mam_scan {"path": "<pagefile.sys>"} read stored bytes only: a hibernation file is compressed, so a sweep of one covers what happens to be stored readable, and this pack has no decompressor (a conversion through a framework is a separate, recorded step). A pagefile hit is bytes in that file at a file offset: no address, no process mapping, not the log service's memory, and a structure split across pages is not whole. A hibernation file is not automatically the machine before a cleanup: establish when it was written from its header and the power-state records. Name the file a hit came from and give its time as unknown until established.
 tools: [evtx_carve, mam_scan]
 requires_host: [vol]
 ---

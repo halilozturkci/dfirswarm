@@ -45,7 +45,13 @@
   "example": "{\"path\": \"work/extracted/unallocated.bin\", \"start\": 0, \"length\": 2000000, \"max_hits\": 20}",
   "by": "s183901",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 6,
+  "not_for": [
+    {
+      "what": "a single Prefetch file, MAM-compressed or plain",
+      "use": "prefetch_mam"
+    }
+  ],
+  "version": 7,
   "sha256": "5cfc9c17a07ac9754e688feddaa97c2ad4444d25b5d75ba5fe225357ab67c6d9",
   "requires": [],
   "use": {

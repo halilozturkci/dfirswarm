@@ -297,5 +297,74 @@ class CatalogSearchStatus(Case):
             self.pair(run_tool("catalog_search", args, self.dir), "failed")
 
 
+
+SEGMENTS = "the image has 12 segments and 11 of them are not there: what lies in them is not read"
+
+
+class CatalogSearchList(Case):
+    """The list searched has a status of its own (its generation's, or the coverage record beside it), and every answer carries it: a search of
+    every line of a partial list answered `complete`, and 0 matches over 30,315 of an image's 399,836 items was written down as an absence."""
+
+    def member_list(self, status, where="catalog/case.ad1", index=True, coverage=True):
+        cov = {"recipe": "ad1-items", "status": status, "covered": "what was read", "not_covered": "what was not",
+               "errors": [SEGMENTS] if status != "complete" else [], "limits_hit": [], "segments_missing": ["case.ad2"] if status != "complete" else []}
+        for d in ("catalog/gen/g0001", where):
+            self.write(d + "/members.tsv", "n\ttype\tpath\n0\tfile\tC:/Users/a/notes.txt\n")
+            if coverage:
+                self.write(d + "/coverage.json", json.dumps(cov))
+        self.write("catalog/revisions/1/MANIFEST.json", "{}")
+        gen = {"id": "g0001", "recipe": "computer-forensics-base/ad1-items", "target": {"ref": "input:case.ad1"}, "status": status, "coverage": cov, "alias": where}
+        self.write("catalog/revisions/1/index.json", json.dumps({"generations": [gen] if index else []}))
+
+    def test_a_partial_generation_makes_the_answer_partial_by_its_name_and_by_its_id(self):
+        self.member_list("partial")
+        for extra in ({}, {"catalog": "g0001"}, {"catalog": "case.ad1"}):
+            r = run_tool("catalog_search", dict({"pattern": "\\.avi$", "which": "members"}, **extra), self.dir)
+            j = answer(r)
+            self.assertEqual((r.code, j["matched"], j["complete"], j["status"]), (0, 0, False, "partial"), j)
+            self.assertIn("the list searched is partial (generation g0001, computer-forensics-base/ad1-items): " + SEGMENTS, j["status_basis"])
+            self.assertIn("0 matches is not an absence", j["status_basis"])
+            self.assertEqual((j["generation"]["status"], j["generation"]["not_covered"]), ("partial", "what was not"))
+            self.assertIn(SEGMENTS, j["generation"]["why"])
+
+    def test_a_complete_generation_stays_complete_and_carries_what_it_does_not_cover(self):
+        self.member_list("complete")
+        j = answer(run_tool("catalog_search", {"pattern": "notes", "which": "members"}, self.dir))
+        self.assertEqual((j["matched"], j["complete"], j["status"]), (1, True, "complete"))
+        self.assertEqual(j["generation"], {"id": "g0001", "recipe": "computer-forensics-base/ad1-items", "object": "input:case.ad1", "status": "complete",
+                                           "covered": "what was read", "not_covered": "what was not",
+                                           "read_from": ["catalog/revisions/1/index.json", "catalog/case.ad1/coverage.json"]})
+
+    def test_the_record_beside_the_list_is_enough_and_one_that_cannot_be_read_is_not_a_complete_list(self):
+        self.member_list("partial", index=False)
+        j = answer(run_tool("catalog_search", {"pattern": "notes", "which": "members"}, self.dir))
+        self.assertEqual((j["matched"], j["complete"], j["status"], j["generation"]["status"]), (1, False, "partial", "partial"))
+        self.write("catalog/case.ad1/coverage.json", "{")
+        j = answer(run_tool("catalog_search", {"pattern": "notes", "which": "members"}, self.dir))
+        self.assertEqual((j["complete"], j["status"], j["generation"]["status"]), (False, "partial", "unknown"))
+        self.assertIn("whether the list searched is whole is not known", j["status_basis"])
+        os.unlink(self.path("catalog/case.ad1/coverage.json"))
+        os.mkfifo(self.path("catalog/case.ad1/coverage.json"))                # never read, and never waited for
+        r = run_tool("catalog_search", {"pattern": "notes", "which": "members"}, self.dir, timeout=20)
+        j = answer(r)
+        self.assertEqual((r.code, j["status"], j["generation"]["status"]), (0, "partial", "unknown"))
+        self.assertIn("not a regular file", j["generation"]["why"][0])
+
+    def test_no_record_at_all_is_said_and_the_search_of_the_text_is_complete(self):
+        self.member_list("complete", index=False, coverage=False)
+        j = answer(run_tool("catalog_search", {"pattern": "notes", "which": "members"}, self.dir))
+        self.assertEqual((j["complete"], j["status"], j["generation"]), (True, "complete", {"status": "not recorded"}))
+        self.assertIn("Nothing records whether the list itself is whole", j["status_basis"])
+
+    def test_the_refusal_of_a_disks_which_on_a_member_list_names_which_members(self):
+        self.member_list("complete")
+        r = run_tool("catalog_search", {"pattern": "notes"}, self.dir)
+        j = answer(r)
+        self.assertEqual((r.code, j["status"], j["try"], j["which_defaulted"]), (1, "failed", {"which": "members"}, True))
+        self.assertIn('Pass which: "members" to search it', j["error"])
+        j = answer(run_tool("catalog_search", {"pattern": "x", "which": "partitions"}, self.dir))
+        self.assertEqual(j["try"], {"which": "members"})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -22,6 +22,10 @@ function dual(name: string, fn: (v: Variant) => Promise<void>): void {
 
 type Answer = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 
+/** What the HIVE BOUNDS block says when it stops reading a repeating index: past what the hive can hold, or after a run of elements that name keys
+ * the list already named (whichever comes first: the stand-in's hive file is JSON, larger than the regf bytes, so its bound is further). */
+const REPEAT_STOP = /more keys than a \d+-byte hive can hold|named keys it had already named \d+ times in a row/;
+
 const keys = (n: number, prefix = "K"): Node[] => Array.from({ length: n }, (_, i) => ({ name: prefix + String(i).padStart(5, "0") }));
 
 /** Every file a tool wrote for the agent (work/s1/...), with its size. */
@@ -50,7 +54,7 @@ dual("regkv reads a subkey index that repeats one list for what a hive of that s
     assert.ok(out.nodes_listed <= Math.floor(hiveBytes / 76), `${out.nodes_listed} keys listed from a ${hiveBytes}-byte hive`);
     assert.equal(out.status, "partial");
     assert.match(out.status_basis, /problem/);
-    assert.ok(out.problems.some((p: Answer) => /more keys than a \d+-byte hive can hold/.test(p.error)), JSON.stringify(out.problems));
+    assert.ok(out.problems.some((p: Answer) => REPEAT_STOP.test(p.error)), JSON.stringify(out.problems));
     assert.ok(out.problems.some((p: Answer) => /more than once; each is listed once/.test(p.error)), "the repeated elements are said");
     assert.equal(new Set(out.subkeys.map((s: Answer) => s.name)).size, out.subkeys.length, "a key is listed once");
     assert.equal(out.subkeys.length, 500, "every distinct key is listed");
@@ -66,7 +70,7 @@ dual("shellbags reads a BagMRU index that repeats one list for what a hive of th
     assert.ok(out.keys_walked <= Math.floor(hiveBytes / 76) + 1, `${out.keys_walked} keys walked`);
     assert.ok(out.entry_count <= 500 + 1);
     assert.equal(out.status, "partial");
-    assert.ok(out.problems.some((p: Answer) => /more keys than a \d+-byte hive can hold/.test(p.why)), JSON.stringify(out.problems));
+    assert.ok(out.problems.some((p: Answer) => REPEAT_STOP.test(p.why)), JSON.stringify(out.problems));
     assert.ok((await written(cwd)).every((f) => f.bytes < 2_000_000));
   });
 });
@@ -86,7 +90,7 @@ dual("amcache_apps reads an inventory index that repeats one list for what a hiv
     assert.ok(out.entry_count <= Math.floor(hiveBytes / 76), `${out.entry_count} rows from a ${hiveBytes}-byte hive`);
     assert.equal(out.entry_count, 500, "every distinct key is a row, once");
     assert.equal(out.status, "partial");
-    assert.ok(out.problems.some((p: string) => /more keys than a \d+-byte hive can hold/.test(p)), JSON.stringify(out.problems));
+    assert.ok(out.problems.some((p: string) => REPEAT_STOP.test(p)), JSON.stringify(out.problems));
     assert.ok((await written(cwd)).every((f) => f.bytes < 2_000_000));
   });
 });
@@ -141,17 +145,27 @@ test("regkv reads a value list that names one big record again and again for the
     const out = body<Answer>(await tool("regkv", cwd, { hive: "work/h.dat", key: "K" }, env));
     assert.ok(Object.keys(out.values).length * 60_000 <= 4 * hiveBytes + 60_000, `${Object.keys(out.values).length} values of 60 KB from a ${hiveBytes}-byte hive`);
     assert.equal(out.status, "partial");
-    assert.ok(out.problems.some((p: Answer) => /hold more data than a \d+-byte hive can/.test(p.error)), JSON.stringify(out.problems).slice(0, 300));
+    assert.ok(out.problems.some((p: Answer) => /hold more names and data than a \d+-byte hive can/.test(p.error)), JSON.stringify(out.problems).slice(0, 300));
   });
 });
 
-dual("regkv says a big-endian DWORD is not in the answer, instead of returning an empty value as complete", async (v) => {
+dual("regkv reads a big-endian DWORD of four bytes as its number, and one of another size is not read", async (v) => {
+  // regipy returned no data for the type (an empty value, complete); the HIVE BOUNDS block reads four bytes big-endian. A stand-in library is
+  // read through its own iter_values, so only the real one is held to the number.
   await withCwd(async (cwd) => {
     const env = await v.write(cwd, "work/h.dat", { name: "ROOT", children: [{ name: "K", values: [{ name: "Be", type: 5, value: Buffer.from([0x11, 0x22, 0x33, 0x44]) }] }] });
     const out = body<Answer>(await tool("regkv", cwd, { hive: "work/h.dat", key: "K" }, env));
     assert.equal(out.value_types.Be, "REG_DWORD_BIG_ENDIAN");
-    assert.equal(out.status, "partial");
-    assert.ok(out.problems.some((p: Answer) => /REG_DWORD_BIG_ENDIAN, for which regipy returns no data/.test(p.error)), JSON.stringify(out.problems));
+    if (!v.real) return;
+    assert.equal(out.status, "complete", JSON.stringify(out.problems));
+    assert.equal(out.values.Be, 0x11223344);
+    const env2 = await v.write(cwd, "work/h2.dat", { name: "ROOT", children: [{ name: "K", values: [{ name: "Be", type: 5, value: Buffer.from("hunter2-Secret-Value", "utf16le") }] }] });
+    const long = await tool("regkv", cwd, { hive: "work/h2.dat", key: "K" }, env2);
+    const out2 = body<Answer>(long);
+    assert.equal(out2.status, "partial");
+    assert.ok(!("Be" in out2.values), JSON.stringify(out2.values));
+    assert.equal(long.stdout.includes("hunter2"), false, "the bytes of a big-endian DWORD of the wrong size are not printed as text");
+    assert.ok(out2.problems.some((p: Answer) => /a REG_DWORD_BIG_ENDIAN is 4 bytes and this one declares 40/.test(p.error)), JSON.stringify(out2.problems));
   });
 });
 
@@ -167,8 +181,12 @@ dual("regkv and amcache_apps print no byte of a value the library could not deco
     assert.equal(run.stderr, "", "nothing on stderr");
     for (const piece of ["0xd1", "can't decode", "position", "formating", bad.toString("hex"), "d1ffc328"]) assert.equal(run.stdout.includes(piece), false, piece);
     const out = JSON.parse(run.stdout) as Answer;
-    assert.ok(out.library_messages_withheld >= 1, "the message is counted");
-    assert.ok(out.problems.some((p: Answer) => /regipy logged \d+ message/.test(p.error)));
+    // The real library's text decoding (and its log line) is no longer called: the HIVE BOUNDS block gives such a value as its bytes and says so.
+    if (v.real) assert.ok(out.problems.some((p: Answer) => /is not valid UTF-16 text from byte \d+ of its 15: its bytes are given, not text/.test(p.error)), JSON.stringify(out.problems));
+    else {
+      assert.ok(out.library_messages_withheld >= 1, "the message is counted");
+      assert.ok(out.problems.some((p: Answer) => /regipy logged \d+ message/.test(p.error)));
+    }
     assert.match(String(out.values["(default)"] ?? out.values[""] ?? Object.values(out.values)[0]), /^\[withheld/);
     // the same value in an Amcache layout
     const amcacheEnv = await v.write(cwd, "work/Amcache.hve", { name: "ROOT", children: [{ name: "Root", children: [{ name: "InventoryApplicationFile", children: [{ name: "K1", values: [{ name: "Path", type: 1, value: bad }] }] }] }] });
@@ -176,7 +194,7 @@ dual("regkv and amcache_apps print no byte of a value the library could not deco
     assert.equal(am.stderr, "");
     assert.equal(am.stdout.includes("0xd1"), false);
     assert.equal(am.stdout.includes("can't decode"), false);
-    assert.ok(JSON.parse(am.stdout).library_messages_withheld >= 1);
+    if (!v.real) assert.ok(JSON.parse(am.stdout).library_messages_withheld >= 1);
   });
 });
 
@@ -245,12 +263,12 @@ dual("regkv pages its problems: the first 50 are inline, all are in a file the a
 dual("regkv names a missing key with at most 200 of the names that are there, and counts them", async (v) => {
   await withCwd(async (cwd) => {
     const env = await v.write(cwd, "work/h.dat", { name: "ROOT", children: [{ name: "Wide", children: keys(300) }] });
-    const err = failed(await tool("regkv", cwd, { hive: "work/h.dat", key: "Wide\\Nope" }, env));
-    assert.equal(err.error, "key not found");
-    assert.equal((err.subkeys_there as string[]).length, 200);
-    assert.equal(err.subkeys_there_count, 300);
-    assert.equal(err.status, "failed");
-    assert.ok(typeof err.status_basis === "string" && String(err.status_basis).length > 10);
+    const out = body<{ found: boolean; subkeys_there: string[]; subkeys_there_count: number; status: string; status_basis: string }>(await tool("regkv", cwd, { hive: "work/h.dat", key: "Wide\\Nope" }, env));
+    assert.equal(out.found, false);
+    assert.equal(out.subkeys_there.length, 200);
+    assert.equal(out.subkeys_there_count, 300);
+    assert.equal(out.status, "complete", "a key that is not in a clean hive read whole is an answer");
+    assert.ok(typeof out.status_basis === "string" && out.status_basis.length > 10);
   });
 });
 

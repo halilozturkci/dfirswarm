@@ -461,7 +461,65 @@ def open_regular(path):
 
 PAGES = []                 # objects with a hidden temporary file (_tmp) that a stop removes
 
-TOOL = {"name": "ioc_scan", "version": 18}
+HEAD_BYTES = 64                    # the first bytes of the file, kept to say what kind of file it is
+
+# A stream that is a compressed or packed container, by its first bytes: (magic, what it is, how its content is reached). The scan reads
+# the bytes as they are stored, so what the container holds is not searched, and an answer that said "the whole stream was read" over
+# one segment of twelve of a zlib-compressed image was taken for a search of the evidence (the run s5d814f, jobs j000009 and j000019).
+CONTAINERS = (
+    (b"ADSEGMENTEDFILE\x00", "AccessData AD1 logical image", "file content is stored in zlib-compressed chunks (names and metadata are stored as text): write the files out with ad1_extract and scan those"),
+    (b"ADCRYPT", "encrypted AccessData AD1 image", "its content is encrypted: decrypt it, write the files out with ad1_extract and scan those"),
+    (b"EVF\x09\x0d\x0a\xff\x00", "EnCase EWF image (E01)", "its sectors are stored in chunks, compressed unless it was acquired without compression: scan an inode through icat (inode and image) or a file written out of it"),
+    (b"LVF\x09\x0d\x0a\xff\x00", "EnCase EWF logical image (L01)", "its content is stored in chunks, compressed unless it was acquired without compression: scan the files written out of it"),
+    (b"EVF2\x0d\x0a\x81\x00", "EnCase EWF2 image (Ex01)", "its sectors are stored in compressed chunks: scan an inode through icat (inode and image) or a file written out of it"),
+    (b"LEF2\x0d\x0a\x81\x00", "EnCase EWF2 logical image (Lx01)", "its content is stored in compressed chunks: scan the files written out of it"),
+    (b"PK\x03\x04", "ZIP archive", "its members are deflated unless stored: write them out with archive_extract and scan those"),
+    (b"PK\x05\x06", "ZIP archive (empty)", "it has no member"),
+    (b"PK\x07\x08", "ZIP archive (a spanned set)", "its members are deflated unless stored: write them out with archive_extract and scan those"),
+    (b"7z\xbc\xaf\x27\x1c", "7z archive", "its members are compressed: write them out with archive_extract and scan those"),
+    (b"Rar!\x1a\x07", "RAR archive", "its members are compressed unless stored: write them out with archive_extract and scan those"),
+    (b"\x1f\x8b\x08", "gzip stream", "its content is deflated: write it out with archive_extract and scan that"),
+    (b"BZh", "bzip2 stream", "its content is compressed: write it out with archive_extract and scan that"),
+    (b"\xfd7zXZ\x00", "xz stream", "its content is compressed: write it out with archive_extract and scan that"),
+    (b"\x28\xb5\x2f\xfd", "Zstandard stream", "its content is compressed: write it out and scan that"),
+    (b"\x04\x22\x4d\x18", "LZ4 frame", "its content is compressed: write it out and scan that"),
+    (b"MSCF\x00\x00\x00\x00", "Microsoft cabinet", "its members are compressed unless stored: write them out with archive_extract and scan those"),
+)
+
+
+def container_of(head):
+    """None, or what compressed or packed container the stream's first bytes say it is: {format, content_searched: false, how, and
+    for a segmented image which segment of how many}. Told by the magic alone: a file that only begins like one is named all the same,
+    and the answer says the stored bytes were searched and the content was not."""
+    for magic, what, how in CONTAINERS:
+        if not head.startswith(magic):
+            continue
+        if magic == b"BZh" and not (len(head) > 3 and 0x31 <= head[3] <= 0x39):
+            continue
+        found = {"format": what, "content_searched": False, "how": how}
+        if magic.startswith(b"ADSEGMENTEDFILE") and len(head) >= 0x20:
+            number, count = int.from_bytes(head[0x18:0x1c], "little"), int.from_bytes(head[0x1c:0x20], "little")
+            if 1 <= number <= count <= 4096:
+                found["segment"], found["segments"] = number, count
+        elif magic[:3] in (b"EVF", b"LVF") and magic[3:4] == b"\x09" and len(head) >= 11:
+            found["segment"] = int.from_bytes(head[9:11], "little")       # the set's size is not in a segment's header
+        return found
+    return None
+
+
+TOOL = {"name": "ioc_scan", "version": 19}
+# The rules of the note that names this tool (filesystem/scanners), in the answer and in every refusal: a seat that never loaded the note meets them here.
+RULES = [
+    "The scan reads the bytes of the file as they are stored. A file that begins like a compressed or packed container (an AD1 or E01 "
+    "segment, a ZIP, gzip) is answered partial with `container`: write its content out (ad1_extract, archive_extract, icat_extract) and "
+    "scan that; a needle not found in stored bytes is not shown to be absent from the content.",
+    "Read status before the counts: partial at the clock gives next_start, and the same call with start: <next_start> goes on. Counts "
+    "are of scanned_start to scanned_end, in these encodings (as given and UTF-16LE), case-sensitive.",
+    "Read the whole result (all_results), not the inline page; cite a hit by file and offset.",
+    "Context bytes are not returned: write_values: true, in a job run as secret output, writes them to a file. A needle is recorded in "
+    "the trace: never put a secret in one.",
+]
+
 CHUNK_DEFAULT = 8 * 1024 * 1024
 CHUNK_MIN, CHUNK_MAX = 16, 256 * 1024 * 1024
 CONTEXT_MAX = 65536
@@ -841,7 +899,7 @@ class Locators:
 
 
 def fail(message, **extra):
-    print_answer({"error": message, "status": "failed", "status_basis": "the tool stopped with an error: %s" % message, "tool": TOOL, **extra})
+    print_answer({"error": message, "status": "failed", "status_basis": "the tool stopped with an error: %s" % message, "tool": TOOL, "rules": RULES, **extra})
     sys.exit(1)
 
 
@@ -1066,6 +1124,7 @@ def main():
         "hits": locators.page,
         **page,
         "secret_values": secret.summary(),
+        "rules": RULES,
     }
     if stopped or stopped_short:
         result["stopped"] = stopped or stopped_short
@@ -1079,6 +1138,28 @@ def main():
         result["status"] = "partial"
         result["complete"] = False
         result["status_basis"] += "; the values file stopped at its cap (secret_values.stopped_at_offset), the locators did not"
+    # The file's own first bytes, whatever range was asked for: a compressed or packed container is searched as it is stored (the same table,
+    # reading and words as chunk_needles; tests/pack-base-container-notice.test.ts holds the two texts equal).
+    try:
+        with open_regular(path) as fh:
+            container = container_of(fh.read(HEAD_BYTES))
+    except OSError:
+        container = None
+    answer = result
+    if container is not None:
+        result["status"] = "partial"
+        result["complete"] = False
+    if container is not None:
+        # The stored bytes were searched, the content was not: said first, in place of "the whole stream was read", which is true of the file
+        # and was read as a statement about what it holds.
+        which = ("segment %d of %d of " % (container["segment"], container["segments"]) if "segments" in container else
+                 "segment %d of " % container["segment"] if "segment" in container else "") + ("an " if container["format"].startswith(("A", "E", "e", "xz", "LZ4")) else "a ") + container["format"]
+        part = ("; it is one segment of a set, and the other %d were not read at all" % (container["segments"] - 1) if container.get("segments", 1) > 1 else
+                "; it is one segment of a set, and the others were not read at all" if "segment" in container and "segments" not in container else "")
+        answer["container"] = {**container, "what": which}
+        answer["status_basis"] = ("the stream is %s%s. Its content is compressed or packed and was not searched: the bytes were scanned as they are stored, so a count here is of the stored bytes alone, "
+                                  "and a needle that was not found is not shown to be absent from the content (%s). Of the stored bytes: %s"
+                                  % (which, part, container["how"], answer["status_basis"]))
     if unique_only and locators.hidden:
         result["repeats_hidden_inline"] = locators.hidden
         result["repeats_note"] = "occurrences whose context repeats one already listed are not in the inline page; every one is in all_results"

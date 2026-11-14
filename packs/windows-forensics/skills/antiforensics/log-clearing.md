@@ -3,6 +3,7 @@ id: antiforensics/log-clearing
 title: Cleared logs
 when: Empty or cleared log; missing snapshots.
 needs: [antiforensics/traces]
+card: evtx_query {"path": "<log>.evtx", "event_ids": [1102, 104]}: a clearing record gives its subject and time, not what was removed. An empty channel is not a cleared one: read chunks_read against chunks_declared, highest_record_id_read against next_record_number_declared, and first and last timestamp in result_file. An EventRecordID gap is absent records, not a count. vss_stores {"image": "<raw>", "offset": 1048576} (offset in bytes): status failed is a failed enumeration; zero stores at exit 0 is none found at this offset, not proof none existed. Does not show: what was lost, or who did it.
 tools: [evtx_query, evtx_carve, regkv, vss_stores]
 requires_host: []
 ---

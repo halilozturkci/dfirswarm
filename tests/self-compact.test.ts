@@ -27,7 +27,7 @@ import {
   specsFromEnv,
   validateSpecs,
 } from "../extensions/context-ceiling.ts";
-import { editAfterLastUsage, handoffHeader, HANDOFF_TYPE, latestAssistantUsage, nowPrompt, recoverState, renderTemplate, STATE_TYPE } from "../extensions/self-compact.ts";
+import { editAfterLastUsage, handoffHeader, HANDOFF_HEADER_MAX, HANDOFF_TYPE, latestAssistantUsage, nowPrompt, recoverState, renderTemplate, STATE_TYPE } from "../extensions/self-compact.ts";
 import { agentDonePath, EVENTS_REL, initSandbox, SENTINEL_REL, TOOL_RESERVED_NAMES } from "../extensions/protocol.ts";
 import { normalizeShellCommand, repeatHintMinMs, repeatHintText, REPEAT_HINT_MIN_MS } from "../extensions/agent-swarm.ts";
 
@@ -77,7 +77,9 @@ test("defaults resolve to 40 / 50 / 60 percent of the ceiling with room to the w
   const grok = resolveThresholds(DEFAULT_SPECS, "azure-foundry/grok-4.6", 500_000, { fromDefaults: true });
   assert.ok(grok.ok && grok.thresholds.compactTokens === 120_000, "every grok call stays in the cheap tier");
   const big = resolveThresholds(DEFAULT_SPECS, "deepseek/deepseek-v4-pro", 1_000_000, { fromDefaults: true });
-  assert.ok(big.ok && big.thresholds.compactTokens === 180_000);
+  // A million-token model: the hand-off (warning) line at 200k, the hard line at 240k, so a seat has about 123k to work in
+  // after a 77k hand-off, not 73k (41 to 138 compactions a run at the old 150k line).
+  assert.ok(big.ok && big.thresholds.warnTokens === 200_000 && big.thresholds.compactTokens === 240_000, JSON.stringify(big));
 });
 
 test("a default compact line raised to an explicit warning or notice line lands above it, so the warning still fires first", () => {
@@ -484,4 +486,19 @@ test("Pi loader: a long command over the evidence, in a run with tool jobs, is t
       else process.env[k] = v;
     }
   }
+});
+
+test("a hand-off's header is at most 2,000 characters beside the note and the skills line, whatever the registers hold", () => {
+  const leads = ["Leads: 40 open, 12 yours.", `Yours: ${Array.from({ length: 60 }, (_, i) => `L-${i} (working; a long title that says what the lead is about, number ${i})`).join("; ")}`, `Blocked on you: ${"L-900 waits for your reading of job j000123; ".repeat(40)}`, "Finish: not ready (31, 9 of them yours): a list of everything that holds it"].join("\n");
+  const skills = `Rules of the tools you have run: ${"x".repeat(1500)}`;
+  const facts = { name: "n", doing: "d", claims: Array.from({ length: 80 }, (_, i) => `work/a/file-${i}.md`), unread: { main: 3 }, ledgerTotal: 400, ledgerMine: 90, sentinel: false, spentUsd: 1, capUsd: 6, leads, skills, capHit: "c".repeat(400), forged: "f".repeat(900) };
+  const h = handoffHeader("s1", 3, facts, true, "threshold");
+  assert.ok(h.length - skills.length - 1 <= HANDOFF_HEADER_MAX, `${h.length - skills.length - 1} characters beside the skills line`);
+  assert.ok(h.includes(skills), "the skills line is whole");
+  assert.match(h, /The lead register now[^\n]*\nLeads: 40 open, 12 yours\./);
+  assert.match(h, /80 claims, claims lists them/);
+  assert.ok(h.endsWith(":\n---"));
+  // A small register is carried whole.
+  const small = handoffHeader("s1", 3, { ...facts, claims: ["work/a.md"], capHit: undefined, forged: undefined, leads: "Leads: 2 open, 1 yours.\nYours: L-1 (working)\nFinish: READY by the registers" }, true, "threshold");
+  assert.match(small, /Yours: L-1 \(working\)\nFinish: READY by the registers; finish status lists what holds it\./);
 });

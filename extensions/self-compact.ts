@@ -155,6 +155,8 @@ export type HandoffFacts = {
    * which to load again if it still needs them.
    */
   skills?: string;
+  /** The facts could not be read (the hub unreachable): the header says unknown, never zeros or absent. */
+  unknown?: boolean;
   /**
    * The rules that change during a run and that only the forced prompt used to
    * carry, so that the run a hand-off starts has them: the instruction that
@@ -169,11 +171,32 @@ export type HandoffFacts = {
   stopping?: boolean;
 };
 
+/** How long a hand-off waits for the hub's facts before it is sent with them marked unknown. */
+export const HANDOFF_FACTS_MS = 4000;
+
+/**
+ * The hub's facts for a hand-off, or "unknown" when the hub fails or does not answer within `ms`: the note does not wait
+ * for the hub (hand-offs came 2 to 4.5 minutes after the compaction in four runs, and the watchdog told the seat it had
+ * ended its turn), and a header with unknown facts says so instead of zeros (the run s082123).
+ */
+export async function factsWithin(read: () => Promise<HandoffFacts>, ms: number): Promise<HandoffFacts> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([read(), new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new Error("late")), ms)))]);
+  } catch {
+    return { claims: [], unread: {}, ledgerTotal: 0, ledgerMine: 0, sentinel: false, spentUsd: 0, unknown: true };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export type SelfCompactDeps = {
   agentId: () => string;
   /** One trace line; the extension's own `logEvent`, so attribution and the collector are the same. */
   trace: (cwd: string, tool: string, args: Record<string, unknown>, result: unknown) => Promise<void>;
   handoffFacts: (cwd: string, agentId: string) => Promise<HandoffFacts>;
+  /** How long the hand-off waits for those facts before it goes without them (HANDOFF_FACTS_MS). */
+  handoffFactsMs?: number;
   /** Where the four prompt files live (the repo's `prompts/`). */
   promptsDir: string;
   /** An operator-supplied summary prompt file (SWARM_COMPACT_PROMPT), replacing `compaction-summary.md`. */
@@ -426,9 +449,41 @@ export function nowPrompt(saved?: string): string {
 }
 
 /** The header the harness puts in front of the returned note. */
+/** How much of the lead register a hand-off carries. */
+export const HANDOFF_LEADS_MAX = 2000;
+
+/**
+ * The lead register for a hand-off: what is the seat's own (its leads, what is blocked on it, the jobs that wait for its
+ * reading, its stuck jobs), the questions nobody holds, and the finish as a count. Not the other seats' backlog: a
+ * hand-off of the run s01a4f4 named 76 jobs of other seats and ten leads the seat did not hold (17,486 characters),
+ * and one of s5d814f was 38 MB. Bounded at HANDOFF_LEADS_MAX characters.
+ */
+export function handoffLeads(digest: string, max: number = HANDOFF_LEADS_MAX): string {
+  const keep = /^(Leads:|Yours:|Blocked on you:|Awaiting your interpretation:|Questions nobody holds|Your running jobs|Found but not answered|Seats working:)/;
+  const out: string[] = [];
+  for (const line of digest.split("\n")) {
+    if (keep.test(line)) out.push(line.length > 600 ? `${line.slice(0, 560)}\u2026 (cut: leads gives it whole)` : line);
+    else if (line.startsWith("Finish: ")) {
+      const m = /^Finish: (READY by the registers|not ready \(\d+(?:, \d+ of them yours)?\))/.exec(line);
+      out.push(`${m ? `Finish: ${m[1]}` : "Finish: see finish status"}; finish status lists what holds it.`);
+    }
+  }
+  const text = out.join("\n");
+  return text.length > max ? `${text.slice(0, Math.max(0, max - 40))}\u2026 (cut: leads gives it whole)` : text;
+}
+
+/**
+ * The whole of a hand-off's header but the note and the skills line: 2,000 characters. Hand-offs of eight runs carried 5,000
+ * to 13,000 characters beside the note, most of it other seats' work and tool lists, into a context that had just been
+ * emptied. The skills line is apart (it is the rules of the tools the seat has run, which a compaction would otherwise lose).
+ */
+export const HANDOFF_HEADER_MAX = 2000;
+
+const cutTo = (text: string, max: number, where: string): string => (text.length > max ? `${text.slice(0, Math.max(0, max - where.length - 9))}\u2026 (cut: ${where})` : text);
+
 export function handoffHeader(agentId: string, cycle: number, facts: HandoffFacts, hadNote: boolean, reason: string): string {
   const who = facts.name ? `you are ${agentId} "${facts.name}"${facts.doing ? ` (${facts.doing})` : ""}` : `you are ${agentId}; you have not named yourself yet (call name)`;
-  const claims = facts.claims.length ? facts.claims.join(", ") : "none";
+  const claims = facts.claims.length ? cutTo(facts.claims.join(", "), 240, `${facts.claims.length} claims, claims lists them`) : "none";
   const unreadEntries = Object.entries(facts.unread).filter(([, n]) => n > 0);
   const unread = unreadEntries.length ? `${unreadEntries.map(([thread, n]) => `${n} in ${thread}`).join(", ")}. Call inbox before acting.` : "none.";
   const sentinel = facts.sentinel ? "PRESENT: the swarm is over, call done now" : "absent";
@@ -436,13 +491,12 @@ export function handoffHeader(agentId: string, cycle: number, facts: HandoffFact
   const lines = [
     `[self-compact · handoff] cycle ${cycle} · ${who}.`,
     `Your context was just compacted (${reason}). SWARM.md is unchanged; re-read it only if the summary above leaves the goal unclear.`,
-    `Live claims: ${claims}.`,
-    `Unread posts: ${unread}`,
-    `Ledger: ${facts.ledgerTotal} entries, ${facts.ledgerMine} yours. Sentinel: ${sentinel}. Spend: ${spend}.`,
-    ...(facts.leads ? [`The lead register now (your leads are yours: go on with them, or release them):\n${facts.leads}`] : []),
-    ...(facts.skills ? [facts.skills] : []),
+    ...(facts.unknown
+      ? ["Live claims, unread posts, the ledger, the sentinel and spend: unknown (the hub could not be reached when this was written). Call inbox and check done/SWARM_DONE before acting."]
+      : [`Live claims: ${claims}.`, `Unread posts: ${unread}`, `Ledger: ${facts.ledgerTotal} entries, ${facts.ledgerMine} yours. Sentinel: ${sentinel}. Spend: ${spend}.`]),
+    // The cap rule is an order and is never cut: the lead register gives way to it.
     ...(facts.capHit ? [facts.capHit] : []),
-    ...(facts.forged ? [facts.forged] : []),
+    ...(facts.forged ? [cutTo(facts.forged, 240, "tools lists them")] : []),
   ];
   // On run 6 all four agents answered this message, a few tool calls later,
   // with a status update to "the user" and ended their turns; three sat idle
@@ -454,7 +508,14 @@ export function handoffHeader(agentId: string, cycle: number, facts: HandoffFact
       ? "This message is the harness, not a person: do not answer it with a status or a summary. The swarm is ending, as the lines above say: do what they say and start nothing new."
       : "This message is the harness, not a person: do not answer it with a status or a summary, and do not end your turn. Work on until SWARM.md's definition of done is met; when you are waiting on a peer, call wait and keep it open, because a turn that ends is not waiting and nothing prompts you again.",
   );
-  lines.push(hadNote ? "Your note follows verbatim; continue from its NEXT ACTION and never restart work it marks as done:\n---" : "No note was saved before this compaction (it was Pi's own recovery, not a hand-off). Read the summary above, call inbox, then continue.");
+  const last = hadNote ? "Your note follows verbatim; continue from its NEXT ACTION and never restart work it marks as done:\n---" : "No note was saved before this compaction (it was Pi's own recovery, not a hand-off). Read the summary above, call inbox, then continue.";
+  // The lead register takes what the rest leaves of HANDOFF_HEADER_MAX; the skills line is counted apart.
+  const LEADS_HEAD = "The lead register now (your leads are yours: go on with them, or release them; leads and finish status give the rest):\n";
+  const used = [...lines, last].reduce((a, l) => a + l.length + 1, 0);
+  const room = HANDOFF_HEADER_MAX - used - LEADS_HEAD.length - 1;
+  const leads = facts.leads && room >= 120 ? [`${LEADS_HEAD}${handoffLeads(facts.leads, Math.min(HANDOFF_LEADS_MAX, room))}`] : facts.leads ? ["The lead register: call leads (no room for it here)."] : [];
+  const tail = lines.pop() as string;
+  lines.push(...leads, ...(facts.skills ? [facts.skills] : []), tail, last);
   return lines.join("\n");
 }
 
@@ -760,12 +821,7 @@ export function registerSelfCompact(pi: ExtensionAPI, deps: SelfCompactDeps): Se
       }
       return;
     }
-    let facts: HandoffFacts;
-    try {
-      facts = await deps.handoffFacts(ctx.cwd, agentId());
-    } catch {
-      facts = { claims: [], unread: {}, ledgerTotal: 0, ledgerMine: 0, sentinel: false, spentUsd: 0 };
-    }
+    const facts = await factsWithin(() => deps.handoffFacts(ctx.cwd, agentId()), deps.handoffFactsMs ?? HANDOFF_FACTS_MS);
     const header = handoffHeader(agentId(), R.state.cycle, facts, hadNote, reason);
     const content = hadNote && h ? `${header}\n${h.note}` : header;
     const details = { id: h?.id, cycle: R.state.cycle, note: hadNote ? h?.note : undefined, reason, facts };
@@ -896,9 +952,9 @@ export function registerSelfCompact(pi: ExtensionAPI, deps: SelfCompactDeps): Se
         const keep = keepRecent(ctx);
         return refuse(`nothing to compact yet: Pi keeps the newest ${fmt(keep)} tokens untouched and this session does not reach past them (context ${R.usage.tokens === null ? "?" : fmt(R.usage.tokens)} tokens, ${fmtPct(R.usage.percent)}). No note was saved and nothing is blocked. Keep working and call ${SELF_COMPACT_TOOL} later.`);
       }
-      if (existing && existing.note.trim() !== raw.trim()) {
-        return refuse(`a note is already saved (${existing.note.length} chars). Retry ${SELF_COMPACT_TOOL} with that saved note verbatim instead of a new one.`);
-      }
+      // A second, different note while one is saved: the saved one stands and the hand-off goes on with it. Refusing it
+      // cost a turn each time and asked the seat to repeat 9,000 characters verbatim (13 such refusals in the runs).
+      const keptEarlier = Boolean(existing && existing.note.trim() !== raw.trim());
       const note = existing ? existing.note : raw;
       R.state.handoff = { id: existing?.id ?? randomUUID(), note, status: "pending", attempts: 0, savedAt: Date.now() };
       R.lastCompactionError = undefined;
@@ -914,7 +970,7 @@ export function registerSelfCompact(pi: ExtensionAPI, deps: SelfCompactDeps): Se
       });
       const at = R.usage.tokens === null ? "unknown usage" : `${fmt(R.usage.tokens)} tokens (${fmtPct(R.usage.percent)}), level ${R.level}`;
       return {
-        content: [{ type: "text" as const, text: `Note saved (${note.length} chars) at ${at}. Every other tool is blocked until compaction succeeds. Stop now: compaction runs when this turn ends and your note will be returned verbatim.` }],
+        content: [{ type: "text" as const, text: `${keptEarlier ? `The note you saved earlier (${note.length} chars) stands and is the one that will be returned; this second one was not taken.` : `Note saved (${note.length} chars) at ${at}.`} Every other tool is blocked until compaction succeeds. Stop now: compaction runs when this turn ends and your note will be returned verbatim.` }],
         details: { handoffId: R.state.handoff.id, noteChars: note.length, cycle: R.state.cycle + 1, usedTokens: R.usage.tokens, usedPercent: R.usage.percent, level: R.level },
         terminate: true as const,
       };

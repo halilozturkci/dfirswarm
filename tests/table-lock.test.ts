@@ -373,3 +373,38 @@ test("a heartbeat tick that was in flight when the lock was taken over leaves on
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("calls of one process take the lock in the order they asked and do not time out behind each other", async () => {
+  // In a VM run the hub is the only writer. With the lock polled on disk, a call lost the poll to its own process's
+  // other calls for ten seconds and failed (216 such failures in one run). The wait for another process's lock is
+  // shortened here to less than one holder's time: no call of this process may fail on it.
+  const { root } = await sandbox();
+  const saved = { ...tableLockTiming };
+  try {
+    tableLockTiming.waitMs = 150;
+    const order: number[] = [];
+    const calls = Array.from({ length: 12 }, (_, i) =>
+      withTableLock(root, async () => {
+        order.push(i);
+        await sleep(60);
+        return i;
+      }),
+    );
+    assert.deepEqual(await Promise.all(calls), Array.from({ length: 12 }, (_, i) => i));
+    assert.deepEqual(order, Array.from({ length: 12 }, (_, i) => i), "in the order they asked");
+    // A call that throws passes the lock on.
+    await assert.rejects(withTableLock(root, async () => { throw new Error("boom"); }), /boom/);
+    assert.equal(await withTableLock(root, async () => "after"), "after");
+    // A call that gives up its place in the line does not stop the line.
+    tableLockTiming.queueMs = 80;
+    const slow = withTableLock(root, async () => { await sleep(300); return "slow"; });
+    const quitter = withTableLock(root, async () => "never");
+    const patient = (async () => { tableLockTiming.queueMs = 5000; return withTableLock(root, async () => "patient"); })();
+    await assert.rejects(quitter, /Timed out waiting for locks\/\.table\.lock \(1 call\(s\) of this process were ahead/);
+    assert.equal(await slow, "slow");
+    assert.equal(await patient, "patient");
+  } finally {
+    Object.assign(tableLockTiming, saved);
+    await rm(root, { recursive: true, force: true });
+  }
+});

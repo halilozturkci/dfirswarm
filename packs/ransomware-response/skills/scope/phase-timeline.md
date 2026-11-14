@@ -5,6 +5,7 @@ when: You order the incident's phases, or must say when it began and ended.
 needs: []
 tools: [ransomware_scope_report]
 requires_host: []
+card: ransomware_scope_report ({"timelines": [{"host": "<h>", "file": "<events.jsonl>"}]}, events {host, time, kind}, time in UTC ending in Z) gives each host's first and last event given: not the phases' start and end, and a host without a census is unknown. Keep first and last observed activity apart from the real start and end, and each original timestamp with its zone, clock offset and precision. Does not show: the start of the compromise, that the first encrypted asset was the first compromised, or the dwell time.
 ---
 
 Use only if you order the incident's phases or must say when it began or ended. Not for the first-hour decisions (`scope/first-hour`).

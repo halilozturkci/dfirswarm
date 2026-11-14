@@ -3,6 +3,7 @@ id: elf/structure
 title: An ELF file and the loader's view
 when: The sample is a Linux or BSD executable, shared object or core file.
 needs: [triage/quarantine]
+card: elf_directories ({"path": "<sample>"}) has the tables program_headers, dynamic, dynsym, symtab and notes; a table longer than limit is whole in the file all_results names, and coverage lists what it did not read. Read status, problems and coverage in the pe_info answer first. The loader acts on program headers; section_headers_absent true makes stripped null: not determined. An empty needed_libraries with dynamic.source null is not proof of static linking. Never run ldd on an untrusted file. A withheld path is in withheld_fields with its file_offset: cite the offset. Does not show: behaviour; a library name is not observed use.
 tools: [pe_info, entropy_map, elf_directories]
 requires_host: [readelf]
 ---

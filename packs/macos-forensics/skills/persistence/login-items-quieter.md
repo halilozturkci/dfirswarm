@@ -3,6 +3,7 @@ id: persistence/login-items-quieter
 title: Login items, background items and the quieter routes
 when: A sweep reaches login items, cron, profiles, extensions or privacy permissions.
 needs: []
+card: macos_login_items resolves .btm keyed archives into items (plist_read shows only their structure), state fields raw and a bookmark by length and magic. A registration is not execution, and what System Settings shows now is not a historical inventory. macos_tcc reads one TCC.db per call: an Accessibility row is not root, and a row's modified time is not the grant time. Does not show: that an item ran, or that a profile or extension is foreign.
 tools: [plist_read, macos_login_items, macos_tcc]
 requires_host: []
 ---

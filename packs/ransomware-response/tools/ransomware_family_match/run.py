@@ -624,7 +624,10 @@ install_signal_handlers(lambda signum: interrupted_answer(signum))
 # pipe wrote can be cut. At the cap the tool stops reading, ends the holder (reap_orphans, settle) and lets the pipes go: PIPE_CUT["cut"]
 # counts the calls cut that way, process_notes() says so, and process_apply turns a complete answer partial. The bytes kept are the ones
 # read, not a whole stream: a caller that parses the output sees the program's output and at most 1 MiB of what a leftover wrote. While the
-# program is still alive nothing is capped here (a program's own output is its caller's to bound); the timing is unchanged.
+# program runs each stream has a running cap too (STDOUT_CAP 64 MiB, STDERR_CAP 8 MiB with its head and last STDERR_TAIL 1 MiB kept, or the
+# caller's `caps`): past it the program is ended on the deadline's own path (kill_tree, its tree only), the stream comes back cut
+# (Output.cut, output_cut()), OUTPUT_CUT counts the call and process_apply turns a complete answer partial; a caller that parses a cut
+# output says so and never takes it for a whole one.
 import select as _select
 import selectors as _selectors
 import time
@@ -1444,11 +1447,12 @@ def process_verdict():
 def process_apply(answer):
     """Put process_verdict() into `answer` as answer["program_group"] and, when a program left a process behind or that cannot be ruled out,
     turn a complete answer into a partial one (status "partial", the ok and complete flags that are there false, a sentence in status_basis;
-    a call of communicate_bounded that was cut at POST_EXIT_BYTES counts, PIPE_CUT):
-    what a program wrote while the tool read it is not a complete result. A carrier calls it once where it prints its answer. Returns `answer`."""
+    a call of communicate_bounded that was cut at POST_EXIT_BYTES counts, PIPE_CUT, and so does one that ended a program whose output passed
+    its running cap, OUTPUT_CUT): what a program wrote while the tool read it, or what it printed past a cap, is not a complete result. A
+    carrier calls it once where it prints its answer. Returns `answer`."""
     verdict = process_verdict()
     answer["program_group"] = verdict
-    if (verdict["left_behind"] > 0 or verdict["unproven"] or PIPE_CUT["cut"]) and answer.get("status") == "complete":
+    if (verdict["left_behind"] > 0 or verdict["unproven"] or PIPE_CUT["cut"] or OUTPUT_CUT["cut"]) and answer.get("status") == "complete":
         answer["status"] = "partial"
         for flag in ("ok", "complete"):
             if flag in answer:
@@ -1456,6 +1460,8 @@ def process_apply(answer):
         if verdict["left_behind"] > 0:
             sentence = "a program left %d process%s running after it ended; the tool ended them, and what they wrote before that is in the files named here" % (
                 verdict["left_behind"], "" if verdict["left_behind"] == 1 else "es")
+        elif OUTPUT_CUT["cut"]:
+            sentence = "a program's output was not read whole: %s" % OUTPUT_CUT["last"]
         elif PIPE_CUT["cut"]:
             sentence = "a process that held a program's pipe after it ended went on writing; the tool read no more than %d bytes of it and let the pipe go" % POST_EXIT_BYTES
         else:
@@ -1464,22 +1470,57 @@ def process_apply(answer):
         answer["status_basis"] = "%s; %s" % (basis, sentence) if isinstance(basis, str) and basis else sentence
     return answer
 
-
 PIPE_GRACE = 1.0    # seconds the pipes of a program that has ended are given to reach end of file
 POST_EXIT_BYTES = 1 << 20    # the most bytes (both pipes together) read from the pipes of a program that has ended
 PIPE_CUT = {"cut": 0}        # how many calls stopped reading at POST_EXIT_BYTES because a process still held the pipes and went on writing
+STDOUT_CAP = 64 << 20        # the most bytes of standard output one call of communicate_bounded keeps; past it the program is ended and the output is cut
+STDERR_CAP = 8 << 20         # the most bytes of standard error one call reads before it ends the program; it keeps the head and the last STDERR_TAIL bytes
+STDERR_TAIL = 1 << 20        # the tail of standard error kept once it passes STDERR_CAP (a program's last words are at its end)
+OUTPUT_CUT = {"cut": 0, "last": None}    # how many calls cut a stream at its running cap, and the sentence of the last one
 
 
-def communicate_bounded(proc, seconds, input=None):
-    """(stdout bytes, stderr bytes, timed out) for a program started with pipes, in bytes. At `seconds` the program and what it started
-    are killed (timed out). A program that has ended while something it started still holds its pipes (a daemon, a helper that
-    inherited them) does not hold the tool: from the moment the program has ended (or was killed) the pipes are given PIPE_GRACE seconds
-    and POST_EXIT_BYTES bytes, whichever is used up first; what the program wrote is kept, what the tool lost is killed (reap_orphans,
-    settle), and the pipes are let go. A cut at the byte cap is counted in PIPE_CUT and noted (process_notes()); the return shape is the
-    same. The pipes are read here and by nothing else (not by Popen.communicate), so letting them go is safe. `input` is written while
-    the program runs and is dropped once it has ended."""
+class Output(bytes):
+    """What communicate_bounded kept of one stream: the bytes, and `cut`, None when the stream was read whole, or a sentence saying it was
+    not (the program printed past the stream's cap and was ended there). A caller that parses the output reads `cut` first: a cut output
+    is never a whole one."""
+    cut = None
+
+
+def output_cut(*outputs):
+    """The sentence of the first of `outputs` (values communicate_bounded or preflight returned) that was cut at its cap; None when each was
+    read whole."""
+    for out in outputs:
+        text = getattr(out, "cut", None)
+        if text:
+            return text
+    return None
+
+
+def _output(data, cut):
+    out = Output(data)
+    out.cut = cut
+    return out
+
+
+def communicate_bounded(proc, seconds, input=None, caps=None):
+    """(stdout bytes, stderr bytes, timed out) for a program started with pipes, in bytes (Output: bytes with a `cut` sentence or None). At
+    `seconds` the program and what it started are killed (timed out). What the tool holds is capped while the program runs: `caps` is
+    (stdout cap, stderr cap), STDOUT_CAP and STDERR_CAP when it is None. Standard output is kept to its cap; standard error keeps its head and
+    its last STDERR_TAIL bytes (at most half its cap). When either stream passes its cap the program and what it started are ended (kill_tree,
+    the deadline's own path: its tree, nothing else), what was kept is returned with `cut` set on that stream, the call is counted in
+    OUTPUT_CUT and said in process_notes(), and process_apply turns a complete answer partial. A program that has ended while something it
+    started still holds its pipes (a daemon, a helper that inherited them) does not hold the tool: from the moment the program has ended (or
+    was killed) the pipes are given PIPE_GRACE seconds and POST_EXIT_BYTES bytes, whichever is used up first; what the program wrote is kept,
+    what the tool lost is killed (reap_orphans, settle), and the pipes are let go. A cut at the byte cap is counted in PIPE_CUT and noted
+    (process_notes()); the return shape is the same. The pipes are read here and by nothing else (not by Popen.communicate), so letting them
+    go is safe. `input` is written while the program runs and is dropped once it has ended."""
     deadline = time.monotonic() + max(0.1, seconds)
-    bufs = (bytearray(), bytearray())
+    out_cap, err_cap = (STDOUT_CAP, STDERR_CAP) if caps is None else (max(0, int(caps[0])), max(0, int(caps[1])))
+    tail_keep = min(STDERR_TAIL, err_cap // 2)
+    bufs = (bytearray(), bytearray())       # standard output; the head of standard error
+    tail = bytearray()                      # the last tail_keep bytes of standard error read past its head
+    seen, over = [0, 0], [False, False]     # bytes read from each stream; the stream passed its cap while the program ran
+    late = [False, False]                   # the stream passed its cap after the program had ended (by itself, or at the deadline)
     sel = _selectors.DefaultSelector()
     pending = memoryview(input) if input and proc.stdin is not None else None
     for index, stream in enumerate((proc.stdout, proc.stderr)):
@@ -1490,13 +1531,17 @@ def communicate_bounded(proc, seconds, input=None):
             sel.register(proc.stdin, _selectors.EVENT_WRITE, 2)
         else:
             _close_pipe(proc.stdin)
-    timed_out, note, ended, extra, cut, sampled = False, None, None, 0, False, 0.0
+    timed_out, note, ended, extra, cut, sampled, ended_at_cap = False, None, None, 0, False, 0.0, False
     try:
         while True:
             now = time.monotonic()
             if ended is None:
                 if proc.poll() is not None:
                     ended = now
+                elif over[0] or over[1]:
+                    ended_at_cap = True
+                    note = kill_tree(proc)
+                    ended = time.monotonic()
                 elif now >= deadline:
                     timed_out = True
                     note = kill_tree(proc)
@@ -1539,9 +1584,29 @@ def communicate_bounded(proc, seconds, input=None):
                 if not data:
                     sel.unregister(key.fileobj)
                     continue
-                bufs[key.data].extend(data)
+                index = key.data
+                seen[index] += len(data)
                 if ended is not None:
                     extra += len(data)
+                if index == 0:
+                    room = out_cap - len(bufs[0])
+                    if room > 0:
+                        bufs[0].extend(data[:room])
+                    if seen[0] > out_cap:
+                        over[0], late[0] = (over[0], True) if ended is not None else (True, late[0])
+                else:
+                    room = err_cap - tail_keep - len(bufs[1])
+                    if room > 0:
+                        bufs[1].extend(data[:room])
+                        data = data[room:]
+                    if data:
+                        tail.extend(data)
+                        if len(tail) > tail_keep:
+                            del tail[:len(tail) - tail_keep]
+                    if seen[1] > err_cap:
+                        over[1], late[1] = (over[1], True) if ended is not None else (True, late[1])
+                if (over[0] or over[1]) and ended is None:
+                    break           # the loop's head ends the program at once
         if any(key.data != 2 for key in sel.get_map().values()):
             reap_orphans(_pipe_inodes(proc))
             settle()
@@ -1557,10 +1622,27 @@ def communicate_bounded(proc, seconds, input=None):
     except subprocess.TimeoutExpired:
         pass
     settle()
+    # A stream that passed its cap only after the program had ended is cut too, unless the pipes were cut at POST_EXIT_BYTES: then what passed
+    # it is a process that held the pipe and went on writing, PIPE_CUT says so, and the program's own output was read whole.
+    for index in (0, 1):
+        over[index] = over[index] or (late[index] and not cut)
+    ending = "; the tool ended the program there" if ended_at_cap else ""
+    out_cut = ("the program printed more than %d bytes on its standard output; the tool kept the first %d and did not read the rest%s" % (
+        out_cap, len(bufs[0]), ending)) if over[0] else None
+    err_cut = ("the program printed more than %d bytes on its standard error; the tool kept the first %d and the last %d%s" % (
+        err_cap, len(bufs[1]), len(tail), ending)) if over[1] else None
+    for sentence in (out_cut, err_cut):
+        if sentence:
+            OUTPUT_CUT["cut"] += 1
+            OUTPUT_CUT["last"] = sentence
+            _note(sentence)
     err = bytes(bufs[1])
+    if over[1]:
+        err += b"\n[... %d bytes of standard error not kept ...]\n" % (seen[1] - len(bufs[1]) - len(tail))
+    err += bytes(tail)
     if note:
         err = err + (b"\n" if err else b"") + note.encode("utf-8", "replace")
-    return bytes(bufs[0]), err, timed_out
+    return _output(bufs[0], out_cut), _output(err, err_cut), timed_out     # (one copy of standard output, not two)
 
 
 def _close_pipe(pipe):
@@ -1607,19 +1689,19 @@ def _on_signal(signum, _frame):
     os._exit(128 + signum)
 
 
-def preflight(argv, seconds):
-    """Run a short program, bounded; (exit code or None, stdout bytes, stderr bytes, timed out)."""
+def preflight(argv, seconds, caps=None):
+    """Run a short program, bounded; (exit code or None, stdout bytes, stderr bytes, timed out). The outputs are communicate_bounded's (Output,
+    held to `caps`): a program ended because a stream passed its cap has that stream's `cut` set (output_cut()) and its own exit code."""
     try:
         proc = spawn(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except OSError as exc:
-        return None, b"", describe(exc).encode("utf-8", "replace"), False
+        return None, _output(b"", None), _output(describe(exc).encode("utf-8", "replace"), None), False
     ACTIVE.append(proc)
     try:
-        out, err, timed_out = communicate_bounded(proc, max(1.0, seconds))
+        out, err, timed_out = communicate_bounded(proc, max(1.0, seconds), caps=caps)
         return (None if timed_out else proc.returncode), out, err, timed_out
     finally:
         ACTIVE.remove(proc)
-
 
 def run_to_files(argv, stdout_path, stderr_path, seconds, cwd=None):
     """One program with its output in files, killed with what it started at `seconds`. (exit code, timed out)."""
@@ -2275,6 +2357,8 @@ def cell(value):
 # the copies equal). A path is printed only through shown(): every component is judged, and no directory above a file is exempt.
 # Everything derived from a name that is withheld (an extension, a stem, a length, the place of the name among its siblings) is withheld
 # with it: a name that is withheld is replaced by one constant marker, and the order of a listing never follows the text that was withheld.
+import heapq
+
 WITHHELD = "<identifier-shaped name withheld>"
 WITHHELD_PATHS = [0]              # printed paths that had a component withheld (one per call of shown)
 _IDRUN = re.compile(r"[A-Za-z0-9]{8,}")
@@ -2412,38 +2496,87 @@ def shown(path, values=(), keep_last=False, count=True):
 
 
 _ORDER_SALT = os.urandom(16)
+# A directory is read through listing() and put in order through print_order(), both under the tool's clock (out_of_time of the STOP block, or
+# the clock a caller names): one directory of two million entries was held whole (900 MB) and had every name judged (a minute) past a clock
+# of two seconds, because a walk reads its clock between entries and the listing and the order came before the first.
+MAX_LISTED = 1 << 18              # entries of one directory held at once (an entry with its name and path is a few hundred bytes)
+NAMES_CUT = {"not_judged": 0}     # entries print_order put in order without judging their name, because the clock had run out
 
 
-def print_order(entries, judged, hidden=None):
+def _rank(path):
+    """A keyed hash of a whole path under the salt of this run: an order drawn afresh every run, unrelated to the name and to the listing."""
+    return hashlib.blake2b(path.encode("utf-8", "surrogatepass"), key=_ORDER_SALT, digest_size=8).digest()
+
+
+def listing(it, late=None):
+    """The entries of one directory (`it`, an os.scandir iterator) that a walk examines: read under the clock (`late`, the tool's out_of_time
+    unless given, read for every entry) and at most MAX_LISTED of them held. Past the bound the directory is read on only to be counted, and
+    the entries kept are the MAX_LISTED of the smallest keyed hash of their path (_rank): which entries the bound keeps follows neither a name
+    nor the order the directory lists them in. Returns (entries, not_kept, cut): not_kept is how many entries were read and not kept, and cut
+    is True when the clock ended the reading (the entries after it are not known, not even their number)."""
+    late = late or out_of_time
+    held, heap, read, cut = [], None, 0, False
+    for entry in it:
+        if late():
+            cut = True
+            break
+        read += 1
+        if heap is None:
+            held.append(entry)
+            if len(held) > MAX_LISTED:
+                heap = [(-int.from_bytes(_rank(e.path), "big"), n, e) for n, e in enumerate(held)]
+                held = None
+                heapq.heapify(heap)
+                heapq.heappop(heap)                   # the largest hash goes: the heap keeps the smallest, the largest of them on top
+        else:
+            key = -int.from_bytes(_rank(entry.path), "big")
+            if key > heap[0][0]:
+                heapq.heapreplace(heap, (key, read, entry))
+    if heap is not None:
+        held = [k[2] for k in heap]
+    return held, read - len(held), cut
+
+
+def print_order(entries, judged, hidden=None, late=None):
     """The directory entries in the order an answer prints them: by the text printed for each (the marker for a name that is judged
     and withheld, the name itself otherwise; `judged(entry)` says whether the answer prints the entry's name through the judge;
     `hidden(entry)`, when given, says that a name the first rule lets through is withheld all the same, because the note beneath it holds
     its value: it sorts as the marker does), and the entries that print alike in an order drawn afresh every run (a keyed hash of the whole
     path, the directory above included, under a salt of this run: the same name in two directories has two unrelated ranks). The rank of a
     withheld name among its siblings, the order a directory lists them in and the inode never show in what an answer lists, in the
-    order of its rows, in the numbers it hands out or in which entries a limit keeps."""
-    texts = []
-    for entry in entries:
+    order of its rows, in the numbers it hands out or in which entries a limit keeps. The judging runs under the clock (`late`, the tool's
+    out_of_time unless given), read for every entry: once it has run out, the entries not judged yet come after the judged ones in the order
+    of the keyed hash alone, each is counted in NAMES_CUT["not_judged"], and the caller says so and makes its answer partial (a walk on the
+    same clock examines none of them)."""
+    late = late or out_of_time
+    keyed, rest = [], []
+    for n, entry in enumerate(entries):
+        if rest or late():
+            rest.append((_rank(entry.path), n))
+            continue
         name = entry.name
         try:
             if hidden is not None and hidden(entry):
-                texts.append(WITHHELD)
+                text = WITHHELD
             else:
-                texts.append((_judge(name) or name) if judged(entry) else name)
+                text = (_judge(name) or name) if judged(entry) else name
         except OSError:
-            texts.append(_judge(name) or name)
-    order = sorted(range(len(entries)), key=texts.__getitem__)
+            text = _judge(name) or name
+        keyed.append((text, n))
+    NAMES_CUT["not_judged"] += len(rest)
+    keyed.sort()
     out, i = [], 0
-    while i < len(order):
+    while i < len(keyed):
         j = i + 1
-        while j < len(order) and texts[order[j]] == texts[order[i]]:
+        while j < len(keyed) and keyed[j][0] == keyed[i][0]:
             j += 1
-        group = order[i:j]
+        group = [n for _, n in keyed[i:j]]
         if len(group) > 1:
-            group.sort(key=lambda n: (hashlib.blake2b(entries[n].path.encode("utf-8", "surrogatepass"), key=_ORDER_SALT, digest_size=8).digest(), n))
+            group.sort(key=lambda n: (_rank(entries[n].path), n))
         out.extend(group)
         i = j
-    return [entries[n] for n in out]
+    rest.sort()
+    return [entries[n] for n in out] + [entries[n] for _, n in rest]
 # END SHARED NAMES
 
 
@@ -2994,11 +3127,16 @@ def find_yara():
 
 
 def yara_version(binary):
-    code, out, err, timed_out = preflight([binary, "--version"], YARA_PREFLIGHT_SECONDS)
+    """(the version yara printed or None, the sentence that says its output was cut or None). A `yara --version` that printed past its
+    64 KiB cap was ended there: yara is installed and is still run, and only its version is unknown."""
+    code, out, err, timed_out = preflight([binary, "--version"], YARA_PREFLIGHT_SECONDS, caps=(1 << 16, 1 << 16))
+    cut = output_cut(out, err)
+    if cut:
+        return None, cut
     if code != 0 or timed_out:
-        return None
+        return None, None
     text = out.decode("ascii", "replace").strip().splitlines()
-    return text[0][:40] if text and re.fullmatch(r"[0-9][0-9A-Za-z.+-]{0,39}", text[0].strip()) else None
+    return (text[0][:40] if text and re.fullmatch(r"[0-9][0-9A-Za-z.+-]{0,39}", text[0].strip()) else None), None
 
 
 def run_yara(binary, rules_path, notes, max_note_bytes, counters, hits):
@@ -3046,6 +3184,11 @@ def run_yara(binary, rules_path, notes, max_note_bytes, counters, hits):
         if timed_out:
             counters["yara_timed_out"] += 1
             counters["notes_not_scanned_by_clock"] += len(batch)
+            continue
+        if output_cut(out, err):
+            # yara printed past the block's cap and was ended there: the batch was not scanned to its end, so what it matched is not whole and
+            # a note it did not name is not a note it did not match. Its hits are not taken.
+            counters["yara_output_cut"] += 1
             continue
         if code != 0:
             counters["yara_failed"] += 1
@@ -3307,7 +3450,7 @@ def main():
         features = [f for f in features if (f["entry"], f["variant"]) in keep]
     counters = {"rows_read": 0, "rows_unreadable": 0, "rows_too_long": 0, "notes": 0, "names_not_kept": 0, "notes_not_scanned": 0,
                 "notes_unreadable": collections.Counter(), "notes_over_size": 0, "notes_not_scanned_by_clock": 0, "yara_timed_out": 0,
-                "yara_failed": 0, "yara_messages": 0, "offsets_capped": 0, "yara_batches": 0, "notes_given_to_yara": 0}
+                "yara_failed": 0, "yara_messages": 0, "offsets_capped": 0, "yara_batches": 0, "notes_given_to_yara": 0, "yara_output_cut": 0}
     PROGRESS["coverage"] = counters
     ext_obs, name_obs = {}, collections.Counter()
     for i, text in enumerate(extensions):
@@ -3342,7 +3485,10 @@ def main():
             reasons.append("yara is not installed: the %d note files were not matched against the text rules (extension and note-name matching ran)" % len(notes))
         else:
             engine["available"] = True
-            engine["version"] = yara_version(binary)
+            engine["version"], version_cut = yara_version(binary)
+            if version_cut:
+                reasons.append("yara is installed, but `yara --version` printed past its 64 KiB cap and was ended (%s): its version is not known, "
+                               "and the note files were still given to it" % version_cut)
             rules_path = str(REFERENCE_DIR / "rules.yar")
             run_yara(binary, rules_path, notes, max_note_bytes, counters, yara_hits)
             engine["ran"] = True
@@ -3350,6 +3496,9 @@ def main():
                 reasons.append("yara failed on %d batches of note files (its exit status was not 0)" % counters["yara_failed"])
             if counters["yara_timed_out"]:
                 reasons.append("yara timed out on %d batches" % counters["yara_timed_out"])
+            if counters["yara_output_cut"]:
+                reasons.append("yara printed past its output cap on %d batches and was ended there (%s): their note files are not counted as scanned and their matches were not taken"
+                               % (counters["yara_output_cut"], OUTPUT_CUT["last"]))
             if counters["yara_messages"]:
                 reasons.append("yara wrote messages on %d batches (a file it could not scan, say)" % counters["yara_messages"])
     elif notes and not text_rules_wanted:

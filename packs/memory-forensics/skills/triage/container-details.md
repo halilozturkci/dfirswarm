@@ -3,6 +3,7 @@ id: triage/container-details
 title: Locators, saved states and VMware memory
 when: A crash dump, LiME file, hiberfil.sys or .vmem, or an offset to translate.
 needs: []
+card: mem_profile {"path": "<dump>"} names a container only from its header. A crash dump's physical address is not a file offset: use the runs it prints (physical_start, file_offset) and keep both locators. A LiME file is ranges behind 32-byte headers. hiberfil.sys is a saved state, not the state at acquisition, and usually needs a decoder, which mem_profile is not. A .vmem needs its .vmss or .vmsn for physical mapping and process attribution; a literal search works without. Does not show: that hiberfil.sys predates anything, or that a .vmem alone supports attribution.
 tools: [mem_profile]
 requires_host: []
 ---

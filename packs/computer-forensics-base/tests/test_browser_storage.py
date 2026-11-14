@@ -211,6 +211,63 @@ echo '""" + doc + "'\n"
         self.assertIn("refused", r.json["status_basis"])
 
 
+JOB_STORE = "store/jobs/j000044/out/q7-selected/Users/ExampleUser/AppData/Local/Google/Chrome/User Data/Default/IndexedDB/https_app.example_0.indexeddb.leveldb"
+
+
+class JobForm(Base):
+    """The tool called the way a job calls it: the working directory is the run's root and path is relative to it, with spaces. The reader's process
+    runs with / as its working directory and was handed the relative path: every file failed at open with FileNotFoundError, in every job (8 of 8)."""
+
+    def job_store(self, files):
+        d = self.path(*JOB_STORE.split("/"))
+        os.makedirs(d)
+        for fname, data in files.items():
+            with open(os.path.join(d, fname), "wb") as fh:
+                fh.write(data)
+        return JOB_STORE
+
+    def test_a_run_relative_path_reaches_a_reader_that_runs_elsewhere_and_the_answer_names_the_path_as_given(self):
+        rel = self.job_store({"000003.log": log_of((1, self.meta())), "000005.ldb": b"x" * 40})
+        body = self.write("reader.py", """import json, os, sys
+spec = json.load(sys.stdin)
+files = []
+for name, kind in spec["files"]:
+    entry = {"name": name, "kind": kind, "status": "read"}
+    try:
+        os.close(os.open(os.path.join(spec["path"], name), os.O_RDONLY | os.O_NOFOLLOW))
+    except OSError as exc:
+        entry.update({"status": "failed", "stage": "open", "error_class": type(exc).__name__})
+    files.append(entry)
+print(json.dumps({"ok": True, "versions": {"cwd": os.getcwd()}, "files": files, "format": "leveldb", "records_total": 0, "counts": {}, "previews": [],
+                  "decode_errors": {}}))
+""")
+        # A stand-in for the reader's process: it opens each data file by the path it was handed, from the directory it was started in.
+        r = self.call({"path": rel}, src=self.src(script="exec '%s' '%s'\n" % (sys.executable, body)), job=True)
+        self.assertEqual(r.json["reader"]["cwd"], "/")
+        self.assertEqual([(f["name"], f["status"], f.get("error_class")) for f in r.json["files"]], [("000003.log", "read", None), ("000005.ldb", "read", None)], r.stdout[:600])
+        self.assertNotEqual(r.json["status"], "failed")
+        self.assertEqual(r.json["path"], rel, "the caller's own argument is not withheld (it was <token-shaped text withheld 85 characters> Data/...)")
+
+    def test_a_refusal_names_the_path_as_given_with_what_could_break_a_line_escaped(self):
+        r = self.call({"path": JOB_STORE}, src=self.path("nowhere"), job=True)
+        self.assertEqual((r.code, r.json["status"]), (1, "failed"))
+        self.assertTrue(r.json["unavailable"])
+        r = self.call({"path": JOB_STORE}, src=self.src(), job=True)
+        self.assertEqual((r.json["status"], r.json["path"]), ("failed", JOB_STORE), "the directory is not there, and the answer says which")
+        r = self.call({"path": "store/a\tb\u200b/c\nd"}, src=self.src(), job=True)
+        self.assertEqual(r.json["path"], "store/a\\tb/c\\nd")
+
+    @NEEDS_READER
+    def test_the_real_reader_inventories_a_store_given_by_a_run_relative_path_with_spaces(self):
+        k1 = F.record_key(1, 1, F.key_string("m1"))
+        rel = self.job_store({"000003.log": log_of((1, self.meta({1: "messages"})), (100, [(k1, F.idb_value(F.v8_string("v1")))]))})
+        r = self.call({"path": rel}, job=True)
+        self.assertEqual((r.code, r.json["status"]), (0, "complete"), r.stdout[:600])
+        self.assertEqual(r.json["path"], rel)
+        self.assertEqual([(f["name"], f["status"]) for f in r.json["files"]], [("000003.log", "read")])
+        self.assertEqual(r.json["indexeddb"]["databases"][0]["stores"][0]["data_records"], 1)
+
+
 @NEEDS_READER
 class Reader(Base):
     """Cases that run the real ccl_chromium_reader."""

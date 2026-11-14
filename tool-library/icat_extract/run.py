@@ -488,7 +488,7 @@ def end_leftovers():
 RUN = {"proc": None, "size": 0}      # the icat running and the bytes written, for a stop
 
 
-TOOL = {"name": "icat_extract", "version": 19}
+TOOL = {"name": "icat_extract", "version": 20}
 OFFSET_MAX = 1 << 40              # sectors: an explicit offset above this is not a volume offset (512 TiB at 512 bytes a sector)
 BLOCK = 1 << 20
 MAX_BYTES_DEFAULT = 32 * 1024 ** 3
@@ -1036,7 +1036,17 @@ with os.fdopen(out_fd, "wb") as out, os.fdopen(err_fd, "wb") as errf:
         if status != "complete":
             proc.kill()
         proc.stdout.close()
-        rc = proc.wait()
+        if status != "complete":
+            rc = proc.wait()
+        else:
+            try:
+                # An icat that closed its output and went on running is waited for on the clock, not past it: at the clock it is ended,
+                # its exit status is not seen, and the file is not claimed whole.
+                rc = proc.wait(timeout=max(0.1, max_seconds - (time.monotonic() - started)))
+            except subprocess.TimeoutExpired:
+                status, why = "partial", "icat closed its output but was still running when the time budget of %d seconds was reached; icat was stopped, its exit status was not seen, and the file may be short" % max_seconds
+                proc.kill()
+                rc = proc.wait()
         end_leftovers()
 if status == "complete" and rc != 0:
     status, why = "partial", "icat exited %d after %d bytes" % (rc, size)
@@ -1065,7 +1075,8 @@ if status == "complete":
 else:
     if size == 0:
         os.unlink(part)
-        fail(err or "icat exit %s" % rc, image=image, inode=inode, offset=offset, sector_size=sector_size, icat_exit=rc, command=" ".join(cmd))
+        fail(err or "icat exit %s" % rc, image=image, inode=inode, offset=offset, sector_size=sector_size, icat_exit=rc, command=" ".join(cmd),
+             **({"problem": why} if why else {}))
     # The partial sits beside the name it would have had: said under the name the caller gave, with its suffix.
     shown = output + part.name[len(dest.name):]
 files = [e for e in listed if e["type"] != "d"]
@@ -1080,7 +1091,7 @@ if why and stream_whole:
     result["note"] = "the whole stream was written, and is kept as %s: size and sha256 are of it" % shown
 elif why:
     result["problem"] = why
-    result["note"] = "what was written is kept as %s and is not the whole stream: size and sha256 are of those bytes alone" % shown
+    result["note"] = "what was written is kept as %s and is not shown to be the whole stream: size and sha256 are of those bytes alone" % shown
 if err_path:
     result["stderr_file"] = output + err_path.name[len(dest.name):]
     result["stderr_head"] = err[:400]

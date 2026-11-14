@@ -19,7 +19,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { type Json, asJob, body, filesUnder, gone, pidFile, refused, startDetached, tool, withCwd } from "./pack-network-harness.ts";
 import { ROOT } from "./tool-library-harness.ts";
-import { NO_ADOPTION, NO_PROC } from "./host-gates.ts";
+import { CLEAN, NO_ADOPTION, NO_PROC } from "./host-gates.ts";
 
 const SCRIPT = join(ROOT, "packs", "encrypted-containers", "tools", "materialise_decrypted", "run.py");
 const XOR = 0x5a;
@@ -80,7 +80,7 @@ class volume:
 `;
 const PYAES = `
 import os, time
-def get_version(): return "6.1.1"
+# pyAesCrypt 6.1.1, the release the pack pins, has neither get_version nor __version__, and neither has this stand-in: the tool reads it all the same
 def decryptStream(fin, fout, passw, bufferSize, inputLength):
     if os.environ.get("STANDIN_PID_FILE"): open(os.environ["STANDIN_PID_FILE"], "w").write(str(os.getpid()))
     if os.environ.get("STANDIN_MODE") == "leak": raise ValueError("Wrong password " + passw)
@@ -211,6 +211,7 @@ test("AES Crypt: a container cut short is partial and no plaintext is written", 
     const a = body(await run(cwd, { operation: "aescrypt_decrypt", source: "cut.aes", key_ref: "key.txt" }, secret));
     assert.equal(a.status, "partial");
     assert.match(a.status_basis, /cut copy/);
+    assert.deepEqual(a.reader, { module: "pyAesCrypt", version: null }, "a module that names no version is read, and its version is null");
     assert.deepEqual(await materialised(cwd), []);
     await writeFile(join(cwd, "notaes"), "this is not an AES Crypt file at all");
     assert.match(body(await run(cwd, { operation: "aescrypt_decrypt", source: "notaes", key_ref: "key.txt" }, secret)).status_basis, /signature/);
@@ -306,7 +307,10 @@ test("a key reference that is a link, a pipe, a directory, world-readable, empty
 test("a module that is not installed answers unavailable, naming it, without reading the key reference", async () => {
   await withCwd(async (cwd) => {
     await writeFile(join(cwd, "box.aes"), aesContainer(randomBytes(100)));
-    const r = await asJob(SCRIPT, cwd, { operation: "aescrypt_decrypt", source: "box.aes", key_ref: "does-not-exist.txt" }, undefined, { PYTHONPATH: "" });
+    // A module that cannot be imported, whether or not the host has the real one (a PYTHONPATH entry is searched before site-packages).
+    await mkdir(join(cwd, "absent"), { recursive: true });
+    await writeFile(join(cwd, "absent", "pyAesCrypt.py"), 'raise ImportError("No module named pyAesCrypt")\n');
+    const r = await asJob(SCRIPT, cwd, { operation: "aescrypt_decrypt", source: "box.aes", key_ref: "does-not-exist.txt" }, undefined, { PYTHONPATH: join(cwd, "absent") });
     const a = body(r);
     assert.equal(a.status, "unavailable");
     assert.match(a.status_basis, /pyAesCrypt \(package pyAesCrypt\) is not importable, so nothing was read: the key file's bytes were not read/);
@@ -486,7 +490,9 @@ test("the real pyAesCrypt round trip, where the module is importable", async (t)
     assert.equal(enc.status, 0);
     await key(cwd, "key.txt", secret);
     const a = body(await asJob(SCRIPT, cwd, { operation: "aescrypt_decrypt", source: "box.aes", key_ref: "key.txt" }));
-    assert.equal(a.status, "complete", a.status_basis);
+    // complete where the tool can adopt the orphans of the reader (CLEAN: Linux); elsewhere partial, with the plaintext kept as .partial
+    assert.equal(a.status, CLEAN, a.status_basis);
+    assert.deepEqual(a.reader, { module: "pyAesCrypt", version: null }, "pyAesCrypt 6.1.1 names no version");
     assert.equal((await prov(cwd, a)).output.sha256, sha(plain));
   });
 });

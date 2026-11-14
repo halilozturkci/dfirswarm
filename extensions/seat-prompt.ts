@@ -27,7 +27,7 @@ export const SELF_COMPACT_PROMPT_LINE =
 
 /** Said to a seat when tool forging is on. What has been forged so far is not here: it changes. */
 export const FORGE_PROMPT_LINE =
-  "Tool forging is on for this swarm. If the goal needs a tool nobody has — a parser, a checker, a converter — write it once with make_tool (python3, node or bash; the arguments arrive as one JSON object on stdin; print the result to stdout) and it becomes a real tool for every agent after their next inbox or wait. Call `tools` first to see what peers have forged. A forged tool runs in this directory with the same limits as bash; keep it small and free of network calls.";
+  "Tool forging is on for this swarm. If the goal needs a tool nobody has — a parser, a checker, a converter — write it once with make_tool (python3, node or bash; the arguments arrive as one JSON object on stdin; print the result to stdout) and it becomes a real tool for every agent after their next inbox or wait. `tools` lists what the run has in one line each (the packs' tools and the ones peers forged), and `tools(name)` gives one whole: look there before you write a parser. A forged tool runs in this directory with the same limits as bash; keep it small and free of network calls.";
 
 /** The seat's own id and the stop rule: both hold for the run, and the id is what a hand-off header restates but a prompt should carry. */
 export function seatPromptLine(agentId: string): string {
@@ -74,7 +74,11 @@ export function measuredInputsLine(enforced: "kernel" | "mode" | "none", held?: 
 
 /** The forging inventory: what has been forged so far, which changes. */
 export function forgedSoFarLine(forged: Array<{ name: string; by: string; version: number | string }>): string {
-  return forged.length ? `Forged so far: ${forged.map((m) => `${m.name} (by ${m.by}, v${m.version})`).join(", ")}.` : "Nothing has been forged yet.";
+  // The packs' tools are not listed: there may be eighty of them, and `tools` names them in one line each.
+  const own = forged.filter((m) => !(m as { pack?: string | null }).pack);
+  const packs = forged.length - own.length;
+  const seeded = packs ? ` The packs gave this run ${packs} tool(s): \`tools\` lists them.` : "";
+  return (own.length ? `Forged so far: ${own.map((m) => `${m.name} (by ${m.by}, v${m.version})`).join(", ")}.` : "Nothing has been forged yet.") + seeded;
 }
 
 /** The forging line of the hand-off header: the prompt of the run a hand-off starts cannot carry the inventory, which changes. */

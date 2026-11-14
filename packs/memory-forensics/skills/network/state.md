@@ -3,15 +3,15 @@ id: network/state
 title: Network objects and their owners in memory
 when: You need connections, listeners or an address from memory, or one to tie to a host artefact.
 needs: []
+card: ioc_scan {"path": "<image>", "needles": "<address>|<name>"} finds literal bytes (as given and UTF-16LE) with offsets: it is not a parser, and a hit is not an endpoint. Connections and listeners come from an engine view (vol, or MemProcFS tables via mem_fs); a scan alone does not say live or freed. A listener is a lead. Does not show: a person, intent, a transfer or a duration.
 tools: [mem_fs, ioc_scan]
 requires_host: [memprocfs, vol]
 ---
 
 Use when you need connections, listeners or an address from memory. Not for dating them or for DNS cache entries (`network/timestamps-dns`).
 
-Memory may preserve current network structures and remnants of earlier ones,
-observed across the acquisition interval rather than at one instant (the capture is
-a smear: `acquire/images`).
+Memory may hold current network structures and remnants of earlier ones, seen
+across the acquisition interval, not at one instant (a smear: `acquire/images`).
 
 **Which view.** On a supported Windows image compare `windows.netstat.NetStat`,
 which walks the kernel's network tracking structures, with
@@ -30,9 +30,7 @@ statement needs a view that says it.
     other remnants            objects the scan found that the lists did not
 
 `ioc_scan` finds a literal address or name in the bytes, in ASCII and UTF-16LE, with
-offsets; it is not a parser, and it does not tell an endpoint from a log line. Its
-answer carries snippets of the surrounding bytes: treat them as sensitive output
-(below).
+offsets; it is not a parser, and it does not tell an endpoint from a log line. Treat the bytes around a hit as sensitive output (below).
 
 **Corroboration.** Report a validated memory observation with its limits even when no
 disk artefact backs it, and look for packet captures, firewall or proxy events, DNS
@@ -42,17 +40,14 @@ connection. An address in memory with nothing else behind it is a lead, and the
 missing corroboration limits the behavioural conclusion; it does not erase the
 structure.
 
-**A listener is not a backdoor.** Plenty of legitimate software listens. What makes
-one interesting is the process that owns it, where that process runs from, and
-whether anything on disk explains it.
+**A listener is not a backdoor.** Plenty of legitimate software listens; what matters is the
+owning process, where it runs from, and whether anything on disk explains it.
 
 Only if you quote a time from a network object or read a DNS cache entry: `network/timestamps-dns`.
 
-**Sensitive output.** Addresses, URLs and snippets can carry tokens, user names and
-secrets: run `ioc_scan`, and `mem_fs` text or export, as jobs with
+**Sensitive output.** Addresses, URLs and snippets can carry tokens, user names and secrets: run `ioc_scan`, and `mem_fs` text or export, as jobs with
 `secret_output: true`, and describe what they show without copying a secret
 (`credentials/material`).
 
 **Does not show.** A person at the other end, an intent, a transfer of data, a
-connection's duration, or that a freed structure was ever connected; none follows
-from an endpoint in memory alone.
+duration, or that a freed structure was ever connected; none follows from an endpoint alone.

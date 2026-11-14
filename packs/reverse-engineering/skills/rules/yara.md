@@ -3,6 +3,7 @@ id: rules/yara
 title: YARA matches and what they mean
 when: You search evidence with rules or must interpret a rule hit.
 needs: [triage/quarantine]
+card: yara -s prints matched bytes, which can be a credential: run it as a job with secret_output: true, write the output to a file under $OUT, and cite rule, identifier and offset, not the bytes. Record the YARA version, the rule files' hashes and source, and whether the scan completed: failures and skipped files are part of the result. A hit is a lead, not a family. A completed no-hit scan holds only for those rules, this target and this scope. Use pe_info ({"path": "<sample>"}) to confirm the format facts a structural condition leans on (section names, imports) before trusting it. A file offset is not a memory address. Does not show: family, intent, or that unmatched files are clean.
 tools: [pe_info]
 requires_host: [yara]
 ---

@@ -498,6 +498,9 @@ class LosslessPage:
 # tool's time limit: the string in progress finishes after it, and one string of 256 KiB takes up to 2.3 seconds to judge on a loaded machine (the worst measured).
 # A run has a second bound: past MAX_JUDGED_CHARS characters judged (the final answer is always judged), a string not judged before is withheld by its size in the
 # same way. boundary.stopped_by says which bound stopped the judging and boundary.strings_withheld_by_the_stop how many strings it withheld; the answer is partial.
+# The judging that only sees what an answer would print (the order of a list, print_order; a filter, sealed_text and contains_check) runs under the same
+# clock and counts toward the same cap: past either, the items of a list not judged yet come after the judged ones in a random order, a filter is blind to
+# a string it did not judge, each such string is counted (boundary.strings_not_judged_for_order_or_filter), and the answer is partial.
 # NOT RECOGNISED, by design: a secret that does not look like one (a plain password, a pronounceable passphrase, a UUID-shaped key,
 # anything under 16 characters in a name, a secret hidden in words or in an encoding this block does not read).
 import collections
@@ -522,7 +525,8 @@ KEY_KINDS = {}                  # a JSON key holding a dict -> the kind of that 
 MAX_WHERE = 200
 MAX_JUDGED_CHARS = 400000000    # characters one run may have judged (every string of its answers and paging files); past it a string not judged before is withheld by its size
 FINAL_GRACE_CHARS = 4000000     # the final answer may always be judged: the cap is raised by this much, and is not spent again by the strings already withheld
-_STOP = {"cap": MAX_JUDGED_CHARS, "chars": 0, "by": None, "strings": 0}   # why judging stopped (None: it did not), and how many strings it withheld by their size
+_STOP = {"cap": MAX_JUDGED_CHARS, "chars": 0, "by": None, "strings": 0, "quiet": 0}   # why judging stopped (None: it did not), how many strings it withheld by
+                                                                                        # their size, and how many it left unjudged in an order or a filter
 
 
 class T(str):
@@ -1459,28 +1463,43 @@ def _quietly(fn):
 def sealed_text(text, kind="text", field=""):
     """The exact text an answer prints for the string `text` of a field of type `kind`: the layers, then the backstop (a string it replaces comes
     out as its placeholder). Nothing is counted, listed or written to the values file: this is for what must see what the answer shows (a
-    `contains` filter, the order of a list)."""
+    `contains` filter, the order of a list). It runs under the clock of the seal and counts toward the cap of characters (_timed, _late): a string
+    it does not judge comes out as its placeholder, and is counted."""
     if not isinstance(text, str) or not text:
         return text
-    return _quietly(lambda: _seal(text, kind, field, (), True))
+    return _quietly(lambda: _timed(lambda: _seal(text, kind, field, (), True)))
 
 
 def print_order(items, kind="name", text=str):
     """`items` in the order an answer prints them: by the text the answer PRINTS for each (the layers and the backstop, sealed_text), and the items
     whose text is the same placeholder in a random order that is new for every run. The rank of the withheld texts themselves (the order `sorted`
     would give, the order a directory or a hive lists them in) must never show in what an answer lists. `kind` is the kind of the field the items
-    are printed in; `text` gives the string of an item."""
+    are printed in; `text` gives the string of an item. The judging runs under the clock of the seal (SEAL_BUDGET from the outermost call, never past
+    the seal stop) and counts toward the cap of characters, as the judging of an answer does: once either stops it (a list of 13,000 names of 64 KiB
+    ran for minutes without a clock), the items not judged come after the judged ones in a random order of their own, each is counted
+    (_STOP["quiet"]), and the answer is partial (boundary.stopped_by)."""
     def judge():
-        out = []
+        out, rest = [], []
         for n, i in enumerate(items):
             raw = text(i)
-            shown = _seal(raw, kind, "", (), True) if isinstance(raw, str) and raw else raw
-            out.append((shown, hashlib.blake2b(_ORDER_SALT + raw.encode("utf-8", "surrogatepass"), digest_size=8).digest(), n, i))
-        return out
+            rank = hashlib.blake2b(_ORDER_SALT + str(raw).encode("utf-8", "surrogatepass"), digest_size=8).digest()
+            if not rest:
+                if not isinstance(raw, str) or not raw:
+                    out.append((raw, rank, n, i))
+                    continue
+                left = _STOP["quiet"]
+                shown = _seal(raw, kind, "", (), True)
+                if _STOP["quiet"] == left:
+                    out.append((shown, rank, n, i))
+                    continue
+            rest.append((rank, n, i))                 # (the first of them was counted when judging stopped on it; the rest are counted below)
+        _STOP["quiet"] += max(len(rest) - 1, 0)
+        return out, rest
     items = list(items)
-    keyed = _quietly(judge)
+    keyed, rest = _quietly(lambda: _timed(judge))
     keyed.sort(key=lambda k: (k[0], k[1], k[2]))
-    return [k[3] for k in keyed]
+    rest.sort()
+    return [k[3] for k in keyed] + [r[2] for r in rest]
 
 
 def contains_check(needle_lower, text, kind="text", field=""):
@@ -1801,9 +1820,10 @@ def _unjudged(text, kind=None):
 
 
 def _late(n=0):
-    """Whether judging must stop for the string about to be judged, which has `n` characters (counted against the cap of the run, unless the string is
-    only being judged to see what an answer would print). It says why, once, in _STOP["by"]: the cap of characters, or the clock of the seal."""
-    if n and not _QUIET[0]:
+    """Whether judging must stop for the string about to be judged, which has `n` characters (counted against the cap of the run, also when the string is
+    only being judged to see what an answer would print: an order or a filter costs what an answer does). It says why, once, in _STOP["by"]: the cap of
+    characters, or the clock of the seal."""
+    if n:
         _STOP["chars"] += n
         if _STOP["chars"] > _STOP["cap"]:
             if _STOP["by"] is None:
@@ -1818,9 +1838,9 @@ def _late(n=0):
 
 
 def _stopped(value, where):
-    """A string not judged because judging stopped: withheld whole, by its size, counted (what is let through is only _unjudged)."""
-    if not _QUIET[0]:
-        _STOP["strings"] += 1
+    """A string not judged because judging stopped: withheld whole, by its size, counted (what is let through is only _unjudged). One judged only to see
+    what an answer would print (an order, a filter) is counted apart: the answer may still print it, judged then."""
+    _STOP["quiet" if _QUIET[0] else "strings"] += 1
     return _replace(value, where, "the judging time ran out", True)
 
 
@@ -2086,7 +2106,8 @@ def row_object(row):
 
 
 def boundary_summary():
-    stopped = {"stopped_by": _STOP["by"], "strings_withheld_by_the_stop": _STOP["strings"]} if _STOP["by"] is not None else {}
+    stopped = {"stopped_by": _STOP["by"], "strings_withheld_by_the_stop": _STOP["strings"],
+               "strings_not_judged_for_order_or_filter": _STOP["quiet"]} if _STOP["by"] is not None else {}
     return {"strings_withheld": BOUNDARY["withheld"], "withheld_by_reason": dict(BOUNDARY["by"]),
             "strings_replaced_by_the_backstop": BOUNDARY["replaced"], "replaced_by_check": dict(BOUNDARY["replaced_by"]),
             "replaced_at": list(BOUNDARY["where"]), "replaced_not_listed": BOUNDARY["not_listed"], "values": values_summary(), **stopped,
@@ -2117,10 +2138,14 @@ def answer_object(doc):
             out["status"] = "partial"
             basis = out.get("status_basis")
             why = []
-            if BOUNDARY["replaced"] > 0:
-                why.append("%d string(s) still held a secret-shaped text when the answer was checked on its way out and were replaced" % BOUNDARY["replaced"])
+            # a string withheld unjudged because judging stopped held nothing that was seen: the stop says it, not this count
+            shaped = BOUNDARY["replaced"] - BOUNDARY["replaced_by"].get("the judging time ran out", 0)
+            if shaped > 0:
+                why.append("%d string(s) still held a secret-shaped text when the answer was checked on its way out and were replaced" % shaped)
             if _STOP["by"] is not None:
-                why.append("judging the strings stopped at %s: %d string(s) after it were withheld by their size" % (_STOP["by"], _STOP["strings"]))
+                why.append("judging the strings stopped at %s: %d string(s) after it were withheld by their size%s" % (
+                    _STOP["by"], _STOP["strings"], "" if not _STOP["quiet"] else ", and %d were put in order or filtered without being judged (an order "
+                    "of their own, a filter blind to them)" % _STOP["quiet"]))
             out["status_basis"] = "%s%s (see boundary)" % (basis + "; " if isinstance(basis, str) and basis else "", "; ".join(why))
     return out
 
@@ -2159,7 +2184,8 @@ def emit(doc, **dumps_kwargs):
 #    The id of a user's temporary folder (`/var/folders/xx/` and 30 characters) that the block would withhold as a token is shown as an alias of its sha256.
 #  - emit_answer: the answer is printed as emit() prints it, but a stop signal that arrived while it was sealed is named in it; one that arrives while the text is
 #    made or written cannot be (the text is out), and is found afterwards: the exit code is the signal's and stderr says that the answer is whole.
-#  - print_order_until: print_order() under a clock, for a list that may be as long as a hostile file makes it.
+#  - print_order_until: print_order() under a clock, for a list that may be as long as a hostile file makes it: the block's clock and cap, and the caller's
+#    `until` read before every item; what it does not judge is counted and makes the answer partial.
 # Both withhold through the block's own _b_withheld, so they are counted, listed and written to the values file like everything else it withholds.
 import random
 
@@ -2248,6 +2274,10 @@ def guard_hex(s, field=""):
         raw = bytes.fromhex(s)
     except ValueError:
         return s
+    if _timed(lambda: _late(len(s))):
+        # past the seal's clock or the cap of characters this field is not read for a secret-shaped text: it is withheld whole, and the stop makes the answer partial
+        _STOP["strings"] += 1
+        return _b_withheld(s, "binary data over the judged size", field)
     if _NOT_PRINTABLE.search(raw) is None:
         # all printable: the block read it as one run; only the key it does not know is looked for
         return _b_withheld(s, "binary data holding a secret-shaped text", field) if _VAULT.search(raw.decode("ascii")) else s
@@ -2264,25 +2294,40 @@ def shown_text(s, kind, field=""):
     return _quietly(lambda: sealed_text(guard_text(s, field), kind, field))
 
 def print_order_until(items, kind="name", text=str, until=None):
-    """(items in the order print_order() gives, whole), judged under a clock: when `until` (a time.monotonic() value) passes first, the items judged by then
-    come in print order and the rest after them in a random order, and `whole` is false. The items are taken in a random order, so that which ones were judged
-    says nothing about their names or their place in a listing."""
+    """(items in the order print_order() gives, whole), judged under a clock: the judging runs under the block's own clock and cap, as print_order() does
+    (SEAL_BUDGET and the seal stop, _timed; the characters count toward MAX_JUDGED_CHARS), and `until` (a time.monotonic() value) is read before every item.
+    When either stops it, the items judged by then come in print order and the rest after them in a random order, `whole` is false, the rest are counted
+    (boundary.strings_not_judged_for_order_or_filter) and the answer is partial (boundary.stopped_by), whether the caller reads `whole` or not. The items are
+    taken in a random order, so that which ones were judged says nothing about their names or their place in a listing."""
     items = list(items)
     random.shuffle(items)
     keyed = []
+    box = {"sealed": False}                   # judging stopped on an item, which _stopped counted
 
     def judge():
         for n, i in enumerate(items):
-            if until is not None and n % 16 == 0 and time.monotonic() > until:
+            if until is not None and time.monotonic() > until:
                 return n
             raw = text(i)
-            shown = _seal(raw, kind, "", (), True) if isinstance(raw, str) and raw else raw
-            keyed.append((shown, hashlib.blake2b(_ORDER_SALT + raw.encode("utf-8", "surrogatepass"), digest_size=8).digest(), n, i))
+            if isinstance(raw, str) and raw:
+                left = _STOP["quiet"]
+                shown = _seal(raw, kind, "", (), True)
+                if _STOP["quiet"] != left:
+                    box["sealed"] = True
+                    return n
+            else:
+                shown = raw
+            keyed.append((shown, hashlib.blake2b(_ORDER_SALT + str(raw).encode("utf-8", "surrogatepass"), digest_size=8).digest(), n, i))
         return len(items)
 
-    judged = _quietly(judge)
+    judged = _quietly(lambda: _timed(judge))
+    rest = len(items) - judged
+    if rest:
+        _STOP["quiet"] += rest - (1 if box["sealed"] else 0)
+        if _STOP["by"] is None:
+            _STOP["by"] = "the clock of the list being put in order (print_order_until)"
     keyed.sort(key=lambda k: (k[0], k[1], k[2]))
-    return [k[3] for k in keyed] + items[judged:], judged == len(items)
+    return [k[3] for k in keyed] + items[judged:], rest == 0
 
 
 def emit_answer(doc, interrupted=None, **dumps_kwargs):

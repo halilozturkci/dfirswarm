@@ -63,7 +63,10 @@ export function crash(r: { stdout: string; stderr: string; killed: boolean }): s
 }
 
 test("every parameter of each base tool, given a hostile value, ends in a JSON answer and no traceback", { timeout: 900_000 }, async () => {
-  const dir = await mkdtemp(join(tmpdir(), "hostile-"));
+  // The run's root is three levels inside the test's own tree, so a dot-dot path lands in it and not on whatever the
+  // host keeps two levels above its temp directory (on macOS a directory of a million files, which no tool lists in 20 s).
+  const top = await mkdtemp(join(tmpdir(), "hostile-"));
+  const dir = join(top, "a", "b", "run");
   const failures: string[] = [];
   let cases = 0;
   try {
@@ -99,7 +102,7 @@ test("every parameter of each base tool, given a hostile value, ends in a JSON a
       }
     }));
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    await rm(top, { recursive: true, force: true });
   }
   assert.ok(cases >= 500, `${cases} cases`);
   assert.deepEqual(failures.sort(), []);

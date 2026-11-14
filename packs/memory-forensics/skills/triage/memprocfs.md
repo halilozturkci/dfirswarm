@@ -1,8 +1,9 @@
 ---
 id: triage/memprocfs
 title: MemProcFS and its FUSE prerequisite
-when: You will read an image as a MemProcFS tree, or a mount failed or its readiness is in doubt.
+when: You will read an image as a MemProcFS tree, or a mount failed or is in doubt.
 needs: []
+card: vol_readiness {"views": ["fuse"]} says whether /dev/fuse and a fusermount helper are there: blocked is the host's lack, not a finding about the image; mem_fs answers it as no_fuse and starts nothing. mem_fs passes MemProcFS no flag for symbols, caches or forensic mode. List first ({"mode": "list"}) and cite the MemProcFS version with the paths. A mount that came up shows the engine started, not that the image was read whole. A cleanup problem means the mount may remain: report it and do not read the tree again. Does not show: that a missing path means the object is absent.
 tools: [mem_fs, vol_readiness]
 requires_host: [memprocfs]
 ---

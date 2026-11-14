@@ -159,7 +159,8 @@ async function run(v: Variant, root: Node, args: Record<string, unknown> = {}, o
 // --- UserAssist ------------------------------------------------------------------------
 
 dual("UserAssist: the 72-byte and 16-byte layouts decode, with the raw and the ROT13-decoded name side by side, non-ASCII names included", async (v) => {
-  const names = ["UEME_RUNPATH:C:\\Tools\\Alpha Tool.exe", "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\Caf\u00e9\\na\u00efve.exe", "Microsoft.Windows.Explorer"];
+  // The second name has a character above U+00FF, so the hive stores it as UTF-16 (as Windows does) and its other non-ASCII letters survive.
+  const names = ["UEME_RUNPATH:C:\\Tools\\Alpha Tool.exe", "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\\u015eirket\\Caf\u00e9\\na\u00efve.exe", "Microsoft.Windows.Explorer"];
   const { out } = await run(v, ntuser([
     { name: rot13(names[0]), type: "binary", value: ua72(3, 12, 4, 90_000, FT) },
     { name: rot13(names[1]), type: "binary", value: ua16(0, 5, FT) },
@@ -189,6 +190,19 @@ dual("UserAssist: the 72-byte and 16-byte layouts decode, with the raw and the R
   assert.equal(by(names[2]).last_execution_filetime, "0");
   assert.equal(out.cross_check.result, "not_run");
   assert.ok(out.interpretation_limits.some((l) => /not execution/.test(l)) && out.interpretation_limits.some((l) => /not a user with no entry/.test(l)) && out.interpretation_limits.some((l) => /not an execution time|not a time the program ran/.test(l)));
+});
+
+dual("UserAssist: a name the hive stores one byte a character with a letter above 0x7F is shown as regipy gives it, U+FFFD for the letter, and the answer is partial and says so", async (v) => {
+  // Windows stores "M\u00fcller" one byte a character (every character is below U+0100); regipy decodes such a name as ASCII.
+  const lost = "C:\\Users\\M\u00fcller\\tool.exe";
+  const { out } = await run(v, ntuser([
+    { name: rot13(lost), type: "binary", value: ua72(1, 2, 0, 0, FT) },
+    { name: rot13("C:\\Users\\plain\\tool.exe"), type: "binary", value: ua72(1, 3, 0, 0, FT) },
+  ]));
+  assert.equal(out.status, "partial", out.status_basis);
+  assert.equal(out.record_count, 2);
+  assert.ok(out.records.some((r) => r.name_decoded === "C:\\Users\\M\ufffdller\\tool.exe"), JSON.stringify(out.records.map((r) => r.name_decoded)));
+  assert.ok(out.problems.some((p) => /1 value name\(s\) here hold U\+FFFD where regipy could not decode a character/.test(p)), JSON.stringify(out.problems));
 });
 
 dual("UserAssist: owner_sid is recorded as given by the caller, and the sid filter finds it", async (v) => {
@@ -361,6 +375,14 @@ dual("a hive that is dirty is said to be, with its logs named and not replayed; 
     assert.equal(out.hive_dirty, true);
     assert.deepEqual(out.transaction_logs_beside_hive, ["work/NTUSER.DAT.LOG1"]);
     assert.equal(out.transaction_logs_replayed, false);
+    // A dirty hive whose logs were not replayed is never plainly complete: the records may differ from the live registry's.
+    assert.equal(out.status, "partial");
+    assert.match(out.status_basis, /the hive is dirty \(its sequence numbers 12 and 11 differ\) and no transaction log was replayed: the tool looked for \.LOG1, \.LOG2 and \.LOG beside the hive \(transaction_logs_looked_for\) and found 1 \(transaction_logs_beside_hive\), and it replays none/);
+    assert.match(out.status_basis, /may differ from the live registry \(give registry_recover the hive and its logs/);
+    assert.deepEqual((out as unknown as { transaction_logs_looked_for: string[] }).transaction_logs_looked_for, ["work/NTUSER.DAT.LOG1", "work/NTUSER.DAT.LOG2", "work/NTUSER.DAT.LOG"]);
+    const cleanEnv = await v.write(cwd, "work/clean/NTUSER.DAT", ntuser([{ name: rot13("a"), type: "binary", value: ua16(1, 1, FT) }]));
+    const clean = body<Answer>(await tool(TOOL, cwd, { hive: "work/clean/NTUSER.DAT" }, cleanEnv));
+    assert.deepEqual([clean.hive_dirty, clean.status], [false, "complete"], "the same hive with its sequence numbers equal is complete");
     assert.ok(out.interpretation_limits.some((l) => /not replayed/.test(l)));
     const env2 = await v.write(cwd, "work/empty.dat", { name: "ROOT", children: [{ name: "Other" }] });
     const gone = failed(await tool(TOOL, cwd, { hive: "work/empty.dat" }, env2));
@@ -539,7 +561,7 @@ test("the tool is registered: manifest names, input magic and the secret_output 
   const manifest = JSON.parse(await readFile(join(WIN, TOOL, "manifest.json"), "utf8"));
   assert.deepEqual(manifest.use.names, ["NTUSER.DAT", "SYSTEM"]);
   assert.deepEqual(manifest.secret_output, { when_args: ["write_values"] });
-  assert.equal(manifest.version, 3);
+  assert.equal(manifest.version, 11);
   assert.deepEqual(manifest.requires, [], "no second reader is started, so nothing is required");
   assert.ok(manifest.timeout_seconds > 84);
   assert.match(manifest.description, /cross_check|second reader/);

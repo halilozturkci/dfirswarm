@@ -3,6 +3,7 @@ id: timeline/linux
 title: Linux chronology across clocks and families
 when: Building a reproducible timeline from independent evidence layers.
 needs: []
+card: Build independent layers before merging. timeline_super {"source": "<image>", "out_dir": "work/<your id>/<name>", "parsers": "<parser list>"}: complete is not coverage (the storage file's processing report is), an empty timeline is partial, the inline sample is not the timeline. linux_triage: record functions, dissect.target version and each status; it has no audit family and reads no RPM database. auth_log rows keep their year and zone basis. Does not show: that an event happened, or that two close records are linked.
 tools: [auth_log, linux_triage, timeline_super]
 requires_host: [log2timeline, psort]
 ---

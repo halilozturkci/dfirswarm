@@ -211,13 +211,13 @@ dual("a pipe, a link and a file over the size limit in the tasks directory are s
     await putTask(cwd, "A", utf16bom(taskXml({})));
     assert.equal(spawnSync("mkfifo", [join(cwd, "work", "Tasks", "Pipe")]).status, 0);
     await symlink(join(cwd, "work", "Tasks", "A"), join(cwd, "work", "Tasks", "Link"));
-    await writeFile(join(cwd, "work", "Tasks", "Big"), Buffer.alloc((8 << 20) + 1, 0x41));
+    await writeFile(join(cwd, "work", "Tasks", "Big"), Buffer.alloc((1 << 20) + 1, 0x41));
     const started = Date.now();
     const out = body<Answer>(await tool(TOOL, cwd, { software: "work/SOFTWARE", tasks_dir: "work/Tasks" }, env));
     assert.ok(Date.now() - started < 20_000);
     assert.equal(out.status, "partial");
     assert.match(out.status_basis, /1 link\(s\) and 1 other non-regular/);
-    assert.match((out.items.find((i) => i.path === "\\Big") as Row).xml_refused, /over 8388608 bytes/);
+    assert.match((out.items.find((i) => i.path === "\\Big") as Row).xml_refused, /over 1048576 bytes/);
     assert.equal(out.items.some((i) => i.path === "\\Link" || i.path === "\\Pipe"), false);
     const fifoHive = failed(await tool(TOOL, cwd, { software: "work/Tasks/Pipe" }, env));
     assert.match(fifoHive.error, /not a regular file/);
@@ -354,7 +354,10 @@ dual("a TaskCache of 100,000 tasks and 3,000 task files is read without a quadra
     const out = body<Answer>(await tool(TOOL, cwd, { software: "work/SOFTWARE", tasks_dir: "work/Tasks", limit: 10 }, env));
     const secs = (Date.now() - started) / 1000;
     assert.equal(out.item_count, 100_000);
-    assert.equal(out.status, out.walk_stopped_by_time_limit ? "partial" : "complete", out.status_basis);
+    // Partial only for the time: the walk stopped by the tool's clock, or the list too long to put in print order in the time left (the real
+    // regipy reads this hive in 119 to 136 s on an M3 Max, and took 253 s when the host was loaded, so the second came).
+    const forTime = out.walk_stopped_by_time_limit || /too long to put in print order in the time left/.test(out.status_basis);
+    assert.equal(out.status, forTime ? "partial" : "complete", out.status_basis);
     assert.equal(out.observation_counts.taskcache_without_xml, 97_000);
     assert.ok(secs < 280, `${secs} seconds`);
     const lines = readFileSync(join(cwd, out.all_results as string), "utf8").trim().split("\n");
