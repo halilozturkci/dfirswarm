@@ -64,7 +64,7 @@ import { pathToFileURL } from "node:url";
 import { execFile } from "node:child_process";
 import { eventChainVerifier, HARNESS_RECORD_TOOL, specialKind, verifyAttestationChain, verifyDisputeChain, verifyLedgerChain } from "../extensions/protocol.ts";
 import { verifyLeadChain } from "../extensions/leads.ts";
-import { LEDGER_SWEEPS, verifySweepChain } from "../extensions/store-sweep.ts";
+import { checkSweepSideFiles, LEDGER_SWEEPS, sweepSideFiles, verifySweepChain } from "../extensions/store-sweep.ts";
 import { FINISH_LOG } from "../extensions/finish.ts";
 import { checkNetwork, FETCH_LOG, GRANTS_LOG, type NetworkCheck } from "./net-grants.ts";
 import { hashArtifacts, type ArtifactIndex } from "./artifacts.ts";
@@ -1664,11 +1664,12 @@ export async function takeCustody(sandboxInput: string, options: CustodyOptions 
   if ("text" in sweepsRead && sweepsRead.text.trim()) {
     const v = verifySweepChain(sweepsRead.text);
     state.sweeps = { lines: v.total, intact: v.ok, detail: v.ok ? `${v.total} lines, chain intact` : `broken at line ${v.broken_at} (${v.reason})` };
-    // A line whose list of what it did not search is long names a side file by its sha256 (ledger/sweeps/unsearched-<sha256>.jsonl): held to it.
+    // A line whose list of what it did not search, or of what it found, is long names a side file by its sha256
+    // (ledger/sweeps/unsearched-<sha256>.jsonl, ledger/sweeps/hits-<sha256>.jsonl): held to it.
     if (v.ok) {
       const side = await sweepSideLists(sandbox, sweepsRead.text);
       if (side.named) {
-        state.sweeps.detail += `; ${side.named} side list(s) of what was not searched, ${side.bad.length ? `${side.bad.length} NOT as named (${side.bad.slice(0, 3).join("; ")})` : "each as its line names it"}`;
+        state.sweeps.detail += `; ${side.named} side list(s) of what was not searched or what was found, ${side.bad.length ? `${side.bad.length} NOT as named (${side.bad.slice(0, 3).join("; ")})` : "each as its line names it"}`;
         if (side.bad.length) state.sweeps.intact = false;
       }
     }
@@ -3043,44 +3044,13 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
 }
 
 /**
- * The side lists the sweep lines name (`unsearched_all.file`: a path under
- * ledger/sweeps/ and the sha256 of its bytes), each hashed as a stream and
- * held to its line. A list that is missing, is not a regular file under
- * ledger/sweeps/, or hashes otherwise is named.
+ * The side lists the sweep lines name (`unsearched_all.file`: what a sweep
+ * did not search; `hits_all.file`: what it found, when that is longer than
+ * its line holds), each a path under ledger/sweeps/ named by the sha256 of
+ * its bytes, hashed and held to its line (store-sweep.ts
+ * checkSweepSideFiles). A list that is missing, is not a regular file under
+ * ledger/sweeps/, is not named by its sha256, or hashes otherwise is named.
  */
 export async function sweepSideLists(sandbox: string, sweepsText: string): Promise<{ named: number; bad: string[] }> {
-  const want = new Map<string, string>();
-  for (const line of sweepsText.split("\n")) {
-    if (!line.includes('"unsearched_all"')) continue;
-    try {
-      const f = (JSON.parse(line) as { unsearched_all?: { file?: { path?: unknown; sha256?: unknown } } }).unsearched_all?.file;
-      if (f && typeof f.path === "string" && typeof f.sha256 === "string") want.set(f.path, f.sha256);
-    } catch {
-      // The chain check has read every line already: a line that does not parse is its finding, not this one's.
-    }
-  }
-  const bad: string[] = [];
-  const { createHash } = await import("node:crypto");
-  const { createReadStream, lstatSync } = await import("node:fs");
-  for (const [path, sha] of want) {
-    if (!/^ledger\/sweeps\/unsearched-[0-9a-f]{64}\.jsonl$/.test(path)) {
-      bad.push(`${path.slice(0, 120)}: not a side list's path`);
-      continue;
-    }
-    const abs = join(sandbox, path);
-    let regular = false;
-    try {
-      regular = lstatSync(abs).isFile();
-    } catch {
-      regular = false;
-    }
-    if (!regular) {
-      bad.push(`${path}: missing`);
-      continue;
-    }
-    const h = createHash("sha256");
-    await new Promise<void>((done, fail) => createReadStream(abs).on("data", (c) => h.update(c)).on("end", () => done()).on("error", fail)).catch(() => undefined);
-    if (h.digest("hex") !== sha) bad.push(`${path}: its bytes are not the ${sha.slice(0, 12)}\u2026 its line names`);
-  }
-  return { named: want.size, bad };
+  return checkSweepSideFiles(sweepSideFiles(sweepsText), (path) => join(sandbox, path));
 }

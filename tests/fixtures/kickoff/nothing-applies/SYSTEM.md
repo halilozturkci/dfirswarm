@@ -427,7 +427,9 @@ Ledger (only when `record` is in your tool list)
   streams, fields, look-alike payloads), record one finding with `carriers [{carrier, state:
   decoded | undecodable | not_examined, why}]`, a row each: an answer may not say that nothing
   remains open while a row is not examined. A payload that calls itself fake, test or decoy is a
-  decoy candidate, and a file in a vendor's path with the vendor's timestamps is not case data.
+  decoy candidate: record its finding with `decoy` (what in it says so); no answer rests on it
+  alone unless `decoy_check` names the machine check that shows it is the answer all the same. A
+  file in a vendor's path with the vendor's timestamps is not case data.
 - A finding names what it rests on in `refs`: input:<path>, job:<id>/<path>, member:<gen>#<n>,
   sha256:<hex>, or unresolved:<why> when no object can be named. Each ref is checked when you
   record; a file only in your own work/ is not an object of the run, so run the work as a job
@@ -507,10 +509,16 @@ Ledger (only when `record` is in your tool list)
   a part open gives in `value` only the piece of the format that is established, or leaves it
   empty; nothing is asked for the open part. A revision that lowers the confidence or the result
   keeps `value`: a doubt, a dispute or a best_candidate review changes confidence, result and
-  parts, never the asked string, and a candidate the answer held stays in `qualifier` until a
-  check rules it out; `value` changes only with `value_changed_because`, naming the entry
-  (`E-<seq>`) that shows it wrong. `alternatives_open` may say that nothing remains open only when
-  no carrier table or partial coverage record the answer cites shows one unexamined.
+  parts, never the asked string; `value` changes only with `value_changed_because`, naming the
+  entry (`E-<seq>`) that shows it wrong. Other readings go in `candidates [{value, state, why,
+  by?}]`: a revision carries every candidate of the answer it corrects, the readings disputes of
+  it give, and its earlier value when it lowers the confidence or answers an objection; a
+  candidate leaves only as `ruled_out` with `by`, the job (`job:<id>/<path>`) or the entry
+  resting on one whose result excludes it. `alternatives_open` may say that nothing remains open
+  only when no candidate is open and no carrier table or partial coverage record the answer cites
+  shows one unexamined; an answer that chose among several carriers names them in
+  `carrier_names`, and is recorded established only once the carrier table it cites has a row
+  for each.
   `reasoning` says how the entries lead to it, citing `E-<seq>` for every claim; for a question also
   `confidence` with `confidence_why`, `contrary` (the entries that say otherwise), `limitations`
   (the limitation entries that bound it), `alternatives_open` and `would_change`. The run records
@@ -674,8 +682,8 @@ Ledger (only when `record` is in your tool list)
   the negative against what it holds, and against what it does not. Whoever recorded the coverage cannot review it. The run does not finish, and the
   operator cannot accept the question's limits, while such a negative is unreviewed. `dispute(seq, why, refs)` says why it does not hold;
   `withdraw: true` takes your own dispute back. A dispute about a reading (a transcription, a
-  glyph, a look-alike character) adds your candidate beside the author's: only a check that rules
-  one out removes it. A dispute about how sure an answer is changes its confidence or result,
+  glyph, a look-alike character) says yours in `reading`: it becomes a candidate beside the
+  author's value, never in its place, and only a check that rules one out removes it. A dispute about how sure an answer is changes its confidence or result,
   never its `value`. A correction of a disputed entry does not answer
   the dispute: it stands on the correction until its disputer reads it and withdraws it (naming
   either entry), or disputes it again. Neither is for your own entries: correct those

@@ -156,6 +156,7 @@ Tools the agents write:
   --allow-install        Let them pip-install from pypi.org; --no-pypi keeps it off the allowlist
   --tools-from DIR       Start with a library of tools from earlier runs
   --pack ID[,ID]         Installed packs: their skills, tools and host checks
+  --no-pack ID[,ID]      A pack the kickoff is not to add on its own (memory-forensics for a dump)
   --pack-tools-as-jobs ID[,ID]   Their tools run as job_run(tool, args), not as Pi tools
 
 Network, closed by default (--network dynamic: bounded lookups the hub decides by --policy PRESET):
@@ -544,6 +545,12 @@ Tools the agents write
                       added to the toolbox check. Dependencies resolve first and
                       every pack is verified against its checksums before the run
                       starts. Without --pack a run carries no pack at all.
+                      With --pack, a process or memory dump at the top of an
+                      --inputs directory (by name or first bytes) adds
+                      memory-forensics, said at kickoff and in SWARM.md.
+  --no-pack ID[,ID]   Packs the kickoff is not to add on its own: with
+                      memory-forensics, a dump among the inputs leaves the
+                      run's packs as they are, and SWARM.md says why.
   --pack-tools-as-jobs ID[,ID]
                       The tools of these packs (named in --pack or needed by
                       one) are not registered as Pi tools. SWARM.md lists each
@@ -2672,6 +2679,76 @@ pack_secrets_plan() { # <pack dirs, one per line> <isolation> <allow 0|1> [local
   done <<< "$pack_dirs"
 }
 
+# E7: a process or memory dump among the inputs adds the memory pack. The
+# run's packs choose the images the census and the seats run in, so they are
+# fixed before the catalogue exists and cannot follow it: instead the top level
+# of every --inputs directory is looked at here, before the packs resolve, by
+# name and by the first bytes (scripts/dump-members.ts kickoffDumps). A run that
+# has packs gains memory-forensics (and so its skills enter the index under the
+# same budget as every pack's, a router alone above it); a run started without
+# --pack stays without. A pack the operator excluded (--no-pack) is never added,
+# and neither is one this host has not installed: either is said, here and in
+# SWARM.md. A resume keeps the packs its run started with. Reads and sets the
+# start's own locals: packs, no_packs, inputs_dirs, inputs_names, resume_of;
+# sets kickoff_dumps (the detect's JSON, empty when there is no dump) and
+# kickoff_dumps_decision (dump-members.ts MemoryPackDecision).
+kickoff_add_memory_pack() {
+  local mp=memory-forensics np excluded=0 di dargs=() said rec_packs
+  local np_list=()
+  IFS=',' read -ra np_list <<<"$no_packs"
+  for np in ${np_list[@]+"${np_list[@]}"}; do
+    np="$(printf '%s' "$np" | tr -d '[:space:]')"
+    [[ -n "$np" ]] || continue
+    if [[ ",$packs," == *",$np,"* ]]; then
+      echo "BLOCKER: --pack and --no-pack both name $np." >&2
+      exit 2
+    fi
+    [[ "$np" == "$mp" ]] && excluded=1
+  done
+  if [[ -n "$resume_of" ]]; then
+    # The run's own packs: what its kickoff added, it carries on with.
+    rec_packs="$(json_get "$resume_of" | jq -r '[(.packs // [])[]? | .id? // empty] | join(",")' 2>/dev/null)"
+    if [[ ",$rec_packs," == *",$mp,"* && ",$packs," != *",$mp,"* && "$excluded" -eq 0 ]]; then
+      packs="${packs:+$packs,}$mp"
+      echo "Packs:        $mp, which this run's kickoff added for a dump among its inputs, is kept"
+    fi
+    return 0
+  fi
+  [[ ${#inputs_dirs[@]} -gt 0 ]] || return 0
+  for di in "${!inputs_dirs[@]}"; do
+    dargs+=(--inputs "${inputs_dirs[$di]}" --under "$([[ ${#inputs_dirs[@]} -eq 1 ]] && echo inputs || echo "inputs/${inputs_names[$di]}")")
+  done
+  if ! kickoff_dumps="$(node --experimental-strip-types --no-warnings "$ROOT/scripts/dump-members.ts" detect "${dargs[@]}" 2>/dev/null)" \
+    || ! jq -e '.total | numbers' <<<"$kickoff_dumps" >/dev/null 2>&1; then
+    echo "WARN: the kickoff could not look for process or memory dumps among the inputs; the packs are those named, and the catalogue still says any dump it lists." >&2
+    kickoff_dumps=""
+    return 0
+  fi
+  if [[ "$(jq -r '.total' <<<"$kickoff_dumps")" -eq 0 ]]; then
+    kickoff_dumps=""
+    return 0
+  fi
+  said="$(jq -r 'def sz: if . >= 1073741824 then "\(. / 1073741824 * 10 | round / 10) GiB" elif . >= 1048576 then "\(. / 1048576 * 10 | round / 10) MiB" elif . >= 1024 then "\(. / 1024 | round) KiB" else "\(.) B" end;
+    "\(.total) process or memory dump(s) at the top of the inputs (\(.bytes | sz) in all): " + ([.dumps[:12][] | "\(.path) (\(.bytes | sz), \(.kind))"] | join(", ")) + (if .total > 12 then ", and \(.total - 12) more" else "" end)' <<<"$kickoff_dumps")"
+  if [[ ",$packs," == *",$mp,"* ]]; then
+    kickoff_dumps_decision=named
+    echo "Dumps:        $said; $mp is among the run's packs"
+  elif [[ "$excluded" -eq 1 ]]; then
+    kickoff_dumps_decision=excluded
+    echo "NOTE: $said. $mp was not added: --no-pack excludes it." >&2
+  elif [[ -z "$packs" ]]; then
+    kickoff_dumps_decision=no-packs
+    echo "NOTE: $said. $mp was not added: the run has no --pack, and the kickoff adds one only to a run that has packs (--pack $mp reads them)." >&2
+  elif ! "$ROOT/scripts/pack.sh" resolve "$mp" >/dev/null 2>&1; then
+    kickoff_dumps_decision=unavailable
+    echo "WARN: $said. $mp was not added: it is not installed on this host (scripts/pack.sh install packs/$mp)." >&2
+  else
+    kickoff_dumps_decision=added
+    packs="$packs,$mp"
+    echo "Packs:        $mp added: $said (--no-pack $mp leaves it out)"
+  fi
+}
+
 # --pack-tools-as-jobs: the packs whose tools are not registered as Pi tools. A
 # seat calls one as job_run(tool, args), in the job image of its pack, and the
 # contract (SWARM.md, "Pack tools run as jobs") lists each with its parameters.
@@ -3657,7 +3734,7 @@ cmd_start() {
   # A memory input whose kernel table the image lacks stops the start
   # (catalog/missing.json) unless the operator lets the run go on without it.
   local allow_missing_symbols=0
-  local packs=""
+  local packs="" no_packs="" kickoff_dumps="" kickoff_dumps_decision=""
   local allow_synced=0 custody_timeout="${SWARM_CUSTODY_TIMEOUT:-14400}"
   local notify_cmd="" notify_targets="" allow_root=0 verify_copy=1 ledger_from="" synced_allowed_by="" disk_encryption="unknown" model_gateway=0
   # The case policy and the network mode (scripts/case-policy.ts): the flags
@@ -3802,6 +3879,9 @@ cmd_start() {
       # Repeated, the packs add up (as in image-for): a second --pack used to
       # replace the first without a word.
       --pack) packs="${packs:+$packs,}$2"; shift 2 ;;
+      # A pack the kickoff would add on its own (the memory pack, for a dump
+      # among the inputs) that the operator does not want.
+      --no-pack) no_packs="${no_packs:+$no_packs,}${2:-}"; shift 2 ;;
       --pack-tools-as-jobs) pack_tools_as_jobs="${pack_tools_as_jobs:+$pack_tools_as_jobs,}${2:-}"; shift 2 ;;
       --toolbox-required) toolbox_required=1; shift ;;
       --requires) requires_caps="$2"; shift 2 ;;
@@ -4552,6 +4632,7 @@ STRIP
   # A case that says what it requires is checked for it, whatever the sets.
   if [[ -n "$requires_caps" && "$toolbox" == "off" ]]; then toolbox="dfir"; fi
   if [[ "$catalog" -eq 1 ]]; then quarantine=1; fi
+  kickoff_add_memory_pack
   local pack_dirs=""
   if [[ -n "$packs" ]]; then
     # dependencies first, and every one verified against its own checksums
@@ -5291,6 +5372,22 @@ console.log(r.ok ? "" : r.reason);' "$_gp" "$_gk" 2>/dev/null || echo "could not
     "$sandbox/tools"
   local id
   kickoff_pre_arm "$sandbox"
+  # The dumps the kickoff found among the inputs, what it did about the memory
+  # pack, and which tools of the run's packs read one: SWARM.md says them
+  # (scripts/render-contract.ts). A resumed run keeps its own.
+  if [[ -n "$kickoff_dumps" && -z "$resume_of" ]]; then
+    local kd_readers='[]' kd_t kd_pd
+    while IFS= read -r kd_t; do
+      [[ -n "$kd_t" ]] || continue
+      while IFS= read -r kd_pd; do
+        if [[ -n "$kd_pd" && -f "$kd_pd/tools/$kd_t/manifest.json" ]]; then
+          kd_readers="$(jq -c --arg t "$kd_t" '. + [$t]' <<<"$kd_readers")"
+          break
+        fi
+      done <<<"$pack_dirs"
+    done < <(jq -r '.reader_names[]?' <<<"$kickoff_dumps")
+    jq -c --arg d "$kickoff_dumps_decision" --argjson r "$kd_readers" 'del(.reader_names) + {decision: $d, readers: $r}' <<<"$kickoff_dumps" > "$sandbox/kickoff-dumps.json"
+  fi
   if [[ -n "$resume_of" ]]; then
     # A resume clears nothing the run holds: the board, the ledger and the
     # registers, the trace and its anchor, work/, the sessions, the kept
@@ -11025,6 +11122,11 @@ PY
   pkg_copy "$sandbox/ledger/disputes.jsonl" "$out/ledger-disputes.jsonl" non-empty
   # What the store sweeps found for each coverage record's strings: a chain of its own.
   pkg_copy "$sandbox/ledger/sweeps.jsonl" "$out/ledger-sweeps.jsonl" non-empty
+  # Its side lists (what a sweep did not search, what it found, where either is longer than its line): each line names one by its
+  # sha256, and the package's verify holds it to that; carried as ledger-sweeps/<name>, regular files only, never the kept results.
+  if [[ -s "$out/ledger-sweeps.jsonl" ]]; then
+    node --experimental-strip-types --no-warnings "$ROOT/scripts/package-tools.ts" sweep-lists "$sandbox" "$out" >/dev/null || echo "WARN: the store sweeps' side lists could not all be copied; swarm.sh verify names any that is missing." >&2
+  fi
   # The finish register (the coordinator's lease, readiness, the checks, the report's reviews): chained, sealed by custody.
   pkg_copy "$sandbox/leads/finish.jsonl" "$out/finish.jsonl" non-empty
   # The lead register (how the investigation proceeded): its chained events,

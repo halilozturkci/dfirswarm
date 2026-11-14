@@ -130,4 +130,38 @@ verify "$pkg" --allowed-signers "$TMP/allowed"
 grep -q 'CHANGED SINCE CUSTODY' "$pkg/report.html" || fail "the packaged report does not say its own report changed since custody"
 pass "the sealed index travels with the package, and a work file changed after the stop fails verify, signed or not"
 
+echo "# the package carries the store sweeps' side lists, and verify holds each to the sha256 its line names"
+# A sweep line that found 80 hits: the line keeps a few and names the file that holds them all.
+node --experimental-strip-types --no-warnings --input-type=module -e '
+const SW = await import(process.argv[1]);
+const { writeFileSync, mkdirSync } = await import("node:fs");
+const { join } = await import("node:path");
+const S = process.argv[2];
+mkdirSync(join(S, "ledger"), { recursive: true });
+const hits = Array.from({ length: 80 }, (_, i) => ({ ref: `job:j000001/rows/row-${i}.txt`, term: "mallory", count: 1, first_offset: 0, encodings: ["utf-8"] }));
+const written = await SW.sweepLineAsWritten(S, { v: 1, seq: 1, target: "0".repeat(64), rules: SW.SWEEP_RULES, state: "hits", terms: ["mallory"], searched: { objects: 80, bytes: 800 }, hits, named_hits: [], echoes: [], unsearched: [], started_at: "2026-11-14T00:00:00.000Z", at: "2026-11-14T00:00:01.000Z" });
+const line = { ...written, prev: "genesis" };
+line.hash = SW.sweepHash(line, "genesis");
+writeFileSync(join(S, "ledger", "sweeps.jsonl"), `${JSON.stringify(line)}\n`);
+' "$ROOT/extensions/store-sweep.ts" "$sb" || fail "could not write a sweep line with a side list"
+side="$(ls "$sb"/ledger/sweeps/hits-*.jsonl)"
+[[ -f "$side" ]] || fail "no side list was written"
+# Custody taken again (the report above was edited after the last one): it seals the sweeps and holds the side list to its line.
+node --experimental-strip-types --no-warnings "$ROOT/scripts/custody.ts" "$sb" --run "$id" --quiet --runs-dir "$SWARM_RUNS_DIR" >/dev/null 2>&1 || true
+jq -e '.sweeps.intact == true and (.sweeps.detail | test("1 side list\\(s\\) of what was not searched or what was found, each as its line names it"))' "$sb/custody.json" >/dev/null || fail "custody did not hold the side list to its line: $(jq -c '.sweeps' "$sb/custody.json")"
+out="$(swarm package "$id" --sign --key "$TMP/key")" || fail "packaging with a sweep's side list failed: $out"
+[[ -f "$pkg/ledger-sweeps/$(basename "$side")" ]] || fail "the package does not carry the side list: $(ls "$pkg")"
+[[ ! -e "$pkg/ledger-sweeps/cache" ]] || fail "the package carries the sweeps' kept results"
+grep -qE "^[0-9a-f]{64}  \./ledger-sweeps/$(basename "$side")\$" "$pkg/MANIFEST.txt" || fail "the side list is not in the manifest"
+jq -e '.components[] | select(.path == "ledger-sweeps") | .present == true' "$pkg/COMPONENTS.json" >/dev/null || fail "COMPONENTS.json does not list the side lists"
+verify "$pkg" --allowed-signers "$TMP/allowed"
+[[ $rc -eq 0 ]] && grep -q 'Sweep lists:  1 side list(s) named by the sweep lines, each in ledger-sweeps/ as its line names it' <<<"$out" || fail "a package with a sweep's side list did not verify it (rc $rc): $out"
+# The side list changed in the run after its line was written, and the run packaged again: signed, and not as its line names.
+chmod u+w "$side"
+printf '{"list":"hits","ref":"job:j000001/forged.txt","term":"mallory","count":1,"first_offset":0,"encodings":["utf-8"]}\n' >> "$side"
+out="$(swarm package "$id" --sign --key "$TMP/key")" || fail "repackaging failed: $out"
+verify "$pkg" --allowed-signers "$TMP/allowed"
+[[ $rc -eq 1 ]] && grep -q 'Sweep lists:  1 side list(s) named by the sweep lines, 1 NOT AS NAMED in ledger-sweeps/' <<<"$out" || fail "a side list changed after its line verified (rc $rc): $out"
+pass "the store sweeps' side lists travel with the package, under its manifest, and a list that is not the one its line names fails verify"
+
 echo "package-sign.test.sh: all checks passed"

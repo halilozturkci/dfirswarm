@@ -46,6 +46,12 @@ import { importHitExamined, importHitsFor, importHitWords, INTERPRETING_KINDS, u
 
 /** How many of a sweep's hits a gate item names; the rest are counted (ledger/sweeps.jsonl holds each). */
 const SWEEP_GATE_HITS = 20;
+/** The first SWEEP_GATE_HITS of `items` said, the rest counted and pointed at the file that holds each. */
+function boundedHits<T>(items: readonly T[], words: (x: T) => string, holder: string, max = SWEEP_GATE_HITS): string {
+  const said = items.slice(0, max).map(words);
+  if (items.length > max) said.push(`and ${items.length - max} more (${holder} holds each)`);
+  return said.join("; ");
+}
 import type { LedgerAlternative, LedgerEdge, LedgerEntry, LedgerKind, LedgerLocator, LedgerMethod, LedgerQualify, LedgerRel, SwarmContext } from "./protocol-core.ts";
 import { ANSWER_ONLY_REL_KINDS, DELTA_REL_KINDS, LEDGER_ACT_MAX_CHARS, LEDGER_ALTERNATIVE_STATUS, LEDGER_ANSWER_ID, LEDGER_ANSWER_RESULTS, LEDGER_ATTESTATIONS, LEDGER_BASIS, LEDGER_BECAUSE_MAX_CHARS, LEDGER_CLOCK_MAX_CHARS, LEDGER_COMPLETION, LEDGER_CONFIDENCE, LEDGER_DIR, LEDGER_DISPUTES, LEDGER_ENTRIES, LEDGER_EVIDENCE_MAX_CHARS, LEDGER_HYPOTHESIS_STATUS, LEDGER_INDICATES_MAX_CHARS, LEDGER_KINDS, LEDGER_LIMITATION_REASONS, LEDGER_LOCATOR_MAX_CHARS, LEDGER_MAX_ALTERNATIVES, LEDGER_MAX_ANSWERS, LEDGER_MAX_CITATIONS, LEDGER_MAX_ENTRIES, LEDGER_MAX_LOCATORS, LEDGER_MAX_QUALIFIES, LEDGER_MAX_REFS, LEDGER_MAX_REL, LEDGER_MD, LEDGER_PRECISION, LEDGER_REASONING_MAX_CHARS, LEDGER_REF_MAX_CHARS, LEDGER_REL_KINDS, LEDGER_SECTION_SPECIAL, LEDGER_SOURCE_CLASSES, LEDGER_SOURCE_MAX_CHARS, LEDGER_SUBJECT_MAX_CHARS, LEDGER_SUBJECT_TYPES, LEDGER_VALUE_MAX_CHARS, LEDGER_VERSION, LEDGER_WHY_MAX_CHARS, REGISTER_LOCK, canonicalValue, ledgerContent, ledgerHash, sha256Hex, traceHarnessEntry, withNamedLock, withTableLock } from "./protocol-core.ts";
 
@@ -137,6 +143,14 @@ export type LedgerInput = {
   images_read?: string[] | string;
   /** A finding's carrier table: [{carrier, state: decoded | undecodable | not_examined, why}] (carriersOpen). */
   carriers?: unknown;
+  /** An answer's or a finding's candidate values beside its value: [{value, state: open | ruled_out | decoy, why, by?}] (candidateRows). */
+  candidates?: unknown;
+  /** An answer's: the carriers its value could be in, by name (carriersOpen). */
+  carrier_names?: string[] | string;
+  /** A finding's: what in the artefact declares it fake, a test or a vendor's sample (decoyRule). */
+  decoy?: string;
+  /** An answer's that rests on a decoy: {by: the machine check, why} (decoyRule). */
+  decoy_check?: unknown;
 };
 
 function listOf(v: string[] | string | undefined): string[] {
@@ -415,8 +429,10 @@ async function ledgerV3Input(
 }
 
 /** The fields only an answer takes, and only a finding takes: named in a refusal when they come with another kind. */
-const ANSWER_ONLY_FIELDS = ["section", "reasoning", "contrary", "limitations", "alternatives_open", "would_change", "inconclusive", "result", "contrary_none_why", "asserts_absence", "question_rev", "material", "downgrade", "parts", "premises", "premise_tested", "qualifier", "value_changed_because"] as const;
-const FINDING_ONLY_FIELDS = ["indicates", "alternatives", "alternatives_none_why", "significance", "carriers"] as const;
+const ANSWER_ONLY_FIELDS = ["section", "reasoning", "contrary", "limitations", "alternatives_open", "would_change", "inconclusive", "result", "contrary_none_why", "asserts_absence", "question_rev", "material", "downgrade", "parts", "premises", "premise_tested", "qualifier", "value_changed_because", "carrier_names", "decoy_check"] as const;
+const FINDING_ONLY_FIELDS = ["indicates", "alternatives", "alternatives_none_why", "significance", "carriers", "decoy"] as const;
+/** The fields a finding and an answer both take, and no other kind: the candidate values beside its value (candidateRows). */
+const CANDIDATE_FIELDS = ["candidates"] as const;
 /** The fields only a coverage record takes. */
 const COVERAGE_ONLY_FIELDS = ["proposition", "inventory_rev", "time_range", "search_method", "settings", "coverage_actual", "skipped", "failures", "result_refs", "result_bound", "detection_opportunity", "areas", "acquisition_ask", "acquisition_none_why", "looked_for", "looked_for_none_why"] as const;
 
@@ -529,7 +545,10 @@ async function ledgerV4Input(
     }
   }
   if (qualifies.length) fields.qualifies = qualifies;
-  if (kind !== "finding") return { fields };
+  if (kind !== "finding") {
+    if (given(raw.candidates)) D.add(`candidates is an answer's or a finding's: the values still weighed beside its value${kind ? `; on ${/^[aeiou]/.test(kind) ? "an" : "a"} ${kind}, say them in value or evidence` : ""}`);
+    return { fields };
+  }
   if (!basis) D.need("basis", "a finding says whether it was seen in the evidence or reasoned from it: basis observed or inferred");
   if (!confidence && !given(input.confidence)) D.need("confidence", "a finding says how sure: confidence high, medium or low, with confidence_why");
   const indicates = D.text(boundedText("indicates", input.indicates, LEDGER_INDICATES_MAX_CHARS));
@@ -579,6 +598,15 @@ async function ledgerV4Input(
     }
     if (rows.length > LEDGER_MAX_CARRIERS) D.add(`carriers lists more than ${LEDGER_MAX_CARRIERS} rows: group the ones that share a state and a why`);
     else if (rows.length) (fields as { carriers?: CarrierRow[] }).carriers = rows;
+  }
+  // A finding's candidate values (candidateRows; a check a row names is weighed against the ledger in recordChecked) and its decoy mark (decoyRule).
+  if (given(raw.candidates)) {
+    const rows = candidateRows(raw.candidates, D);
+    if (rows.length) fields.candidates = rows;
+  }
+  if (given(raw.decoy)) {
+    const d = D.text(boundedText("decoy", raw.decoy, LEDGER_WHY_MAX_CHARS));
+    if (d.value) fields.decoy = d.value;
   }
   return { fields };
 }
@@ -827,11 +855,11 @@ export function kindsFitting(raw: Record<string, unknown>): string[] {
   const takes: Record<string, readonly string[]> = {
     event: [...KIND_COMMON, ...KIND_OBJECT],
     ioc: [...KIND_COMMON, ...KIND_OBJECT],
-    finding: [...KIND_COMMON, ...KIND_OBJECT, ...FINDING_ONLY_FIELDS],
+    finding: [...KIND_COMMON, ...KIND_OBJECT, ...FINDING_ONLY_FIELDS, ...CANDIDATE_FIELDS],
     absence: [...KIND_COMMON, ...KIND_OBJECT, "completion"],
     hypothesis: [...KIND_COMMON, ...KIND_OBJECT, "status"],
     limitation: [...KIND_COMMON, ...KIND_OBJECT, "reason"],
-    answer: [...KIND_COMMON, ...ANSWER_ONLY_FIELDS],
+    answer: [...KIND_COMMON, ...ANSWER_ONLY_FIELDS, ...CANDIDATE_FIELDS],
     coverage: [...KIND_COMMON, ...COVERAGE_ONLY_FIELDS, "refs", "answers", "alternatives", "alternatives_open"],
   };
   // A key no kind takes (a note to self, a misspelt name) says nothing of the kind: the check does not read it either.
@@ -841,7 +869,7 @@ export function kindsFitting(raw: Record<string, unknown>): string[] {
 }
 
 /** The fields that are one kind's and no other's: a section is an answer's, a reason a limitation's. */
-const KIND_MARKS: Record<string, readonly string[]> = { coverage: COVERAGE_ONLY_FIELDS, answer: ["section", "reasoning", "result", "would_change", "contrary", "contrary_none_why", "parts", "premises", "premise_tested", "question_rev", "qualifier"], finding: ["indicates", "significance", "alternatives_none_why", "carriers"], absence: ["completion"], limitation: ["reason"], hypothesis: ["status"] };
+const KIND_MARKS: Record<string, readonly string[]> = { coverage: COVERAGE_ONLY_FIELDS, answer: ["section", "reasoning", "result", "would_change", "contrary", "contrary_none_why", "parts", "premises", "premise_tested", "question_rev", "qualifier", "carrier_names", "decoy_check"], finding: ["indicates", "significance", "alternatives_none_why", "carriers", "decoy"], absence: ["completion"], limitation: ["reason"], hypothesis: ["status"] };
 
 /** The kinds whose own fields an input carries (KIND_MARKS). One alone names the kind even beside a field it does not take: that field is then named as not its own. */
 export function kindsMarked(raw: Record<string, unknown>): string[] {
@@ -1148,6 +1176,8 @@ async function recordChecked(ctx: SwarmContext, input: LedgerInput, D: Defects):
   const v4 = await ledgerV4Input(ctx.sandboxRoot, input, kind, refs, failed, v3.fields.basis, confidence, D);
   // A negative that rests on the seat's own scanner, or on pictures (negativeBasis): its control run and the images read.
   const neg = await negativeBasis(ctx.sandboxRoot, ctx.agentId, input, kind, refs, value, D);
+  // The candidates a correction carries from the finding it corrects (said in the reply).
+  const carried: CandidateRow[] = [];
   // What the ledger itself says of the entries it names (rel, supersedes), read here so that it is named with the rest; the lock checks it again.
   {
     const now = await readLedger(ctx.sandboxRoot, { raw: true });
@@ -1155,6 +1185,16 @@ async function recordChecked(ctx: SwarmContext, input: LedgerInput, D: Defects):
     const replaced = supersededBy(now);
     for (const r of v3.rel) for (const why of relDefects(r, bySeq, replaced)) D.add(why);
     if (supersedes !== undefined) for (const why of supersedeDefects(supersedes, bySeq, replaced)) D.add(why);
+    // A finding's candidates: each check a row names, held to the ledger; a correction carries the rows of the finding it corrects and the readings disputes of it give (carryCandidates).
+    if (kind === "finding") {
+      for (const why of await candidateCheckDefects(ctx.sandboxRoot, v4.fields.candidates ?? [], bySeq, replaced)) D.add(why);
+      const earlier = supersedes !== undefined ? bySeq.get(supersedes) : undefined;
+      if (earlier?.kind === "finding") {
+        const c = carryCandidates(earlier, v4.fields.candidates ?? [], { value, readings: readingsOn(earlier, disputesInForce(now, await readDisputes(ctx.sandboxRoot))), kept: false });
+        if (c.rows.length) v4.fields.candidates = c.rows;
+        carried.push(...c.carried);
+      }
+    }
   }
   const refused = D.refusal(kind);
   if (refused) return refused;
@@ -1171,6 +1211,8 @@ async function recordChecked(ctx: SwarmContext, input: LedgerInput, D: Defects):
   if (unqualified.length) {
     notes.push(`rests on the kept output of a job that did not succeed: ${unqualified.map((f) => `${f.ref} (job ${f.ref.slice(4).split("/")[0]}: ${f.status})`).join(", ")}${kind === "finding" ? "; say why those bytes are still usable in qualifies [{ref, why}], or cite the output of a job that worked" : ""}`);
   }
+  if (carried.length) notes.push(`candidates carried from #${supersedes}: ${candidatesWords(carried)}. A correction keeps every candidate the finding it corrects held, and every reading a dispute of it gives; only a check removes one (candidates [{value, state: "ruled_out", by: job:<id>/<path> or E-<seq>, why}])`);
+  if (kind === "finding" && decoyUnmarked({ value, indicates: v4.fields.indicates, decoy: v4.fields.decoy })) notes.push("its words say the payload declares itself fake, a test or a sample: if it does, record it again with decoy: what in it says so, so that it stays a decoy candidate and no answer rests on it alone");
   if (v3.fields.completion && v3.fields.completion !== "complete") {
     notes.push(`the search was ${v3.fields.completion}: this absence holds only for what was searched; record what was not reached as kind=limitation (reason ${v3.fields.completion === "failed" ? "failed" : "partial"})`);
   }
@@ -1202,7 +1244,7 @@ async function recordChecked(ctx: SwarmContext, input: LedgerInput, D: Defects):
       at: new Date().toISOString(),
     };
     // The whole of what it says: the hashed content, and beside it the fields protocol-core's content does not hold yet (a carrier table, a control, the images read).
-    const contentOf = (e: LedgerEntry) => `${ledgerContent(e)}\n${JSON.stringify({ ...negativeFieldsOf(e), carriers: (e as { carriers?: unknown }).carriers ?? null })}`;
+    const contentOf = (e: LedgerEntry) => `${ledgerContent(e)}\n${JSON.stringify({ ...negativeFieldsOf(e), carriers: (e as { carriers?: unknown }).carriers ?? null, ...(e.candidates?.length ? { candidates: e.candidates } : {}), ...(e.decoy ? { decoy: e.decoy } : {}) })}`;
     const content = contentOf(candidate);
     if (supersedes !== undefined) {
       const target = bySeq.get(supersedes) as LedgerEntry;
@@ -2607,7 +2649,7 @@ async function renderLedgerNow(sandboxRoot: string, entries?: LedgerEntry[]): Pr
     const h = e.hash ?? ledgerHash(e, "genesis");
     const by = attests.filter((a) => a.target === h).map((a) => `${a.by}${a.strength === "best_candidate" ? " (best candidate)" : ""}`);
     const against = disputes.filter((d) => d.target === h);
-    return `${by.length ? ` [attested by ${[...new Set(by)].join(", ")}]` : ""}${against.length ? ` **[disputed by ${against.map((d) => `${d.by}: ${mdCell(d.why)}${d.inherited_from !== undefined ? ` (raised on #${d.inherited_from}, which it corrects; open until answered)` : ""}`).join("; ")}]**` : ""}`;
+    return `${by.length ? ` [attested by ${[...new Set(by)].join(", ")}]` : ""}${against.length ? ` **[disputed by ${against.map((d) => `${d.by}: ${mdCell(d.why)}${d.reading ? ` (reads it as: ${mdCell(d.reading)})` : ""}${d.inherited_from !== undefined ? ` (raised on #${d.inherited_from}, which it corrects; open until answered)` : ""}`).join("; ")}]**` : ""}`;
   };
   // A corrected entry stays where it was, marked; its correction says what it corrects.
   const mark = (e: LedgerEntry) =>
@@ -2636,7 +2678,7 @@ async function renderLedgerNow(sandboxRoot: string, entries?: LedgerEntry[]): Pr
       const neg = r && NB.NEGATIVE_RESULTS.has(r) && e.section?.startsWith("question:") ? negativeReview(e, all, allAttestations) : null;
       const negText = neg ? (neg.reviewed ? ` (negative, reviewed by ${neg.by.join(", ")})` : " **(negative, unreviewed)**") : "";
       lines.push(
-        `- **#${e.seq}** ${e.section}${e.question_rev ? ` (revision ${e.question_rev})` : ""}${e.inconclusive ? " (inconclusive)" : ""}${e.result ? ` (${e.result})` : ""}${e.asserts_absence ? " (asserts absence)" : ""}${negText}: ${e.value || "(no value yet)"}${(e as AnswerExtras).qualifier ? ` — qualifier: ${(e as AnswerExtras).qualifier}` : ""}${mark(e)}${e.confidence ? ` _(${e.confidence}${e.confidence_why ? `: ${e.confidence_why}` : ""})_` : ""}${cites("rests on", e.support)}${cites("contrary", e.contrary)}${e.contrary_none_why ? ` — nothing says otherwise: ${e.contrary_none_why}` : ""}${cites("limitations", e.limitations)}${e.qualifies?.length ? ` — qualifies: ${e.qualifies.map((q) => `${q.ref} (${q.why})`).join("; ")}` : ""}${e.alternatives_open ? ` — still open: ${e.alternatives_open}` : ""}${e.would_change ? ` — would change it: ${e.would_change}` : ""}${e.unsupported_tokens?.length ? ` — in none of the cited entries: ${e.unsupported_tokens.join(", ")}` : ""}${p?.length ? ` — **no longer stands on its support: ${p.join("; ")}**` : ""}${e.parts?.length ? ` — parts: ${PM.partsWords(e.parts)}` : ""}${e.premises?.length ? ` — premises: ${PM.citationsWords(e.premises)}` : ""}${e.premise_tested ? ` — ${premiseTestWords(e.premise_tested)}` : ""} — reasoning: ${e.reasoning ?? ""} — by ${e.authors.join(", ")}`,
+        `- **#${e.seq}** ${e.section}${e.question_rev ? ` (revision ${e.question_rev})` : ""}${e.inconclusive ? " (inconclusive)" : ""}${e.result ? ` (${e.result})` : ""}${e.asserts_absence ? " (asserts absence)" : ""}${negText}: ${e.value || "(no value yet)"}${(e as AnswerExtras).qualifier ? ` — qualifier: ${(e as AnswerExtras).qualifier}` : ""}${candidatesOf(e, disputes).length ? ` — candidates: ${candidatesWords(candidatesOf(e, disputes))}` : ""}${e.carrier_names?.length ? ` — carriers named: ${e.carrier_names.join(", ")}` : ""}${e.decoy_check ? ` — decoy check: ${e.decoy_check.by} (${e.decoy_check.why})` : ""}${mark(e)}${e.confidence ? ` _(${e.confidence}${e.confidence_why ? `: ${e.confidence_why}` : ""})_` : ""}${cites("rests on", e.support)}${cites("contrary", e.contrary)}${e.contrary_none_why ? ` — nothing says otherwise: ${e.contrary_none_why}` : ""}${cites("limitations", e.limitations)}${e.qualifies?.length ? ` — qualifies: ${e.qualifies.map((q) => `${q.ref} (${q.why})`).join("; ")}` : ""}${e.alternatives_open ? ` — still open: ${e.alternatives_open}` : ""}${e.would_change ? ` — would change it: ${e.would_change}` : ""}${e.unsupported_tokens?.length ? ` — in none of the cited entries: ${e.unsupported_tokens.join(", ")}` : ""}${p?.length ? ` — **no longer stands on its support: ${p.join("; ")}**` : ""}${e.parts?.length ? ` — parts: ${PM.partsWords(e.parts)}` : ""}${e.premises?.length ? ` — premises: ${PM.citationsWords(e.premises)}` : ""}${e.premise_tested ? ` — ${premiseTestWords(e.premise_tested)}` : ""} — reasoning: ${e.reasoning ?? ""} — by ${e.authors.join(", ")}`,
       );
     }
   }
@@ -2700,6 +2742,8 @@ export function interpretationText(e: LedgerEntry): string {
   if (e.significance) parts.push(`significance: ${e.significance}`);
   const x = e as LedgerEntry & NegativeFields & { carriers?: CarrierRow[] };
   if (x.carriers?.length) parts.push(`carriers: ${x.carriers.map((r) => `${r.carrier} (${r.state.replace("_", " ")}: ${r.why})`).join("; ")}`);
+  if (e.decoy) parts.push(`DECOY (declares itself so: ${e.decoy})`);
+  if (e.candidates?.length) parts.push(`candidates: ${candidatesWords(e.candidates)}`);
   if (x.control?.length) parts.push(`control: ${x.control.map((c) => `${c.ref} (${c.found})`).join("; ")}`);
   if (x.images_unread?.length) parts.push(`IMAGES NOT READ: ${x.images_unread.map((u) => `${u.unread.length} of ${u.total} of job:${u.job}${u.dir ? `/${u.dir}` : ""}`).join("; ")}`);
   if (e.qualifies?.length) parts.push(`from a job that did not succeed: ${e.qualifies.map((q) => `${q.ref} (${q.why})`).join("; ")}`);
@@ -3011,10 +3055,12 @@ export function unsupportedTokens(text: string, cited: LedgerEntry[], bySeq: Map
  * (`withdraw`, its own dispute only). The why is inside the hashed record;
  * the chain is the file's own.
  */
-export type LedgerDispute = { v: 1; act: "dispute" | "withdraw"; seq: number; target: string; by: string; at: string; why: string; refs?: string[]; prev?: string; hash?: string };
+/** A dispute, or its withdrawal. `reading`: a dispute about a reading (a transcription, a glyph, a look-alike character) says the value as its disputer reads it, and that reading becomes a candidate of the entry (candidatesOf), never its value. */
+export type LedgerDispute = { v: 1; act: "dispute" | "withdraw"; seq: number; target: string; by: string; at: string; why: string; refs?: string[]; reading?: string; prev?: string; hash?: string };
 
 export function disputeHash(d: LedgerDispute, prev: string): string {
-  const core = JSON.stringify({ v: d.v, act: d.act, seq: d.seq, target: d.target, by: d.by, at: d.at, why: d.why, ...(d.refs?.length ? { refs: d.refs } : {}) });
+  // reading only when present: every dispute written before it keeps the hash it was chained with.
+  const core = JSON.stringify({ v: d.v, act: d.act, seq: d.seq, target: d.target, by: d.by, at: d.at, why: d.why, ...(d.refs?.length ? { refs: d.refs } : {}), ...(d.reading ? { reading: d.reading } : {}) });
   return createHash("sha256").update(`${prev}\n${core}`).digest("hex");
 }
 
@@ -3103,7 +3149,7 @@ export function disputeWords(d: DisputeInForce): string {
 
 // --- attest and dispute ---------------------------------------------------------------------
 
-export type LedgerActInput = { seq?: number | string; how?: string; why?: string; refs?: string[] | string; withdraw?: boolean; review?: unknown; strength?: unknown; answer_review?: unknown; second_review_why?: string };
+export type LedgerActInput = { seq?: number | string; how?: string; why?: string; refs?: string[] | string; withdraw?: boolean; review?: unknown; strength?: unknown; answer_review?: unknown; second_review_why?: string; reading?: string };
 
 /**
  * The coverage record that carries a superseded one an answer cites, or null:
@@ -3687,6 +3733,9 @@ export async function disputeEntry(ctx: SwarmContext, input: LedgerActInput): Pr
   const why = boundedText("why", input.why, LEDGER_ACT_MAX_CHARS);
   if (!why.ok) return why;
   if (!why.value) return { ok: false, reason: input.withdraw ? "why is required: why the dispute no longer stands" : "why is required: what does not hold, and what shows it" };
+  const reading = boundedText("reading", input.reading, LEDGER_VALUE_MAX_CHARS);
+  if (!reading.ok) return reading;
+  if (reading.value && input.withdraw) return { ok: false, reason: "reading is a dispute's: the value as you read it, added beside the entry's as a candidate; a withdrawal takes no reading" };
   const refs = listOf(input.refs);
   if (refs.length > LEDGER_MAX_REFS) return { ok: false, reason: `refs names more than ${LEDGER_MAX_REFS} objects` };
   if (refs.length) {
@@ -3701,6 +3750,7 @@ export async function disputeEntry(ctx: SwarmContext, input: LedgerActInput): Pr
     const entries = await readLedger(ctx.sandboxRoot);
     const t = actTarget(entries, input.seq, ctx.agentId, "dispute");
     if (!t.ok) return t;
+    if (reading.value && t.entry.kind !== "answer" && t.entry.kind !== "finding") return { ok: false, reason: `reading is the value as you read it, a candidate beside an answer's or a finding's value; #${t.entry.seq} is a ${t.entry.kind}: say what does not hold in why` };
     const target = t.entry.hash ?? ledgerHash(t.entry, "genesis");
     const all = await readDisputes(ctx.sandboxRoot);
     // A dispute stands on the correction of the entry it named until the
@@ -3710,7 +3760,7 @@ export async function disputeEntry(ctx: SwarmContext, input: LedgerActInput): Pr
     if (!input.withdraw && standing) return { ok: true, line: standing, appended: false, note: standing.inherited_from !== undefined ? `you disputed #${standing.inherited_from}, which #${t.entry.seq} corrects, and that dispute stands on it until you withdraw it: ${standing.why}` : `you dispute #${t.entry.seq} already: ${standing.why}` };
     // A withdrawal names the dispute it ends: the entry that dispute was raised on.
     const named = standing?.inherited_from !== undefined ? entries.find((e) => e.seq === standing.inherited_from) : undefined;
-    const d: LedgerDispute = { v: 1, act: input.withdraw ? "withdraw" : "dispute", seq: named ? named.seq : t.entry.seq, target: named ? (named.hash ?? ledgerHash(named, "genesis")) : target, by: ctx.agentId, at: new Date().toISOString(), why: why.value, ...(refs.length ? { refs } : {}) };
+    const d: LedgerDispute = { v: 1, act: input.withdraw ? "withdraw" : "dispute", seq: named ? named.seq : t.entry.seq, target: named ? (named.hash ?? ledgerHash(named, "genesis")) : target, by: ctx.agentId, at: new Date().toISOString(), why: why.value, ...(refs.length ? { refs } : {}), ...(reading.value ? { reading: reading.value } : {}) };
     const prev = all.at(-1)?.hash ?? "genesis";
     const line: LedgerDispute = { ...d, prev, hash: disputeHash(d, prev) };
     await held.assertOwned();
@@ -3724,7 +3774,7 @@ export async function disputeEntry(ctx: SwarmContext, input: LedgerActInput): Pr
 // --- answers --------------------------------------------------------------------------------
 
 /** The fields an answer never takes: it rests on entries, not objects, and states no event. */
-const NOT_ANSWER_FIELDS = ["ts", "refs", "answers", "rel", "clock", "precision", "basis", "status", "reason", "completion", "attribution", "locators", "indicates", "alternatives", "alternatives_none_why", "significance", "carriers", "control", "images_read", ...COVERAGE_ONLY_FIELDS] as const;
+const NOT_ANSWER_FIELDS = ["ts", "refs", "answers", "rel", "clock", "precision", "basis", "status", "reason", "completion", "attribution", "locators", "indicates", "alternatives", "alternatives_none_why", "significance", "carriers", "decoy", "control", "images_read", ...COVERAGE_ONLY_FIELDS] as const;
 
 /** Each ref of an entry whose job did not succeed and that the entry does not qualify itself. */
 async function unqualifiedFailedRefs(sandboxRoot: string, e: LedgerEntry): Promise<string[]> {
@@ -4013,7 +4063,7 @@ export async function questionBar(sandboxRoot: string, sectionId: string): Promi
  */
 async function recordCoverage(ctx: SwarmContext, input: LedgerInput, D: Defects): Promise<LedgerResult> {
   const raw = input as Record<string, unknown>;
-  const notHere = [...ANSWER_ONLY_FIELDS.filter((f) => f !== "alternatives_open"), "indicates", "alternatives_none_why", "significance", "status", "reason", "completion", "ts", "clock", "precision", "basis", "attribution", "locators", "carriers", "control", "images_read"].filter((f) => given(raw[f]) && !(f === "alternatives" && typeof raw[f] === "string"));
+  const notHere = [...ANSWER_ONLY_FIELDS.filter((f) => f !== "alternatives_open"), "indicates", "alternatives_none_why", "significance", "status", "reason", "completion", "ts", "clock", "precision", "basis", "attribution", "locators", "carriers", "decoy", "candidates", "control", "images_read"].filter((f) => given(raw[f]) && !(f === "alternatives" && typeof raw[f] === "string"));
   if (notHere.length) D.add(`${notHere.join(", ")} ${notHere.length === 1 ? "is" : "are"} not a coverage record's: it says what a search covered, and the entries it rests on say what was found${notHere.length > 1 ? " (leave them out)" : ""}`);
   const proposition = String(input.proposition ?? "").trim();
   const said = String(input.value ?? "").trim();
@@ -4234,7 +4284,7 @@ async function recordCoverage(ctx: SwarmContext, input: LedgerInput, D: Defects)
   const now = await readLedger(ctx.sandboxRoot);
   const unexamined = SW.unexaminedHits(recorded.entry, now, await SW.readSweeps(ctx.sandboxRoot), supersededBy(now));
   if (unexamined.length) {
-    notes.push(`it names ${unexamined.length === 1 ? "an object" : `${unexamined.length} objects`} an earlier sweep found hits in, and no entry among its result_refs says what ${unexamined.length === 1 ? "it" : "each"} showed: ${unexamined.map((u) => u.ref).join(", ")}. Naming a hit is not examining it: a negative resting on this record is held (sweep_hits) until you record what each showed (a finding, an event or a limitation whose refs name the object, or one absence whose refs list several, written after the sweep) and record the coverage again citing them in result_refs`);
+    notes.push(`it names ${unexamined.length === 1 ? "an object" : `${unexamined.length} objects`} an earlier sweep found hits in, and no entry among its result_refs says what ${unexamined.length === 1 ? "it" : "each"} showed: ${unexamined.slice(0, SWEEP_GATE_HITS).map((u) => u.ref).join(", ")}${unexamined.length > SWEEP_GATE_HITS ? ` and ${unexamined.length - SWEEP_GATE_HITS} more` : ""}. Naming a hit is not examining it: a negative resting on this record is held (sweep_hits) until you record what each showed (a finding, an event or a limitation whose refs name the object, or one absence whose refs list several, written after the sweep) and record the coverage again citing them in result_refs`);
   }
   if (recorded.entry.looked_for?.length) {
     void SW.startSweep(ctx.sandboxRoot, recorded.entry);
@@ -4443,15 +4493,27 @@ export const LEDGER_MAX_CARRIERS = 60;
  * carries a table of carriers with a row not examined, and when it cites
  * such a table beside a coverage record that names more objects than the
  * table has rows (a carrier with no row). An answer that cites no table is
- * not held: nothing on the record says that it chose among carriers (a
- * first version held every such answer that cited a partial coverage
- * record, and refused 21 answers the three replayed runs had recorded, none
- * of them a choice among carriers).
+ * not held by those two: nothing on the record says that it chose among
+ * carriers (a first version held every such answer that cited a partial
+ * coverage record, and refused 21 answers the three replayed runs had
+ * recorded, none of them a choice among carriers). An answer that says it
+ * chose among carriers (carrier_names, N of them) is held whatever it cites:
+ * it may say nothing remains open, or be recorded established, only once the
+ * tables it cites have a row for each of the N.
  */
-export function carriersOpen(alternativesOpen: string, cited: ReadonlyArray<LedgerEntry & { carriers?: CarrierRow[] }>): string[] {
-  if (!NONE_OPEN.test(alternativesOpen)) return [];
+export function carriersOpen(alternativesOpen: string, cited: ReadonlyArray<LedgerEntry & { carriers?: CarrierRow[] }>, o: { names?: readonly string[]; result?: string } = { result: "established" }): string[] {
+  const none = NONE_OPEN.test(alternativesOpen);
   const out: string[] = [];
   const tables = cited.filter((e) => e.kind === "finding" && e.carriers?.length);
+  const names = o.names ?? [];
+  if (names.length && (none || o.result === "established")) {
+    const missing = carriersWithoutRow(names, tables);
+    if (missing.length) {
+      const where = tables.length ? `the carrier table${tables.length > 1 ? "s" : ""} it cites (${tables.map((t) => `E-${t.seq}`).join(", ")}) ${tables.length > 1 ? "have" : "has"} no row for ${missing.length} of them` : `it cites no carrier table, so none of them has a row`;
+      out.push(`this answer names ${names.length} carrier${names.length === 1 ? "" : "s"} (carrier_names) and ${where} (${missing.slice(0, 8).join(", ")}${missing.length > 8 ? ", …" : ""}): ${none ? "nothing can be said to remain open" : "it cannot be recorded established"} until each carrier has a row. Record the carrier table, a finding with carriers [{carrier, state: decoded | undecodable | not_examined, why}] and a row for each of the ${names.length}, and cite it; or record this answer partial, saying in alternatives_open which carriers are open`);
+    }
+  }
+  if (!none || o.result !== "established") return out;
   for (const t of tables) {
     const open = (t.carriers ?? []).filter((r) => r.state === "not_examined");
     if (open.length) out.push(`alternatives_open says nothing remains open, and E-${t.seq}'s carrier table has ${open.length} not examined (${open.slice(0, 6).map((r) => r.carrier).join(", ")}${open.length > 6 ? ", …" : ""}): examine ${open.length === 1 ? "it" : "them"} and record the table again, or say in alternatives_open which ${open.length === 1 ? "carrier is" : "carriers are"} open`);
@@ -4462,6 +4524,186 @@ export function carriersOpen(alternativesOpen: string, cited: ReadonlyArray<Ledg
     out.push(`alternatives_open says nothing remains open, and the coverage record E-${c.seq} names ${c.refs!.length} objects where the carrier table cited has ${rows} ${rows === 1 ? "row" : "rows"}: record the table again with a row for each carrier (carriers [{carrier, state: decoded | undecodable | not_examined, why}]), or say in alternatives_open what is still open`);
   }
   return out;
+}
+
+/**
+ * The candidates a record holds beside its value (docs/protocol.md, "Ledger"): each still open, ruled out by
+ * a machine check it names, or a decoy. The review of the Batman III runs found right answers replaced on a
+ * critic's doubt (s68ce47 E-253 to E-262) and a reading dropped by argument; the digests a qualifier held were
+ * the only candidates the hub tracked (reviewValueRule). Here a candidate is a row of the record itself: a
+ * revision carries every row of the entry it corrects, and a reading a dispute in force says (its reading),
+ * and the earlier value when the revision lowers the confidence or answers an objection; a row leaves only
+ * as ruled_out, naming the job, or the entry resting on one, whose result excludes it.
+ */
+export type CandidateRow = { value: string; state: "open" | "ruled_out" | "decoy"; why: string; by?: string };
+export const CANDIDATE_STATES = ["open", "ruled_out", "decoy"] as const;
+export const LEDGER_MAX_CANDIDATES = 20;
+
+/** A candidate's value as rows are matched: its words, spacing and letter case aside. */
+export function candidateKey(v: string): string {
+  return String(v ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+const CANDIDATES_SHAPE =
+  "candidates is [{value, state: open | ruled_out | decoy, why, by?}]: each value still weighed beside value (open, why: what reads it so), one a check excludes (ruled_out, by: the job job:<id>/<path>, or the entry E-<seq> resting on one, whose result excludes it), or a payload that declares itself fake, a test or a vendor's sample (decoy, why: what in it says so)";
+
+/** The candidate rows a record sends, their shape checked (each defect named once in D); a `by` is weighed against the ledger by candidateCheckDefects. */
+export function candidateRows(raw: unknown, D: Defects): CandidateRow[] {
+  if (!given(raw)) return [];
+  const rows: CandidateRow[] = [];
+  for (const c of Array.isArray(raw) ? raw : [raw]) {
+    const o = (c && typeof c === "object" ? c : typeof c === "string" ? { value: c } : {}) as Record<string, unknown>;
+    const value = D.text(boundedText("a candidate's value", o.value, LEDGER_VALUE_MAX_CHARS)).value;
+    const state = D.one(oneOf("a candidate's state", o.state ?? "open", CANDIDATE_STATES)).value;
+    const why = D.text(boundedText("a candidate's why", o.why, LEDGER_WHY_MAX_CHARS)).value;
+    const by = D.text(boundedText("a candidate's by", o.by, LEDGER_REF_MAX_CHARS)).value;
+    if (!value || !state || !why) {
+      D.add(CANDIDATES_SHAPE);
+      continue;
+    }
+    if (state === "ruled_out" && !by) {
+      D.add(`candidate ${JSON.stringify(value.slice(0, 80))} is ruled_out with no check: by names the job (job:<id>/<path>) or the entry (E-<seq>) whose result excludes it. An argument, a doubt or another reading rules nothing out: the candidate stays open`);
+      continue;
+    }
+    const row: CandidateRow = { value, state, why, ...(state === "ruled_out" ? { by } : {}) };
+    const at = rows.findIndex((r) => candidateKey(r.value) === candidateKey(value));
+    if (at >= 0) rows[at] = row;
+    else rows.push(row);
+  }
+  if (rows.length > LEDGER_MAX_CANDIDATES) D.add(`candidates lists more than ${LEDGER_MAX_CANDIDATES}: keep the ones a reader must weigh, and group the rest in qualifier`);
+  return rows.slice(0, LEDGER_MAX_CANDIDATES);
+}
+
+/**
+ * Why the entry E-<n> is not a machine check that can rule a candidate out, or null when it is one: a
+ * standing finding, event, absence or coverage record, not marked decoy, that rests on a job's result
+ * (a job:<id>/<path> in its refs or its results, or a control run).
+ */
+export function entryCheckWhy(n: number, bySeq: ReadonlyMap<number, LedgerEntry>, replaced: ReadonlyMap<number, number>): string | null {
+  const x = bySeq.get(n);
+  if (!x) return `E-${n}: there is no entry #${n} in the ledger`;
+  if (replaced.has(n)) return `E-${n} is superseded by #${standingSeq(n, replaced as Map<number, number>)}: name the entry that stands`;
+  if (!["finding", "event", "absence", "coverage", "ioc"].includes(x.kind)) return `E-${n} is ${/^[aeiou]/.test(x.kind) ? "an" : "a"} ${x.kind}: a check that rules a candidate out is a job's result, or a finding, an event, an absence or a coverage record that rests on one`;
+  if (x.decoy) return `E-${n} is marked decoy: what declares itself fake checks nothing`;
+  const jobs = [...(x.refs ?? []), ...(x.result_refs ?? [])].some((r) => r.startsWith("job:")) || (x.control?.length ?? 0) > 0;
+  if (!jobs) return `E-${n} rests on no job's result (no job:<id>/<path> in its refs, no control run): it is a reading or an argument, which adds a candidate and removes none`;
+  return null;
+}
+
+/** Why `by` is not a machine check, or null when it is: a job that ended well (job:<id>[/<path>], or j<id>), or an entry entryCheckWhy holds. */
+export async function machineCheckWhy(sandboxRoot: string, by: string, bySeq: ReadonlyMap<number, LedgerEntry>, replaced: ReadonlyMap<number, number>): Promise<string | null> {
+  const t = by.trim();
+  const e = /^(?:E-|#)(\d+)$/i.exec(t);
+  if (e) return entryCheckWhy(Number(e[1]), bySeq, replaced);
+  const ref = /^j\d{6}\b/.test(t) ? `job:${t}` : t;
+  if (!ref.startsWith("job:")) return `${JSON.stringify(t)} is not a check: name the job (job:<id>/<path>) or the entry resting on one (E-<seq>)`;
+  const c = await checkRefsAll(sandboxRoot, [ref]);
+  if (c.bad.length) return `${ref}: ${c.bad[0]!.why}`;
+  const failed = c.resolved.find((r) => r.kind === "job" && r.status && r.status !== "ok");
+  if (failed) return `${ref} is the output of a job that did not succeed (${failed.status}): its result excludes nothing`;
+  return null;
+}
+
+/** Each row's check that does not hold, in words (one defect each). */
+export async function candidateCheckDefects(sandboxRoot: string, rows: readonly CandidateRow[], bySeq: ReadonlyMap<number, LedgerEntry>, replaced: ReadonlyMap<number, number>): Promise<string[]> {
+  const out: string[] = [];
+  for (const r of rows) {
+    if (r.state !== "ruled_out" || !r.by) continue;
+    const why = await machineCheckWhy(sandboxRoot, r.by, bySeq, replaced);
+    if (why) out.push(`candidate ${JSON.stringify(r.value.slice(0, 80))} is ruled out by ${r.by}, which is not a machine check: ${why}. Keep it open (state open), or name the job whose result excludes it`);
+  }
+  return out;
+}
+
+/** The readings disputes in force say of an entry: each a candidate beside its value. */
+export function readingsOn(e: LedgerEntry, inForce: readonly DisputeInForce[]): Array<{ by: string; reading: string; seq: number }> {
+  const h = e.hash ?? ledgerHash(e, "genesis");
+  return inForce.filter((d) => d.act === "dispute" && d.target === h && d.reading).map((d) => ({ by: d.by, reading: d.reading as string, seq: d.inherited_from ?? d.seq }));
+}
+
+/**
+ * The candidates of a revision: the rows it sends, and every row of the entry it corrects that it does not
+ * send again (a row leaves only as ruled_out, with its check), each reading a dispute in force on that entry
+ * says, and the earlier value's first line when the revision lowers the confidence or the result, answers a
+ * dispute or says why the value changed (`kept`) and its value no longer holds it: ruled out when
+ * value_changed_because names a machine check (`check`), open otherwise.
+ * What the hub added is said in `carried`.
+ */
+export function carryCandidates(
+  earlier: LedgerEntry,
+  sent: readonly CandidateRow[],
+  o: { value: string; readings: ReadonlyArray<{ by: string; reading: string; seq: number }>; kept: boolean; check?: string },
+): { rows: CandidateRow[]; carried: CandidateRow[] } {
+  const rows: CandidateRow[] = [...sent];
+  const carried: CandidateRow[] = [];
+  const now = candidateKey(firstLine(o.value));
+  const has = (v: string) => candidateKey(v) === now || rows.some((r) => candidateKey(r.value) === candidateKey(v));
+  const add = (r: CandidateRow) => {
+    if (has(r.value) || rows.length >= LEDGER_MAX_CANDIDATES) return;
+    rows.push(r);
+    carried.push(r);
+  };
+  for (const r of earlier.candidates ?? []) add({ value: r.value, state: r.state, why: r.why, ...(r.by ? { by: r.by } : {}) });
+  // The earlier value is carried only when the new one no longer holds it ("Bob" revised to "Bob, at the console" keeps it).
+  const was = firstLine(earlier.value ?? "");
+  if (was && o.kept && candidateKey(was) !== now && !candidateKey(o.value).includes(candidateKey(was))) {
+    add(o.check ? { value: was, state: "ruled_out", why: `the value #${earlier.seq} held, which value_changed_because shows wrong`, by: o.check } : { value: was, state: "open", why: `the value #${earlier.seq} held: a lower confidence or an objection keeps it a candidate until a check rules it out` });
+  }
+  for (const x of o.readings) add({ value: x.reading, state: "open", why: `the reading ${x.by}'s dispute of #${x.seq} gives` });
+  return { rows, carried };
+}
+
+/** A record's candidates as a reader is shown them: its rows, then the readings of the disputes in force on it that no row holds. */
+export function candidatesOf(e: LedgerEntry, inForce: readonly DisputeInForce[]): CandidateRow[] {
+  const rows: CandidateRow[] = [...(e.candidates ?? [])];
+  for (const x of readingsOn(e, inForce)) if (!rows.some((r) => candidateKey(r.value) === candidateKey(x.reading))) rows.push({ value: x.reading, state: "open", why: `the reading ${x.by}'s dispute gives` });
+  return rows;
+}
+
+/** Candidate rows in words, for a rendered line or a reply. */
+export function candidatesWords(rows: readonly CandidateRow[]): string {
+  return rows.map((r) => `${r.value} (${r.state === "ruled_out" ? `ruled out by ${r.by}` : r.state}: ${r.why})`).join("; ");
+}
+
+/** Words a payload uses of itself when it is not the real thing: said to its recorder, never refused (the mark is the recorder's). */
+const SELF_DECLARED_DECOY = /\b(?:fake|decoy|dummy|placeholder|not (?:the )?real|test (?:flag|key|value|data|string|payload)|sample (?:data|file|payload)|vendor(?:'s)? sample|example (?:key|value|password))\b/i;
+
+/** Whether a finding's words say its payload declares itself a decoy, while the finding carries no decoy mark. */
+export function decoyUnmarked(e: Pick<LedgerEntry, "value" | "indicates" | "decoy">): boolean {
+  return !e.decoy && SELF_DECLARED_DECOY.test(`${e.value ?? ""}\n${e.indicates ?? ""}`);
+}
+
+/**
+ * A decoy is a candidate, never on its own the answer (the open-weight runs took decoys through 110, 56 and
+ * 24 attestations with no dispute). An answer whose value's first line is a candidate marked decoy (its own
+ * row, or a row of a finding it cites), or whose findings for its question are all marked decoy, is refused
+ * unless it names, in decoy_check, the machine check that shows the decoy is the answer all the same.
+ */
+export function decoyRule(o: { value: string; result: string; rows: readonly CandidateRow[]; findings: readonly LedgerEntry[]; cited: readonly LedgerEntry[]; checked: boolean }): string[] {
+  if (o.checked || !o.value || !(o.result === "established" || o.result === "partial")) return [];
+  const now = candidateKey(firstLine(o.value));
+  const out: string[] = [];
+  const own = o.rows.find((r) => r.state === "decoy" && candidateKey(r.value) === now);
+  const theirs = o.cited.find((e) => (e.candidates ?? []).some((r) => r.state === "decoy" && candidateKey(r.value) === now));
+  if (own || theirs) out.push(`value is a candidate marked decoy (${own ? `in this answer's candidates: ${own.why}` : `in E-${theirs!.seq}'s candidates`}): a payload that declares itself fake, a test or a vendor's sample is not the answer on its own. Answer on what the case's own data shows, or name the machine check that shows the decoy is the answer all the same: decoy_check {by: job:<id>/<path> or E-<seq>, why}`);
+  const decoys = o.findings.filter((e) => e.decoy);
+  if (!out.length && o.findings.length && decoys.length === o.findings.length) out.push(`every finding this answer cites for its question is marked decoy (${decoys.map((e) => `E-${e.seq}: ${e.decoy}`).join("; ")}): a payload that declares itself fake, a test or a vendor's sample cannot be the sole support of value. Cite a finding on the case's own data, or name the machine check that shows the decoy is the answer all the same: decoy_check {by: job:<id>/<path> or E-<seq>, why}`);
+  return out;
+}
+
+/** Whether a carrier-table row names the carrier `name`: the same words, or the same file name when one of them is a bare name. */
+function rowNames(row: string, name: string): boolean {
+  const a = candidateKey(row);
+  const b = candidateKey(name);
+  if (a === b) return true;
+  const base = (s: string) => s.slice(s.lastIndexOf("/") + 1);
+  return (!a.includes("/") || !b.includes("/")) && base(a) === base(b);
+}
+
+/** The carriers an answer names that no row of the tables it cites holds. */
+export function carriersWithoutRow(names: readonly string[], tables: ReadonlyArray<LedgerEntry>): string[] {
+  const rows = tables.flatMap((t) => (t.carriers ?? []).map((r) => r.carrier));
+  return names.filter((n) => !rows.some((r) => rowNames(r, n)));
 }
 
 /** Record an answer (recordEntry with kind=answer): its checks need the ledger, so they run under the lock. */
@@ -4627,6 +4869,29 @@ async function recordAnswer(ctx: SwarmContext, input: LedgerInput, D: Defects): 
   if (because.value && supersedes === undefined && !given(input.supersedes) && !question) D.add("because says why a correction corrects: give supersedes too");
   // Why a revision changes the asked string itself (reviewValueRule): the entry that shows the earlier value wrong.
   const valueChanged = D.text(boundedText("value_changed_because", raw.value_changed_because, LEDGER_WHY_MAX_CHARS));
+  // The candidates beside value (candidateRows), the carriers the answer chose among (carriersOpen), and the
+  // machine check that holds a decoy as the answer all the same (decoyRule): their shape here, the ledger under the lock.
+  const candidatesIn = candidateRows(raw.candidates, D);
+  if (candidatesIn.length && !question) D.add("candidates is a question's answer's: the values still weighed beside the asked string; a summary or a narrative says them in words");
+  const carrierNames: string[] = [];
+  if (given(raw.carrier_names)) {
+    const list = Array.isArray(raw.carrier_names) ? raw.carrier_names.map(String) : String(raw.carrier_names).split(/[\n,]+/);
+    for (const n of list) {
+      const t = D.text(boundedText("a carrier name", n, LEDGER_REF_MAX_CHARS)).value;
+      if (t && !carrierNames.some((x) => candidateKey(x) === candidateKey(t))) carrierNames.push(t);
+    }
+    if (!question) D.add("carrier_names is a question's answer's: the carriers its value could be in, each with a row in the carrier table it cites");
+    else if (carrierNames.length > LEDGER_MAX_CARRIERS) D.add(`carrier_names names more than ${LEDGER_MAX_CARRIERS} carriers: group the ones that share a state in the carrier table, and name the groups`);
+  }
+  let decoyCheck: { by: string; why: string } | undefined;
+  if (given(raw.decoy_check)) {
+    const d = (raw.decoy_check && typeof raw.decoy_check === "object" && !Array.isArray(raw.decoy_check) ? raw.decoy_check : {}) as Record<string, unknown>;
+    const by = D.text(boundedText("decoy_check.by", d.by, LEDGER_REF_MAX_CHARS)).value;
+    const dWhy = D.text(boundedText("decoy_check.why", d.why, LEDGER_WHY_MAX_CHARS)).value;
+    if (!by || !dWhy) D.add("decoy_check is {by, why}: the machine check (job:<id>/<path>, or E-<seq> of an entry resting on one) that shows the payload marked decoy is the answer all the same, and why");
+    else if (!question) D.add("decoy_check is a question's answer's");
+    else decoyCheck = { by, why: dWhy };
+  }
   // A downgrade names its counter-evidence (docs/adr/0013, round 13: a
   // correct established answer was walked down to not determinable by a
   // dispute that cited nothing against it).
@@ -4955,11 +5220,40 @@ async function recordAnswer(ctx: SwarmContext, input: LedgerInput, D: Defects): 
       } else if (!standingCites.length && !questionRefs.length) {
         D.add(`a ${sec.section} cites at least one standing entry as E-<seq>, or the questions it sums up as Q-<n>`);
       }
-      // A review changes how sure an answer is, never what it says (reviewValueRule), and "nothing remains open" is held to the carriers the record names (carriersOpen).
+      // The candidates (carryCandidates): each check a row names, held to the ledger; then what a revision
+      // carries from the answer it corrects, so that only a check removes one.
+      for (const why of await candidateCheckDefects(ctx.sandboxRoot, candidatesIn, bySeq, replaced)) D.add(why);
+      if (decoyCheck) {
+        const w = await machineCheckWhy(ctx.sandboxRoot, decoyCheck.by, bySeq, replaced);
+        if (w) D.add(`decoy_check.by is not a machine check: ${w}`);
+      }
+      let candidates: CandidateRow[] = candidatesIn;
+      let carriedRows: CandidateRow[] = [];
+      if (question && earlier) {
+        const onEarlier = disputesInForce(entries, disputes).filter((d) => d.target === hashOf(earlier));
+        const lowered = (CONFIDENCE_RANK[confidence] ?? 0) < (CONFIDENCE_RANK[earlier.confidence ?? ""] ?? 0) || (earlierResult === "established" && resultText !== "established");
+        const changedBy = answerCitations(valueChanged.value).filter((n) => n !== supersedes && bySeq.has(n));
+        const check = changedBy.find((n) => !entryCheckWhy(n, bySeq, replaced));
+        const c = carryCandidates(earlier, candidatesIn, { value, readings: readingsOn(earlier, onEarlier), kept: lowered || onEarlier.length > 0 || changedBy.length > 0, ...(check !== undefined ? { check: `E-${check}` } : {}) });
+        candidates = c.rows;
+        carriedRows = c.carried;
+      }
+      // A review changes how sure an answer is, never what it says (reviewValueRule), and "nothing remains open" is held to the carriers the record names (carriersOpen) and to its own candidates.
       const questionFormatWords = question ? questionWords : null;
-      if (question && earlier) for (const why of reviewValueRule(earlier, { value, qualifier: qualifier.value, confidence, result: resultText, changed: valueChanged.value }, questionFormatWords, bySeq, supersedes as number)) D.add(why);
+      if (question && earlier) for (const why of reviewValueRule(earlier, { value, qualifier: [qualifier.value, ...candidates.map((r) => r.value)].join("\n"), confidence, result: resultText, changed: valueChanged.value }, questionFormatWords, bySeq, supersedes as number)) D.add(why);
       if (question && valueChanged.value && !earlier) D.add("value_changed_because says why a revision changes the asked string: it comes with supersedes");
-      if (question && resultText === "established") for (const why of carriersOpen(openAlt.value, standingCites)) D.add(why);
+      if (question) for (const why of carriersOpen(openAlt.value, standingCites, { names: carrierNames, result: resultText })) D.add(why);
+      const openRows = candidates.filter((r) => r.state === "open" && candidateKey(r.value) !== candidateKey(firstLine(value)));
+      // Where value is the asked string (established, partial): a negative's value is not one, and its candidates are said in the report.
+      if (question && openRows.length && (resultText === "established" || resultText === "partial") && NONE_OPEN.test(openAlt.value)) {
+        D.add(`alternatives_open says nothing remains open, and this answer holds ${openRows.length === 1 ? "a candidate" : `${openRows.length} candidates`} no check has ruled out (${openRows.slice(0, 6).map((r) => JSON.stringify(r.value.slice(0, 80))).join(", ")}${openRows.length > 6 ? ", …" : ""}): rule ${openRows.length === 1 ? "it" : "each"} out with the check that excludes it (candidates [{value, state: "ruled_out", by: job:<id>/<path> or E-<seq>, why}]), or say in alternatives_open that ${openRows.length === 1 ? "it is" : "they are"} open`);
+      }
+      // A decoy is a candidate, never on its own the answer (decoyRule).
+      if (question) {
+        const qid = sectionAnswersId(sec.section);
+        const forIt = standingCites.filter((e) => e.kind === "finding" && (e.answers ?? []).some((a) => sectionKey(a) === qid));
+        for (const why of decoyRule({ value, result: resultText, rows: candidates, findings: forIt, cited: standingCites, checked: Boolean(decoyCheck) })) D.add(why);
+      }
       // Every defect of the entry, the ones its fields show and the ones the registers and the ledger show, in the one refusal.
       {
         const refused = D.refusal("answer");
@@ -4982,6 +5276,9 @@ async function recordAnswer(ctx: SwarmContext, input: LedgerInput, D: Defects): 
         ...(quals.length ? { qualifies: quals.map((q) => ({ ref: `E-${q.seq}`, why: q.why })) } : {}),
         ...(qualifier.value ? { qualifier: qualifier.value } : {}),
         ...(valueChanged.value && supersedes !== undefined ? { value_changed_because: valueChanged.value } : {}),
+        ...(candidates.length ? { candidates } : {}),
+        ...(carrierNames.length ? { carrier_names: carrierNames } : {}),
+        ...(decoyCheck ? { decoy_check: decoyCheck } : {}),
         section: sec.section,
         reasoning: reasoning.value,
         ...(support.length ? { support: support.map(edge) } : {}),
@@ -5023,6 +5320,7 @@ async function recordAnswer(ctx: SwarmContext, input: LedgerInput, D: Defects): 
         return { ok: false, reason: `${sec.section} is answered by #${standing.seq} already: one answer stands for a section; to revise it, record this with supersedes=${standing.seq}` };
       }
       const notes: string[] = [];
+      if (carriedRows.length) notes.push(`candidates carried from #${supersedes}: ${candidatesWords(carriedRows)}. A revision keeps every candidate the answer it corrects held, and every reading a dispute of it gives; only a check removes one (candidates [{value, state: "ruled_out", by: job:<id>/<path> or E-<seq>, why}])`);
       if (bound.length) notes.push(`${bound.map((b) => `E-${b.seq} (the answer to ${b.section}${b.standing !== null && b.standing !== b.seq ? `, now E-${b.standing}` : ""})`).join(", ")} ${bound.length === 1 ? "is" : "are"} cited as ${[...new Set(bound.map((b) => b.section))].join(", ")}: a ${sec.section} is bound to the questions it sums up, to each answer's conclusion (its result, the revision it answers, its support and contrary evidence), not to its seq, so a reworded correction of an answer keeps it standing. Cite Q-<n> or question:<n> for an answer in a ${sec.section}`);
       // The format the question asks for (a "Format:" line), read against value's first line: said, never refused.
       // No asked string exists on an answer that found nothing or cannot say (a negative, not determinable, out of
@@ -5147,7 +5445,7 @@ export function citationRefusal(citations: readonly PM.PremiseCitation[], reg: R
  * the bar, never on a limitation that names it; the release counts it.
  */
 export type LedgerDefect = {
-  code: "no_answer" | "answer_support" | "answer_disputed" | "no_critic_act" | "open_contradiction" | "coverage_missing" | "negative_unreviewed" | "wording" | "coverage_stale" | "material_use" | "partial_output" | "evidence_stale" | "completeness_uncovered" | "sweep_pending" | "sweep_hits" | "sweep_partial" | "preparation_pending" | "premise_inconsistent" | "negative_images_unread";
+  code: "no_answer" | "answer_support" | "answer_disputed" | "no_critic_act" | "open_contradiction" | "coverage_missing" | "negative_unreviewed" | "wording" | "coverage_stale" | "material_use" | "partial_output" | "evidence_stale" | "completeness_uncovered" | "sweep_pending" | "sweep_hits" | "sweep_partial" | "preparation_pending" | "premise_inconsistent" | "negative_images_unread" | "carriers_incomplete";
   section?: string;
   seqs: number[];
   what: string;
@@ -5696,6 +5994,22 @@ export function ledgerGate(o: { entries: LedgerEntry[]; attestations: LedgerAtte
     if (p?.length) {
       defects.push({ code: "answer_support", section: sec.section, seqs: [a.seq], what: `answer #${a.seq} (${sec.section}) no longer stands on its support: ${p.join("; ")}`, fix: `record the answer again with supersedes=${a.seq}, citing what stands now (a correction, or qualifies [{ref: "E-<seq>", why}] for a disputed or failed-job entry), or record a limitation citing E-${a.seq} that says why it stands as it is`, named_by: namedFor(a.seq) });
     }
+    // An answer that chose among carriers (carrier_names) is settled only on a carrier table with a row for each of them,
+    // read where the tables it cites stand now (carriersOpen; the record held it so when it was written).
+    if (a.carrier_names?.length && (NB.answerResult(a) === "established" || NONE_OPEN.test(a.alternatives_open ?? ""))) {
+      const tables = (a.support ?? []).map((x) => bySeq.get(standingSeq(x.seq, replaced))).filter((e): e is LedgerEntry => e?.kind === "finding" && Boolean(e.carriers?.length));
+      const missing = carriersWithoutRow(a.carrier_names, tables);
+      if (missing.length) {
+        defects.push({
+          code: "carriers_incomplete",
+          section: sec.section,
+          seqs: [a.seq, ...tables.map((t) => t.seq)],
+          what: `answer #${a.seq} (${sec.section}) names ${a.carrier_names.length} carriers and is ${NB.answerResult(a) === "established" ? "established" : "said to leave nothing open"}, while ${tables.length ? `the carrier tables it rests on (${tables.map((t) => `E-${t.seq}`).join(", ")}) have` : "it rests on no carrier table, so it has"} no row for ${missing.length} of them (${missing.slice(0, 8).join(", ")}${missing.length > 8 ? ", …" : ""})`,
+          fix: `record the carrier table again with a row for each of the ${a.carrier_names.length} carriers (a finding with carriers [{carrier, state, why}]), then the answer with supersedes=${a.seq} citing it; or record the answer partial, saying in alternatives_open which carriers are open`,
+          named_by: namedFor(a.seq),
+        });
+      }
+    }
     const target = a.hash ?? ledgerHash(a, "genesis");
     const against = standingD.filter((d) => d.target === target);
     if (against.length) {
@@ -5758,7 +6072,7 @@ export function ledgerGate(o: { entries: LedgerEntry[]; attestations: LedgerAtte
           section: sec.section,
           seqs: [a.seq, ...st.coverage, ...st.unnamed, ...st.unreviewed, ...st.undelta, ...st.unexamined],
           additions: st.additions.map((x) => x.seq),
-          what: `answer #${a.seq} (${sec.section}) is ${NB.resultWords(result)}: new evidence since its coverage (${st.additions.map((x) => `${x.import}, E-${x.seq}${x.inventory_rev !== null ? `, inventory revision ${x.inventory_rev}` : ""}`).join("; ")}); re-examine against it${st.coverage.length ? `. Its coverage record${st.coverage.length === 1 ? "" : "s"} ${list(st.coverage)} ${st.coverage.length === 1 ? "was" : "were"} recorded before the addition's entry E-${first.seq}` : ""}${st.unnamed.length ? `; ${list(st.unnamed)}, recorded after it, ${st.unnamed.length === 1 ? "does" : "do"} not name ${importWords} among its objects` : ""}${st.unreviewed.length ? `; ${list(st.unreviewed)} ${st.unreviewed.length === 1 ? "examines" : "examine"} it and no other seat has reviewed ${st.unreviewed.length === 1 ? "it" : "them"} yet` : ""}${st.nodelta.length ? `; it was examined and reviewed, and nothing it cites says how the new evidence bears on the answer (a delta)` : ""}${st.undelta.length ? `; ${list(st.undelta)} ${st.undelta.length === 1 ? "interprets" : "interpret"} it with no delta` : ""}${st.unexamined.length ? `; ${list(st.unexamined)} ${st.unexamined.length === 1 ? "carries a delta" : "carry deltas"} that no other seat reviewed: ${st.unexamined.length === 1 ? "it is" : "they are"} not among the results of a reviewed coverage record naming the import, nor attested` : ""}${hitsHere.length ? `. The reverse sweep found what this question's coverage looked for in it: ${hitsHere.map(importHitWords).join("; ")}` : ""}`,
+          what: `answer #${a.seq} (${sec.section}) is ${NB.resultWords(result)}: new evidence since its coverage (${st.additions.map((x) => `${x.import}, E-${x.seq}${x.inventory_rev !== null ? `, inventory revision ${x.inventory_rev}` : ""}`).join("; ")}); re-examine against it${st.coverage.length ? `. Its coverage record${st.coverage.length === 1 ? "" : "s"} ${list(st.coverage)} ${st.coverage.length === 1 ? "was" : "were"} recorded before the addition's entry E-${first.seq}` : ""}${st.unnamed.length ? `; ${list(st.unnamed)}, recorded after it, ${st.unnamed.length === 1 ? "does" : "do"} not name ${importWords} among its objects` : ""}${st.unreviewed.length ? `; ${list(st.unreviewed)} ${st.unreviewed.length === 1 ? "examines" : "examine"} it and no other seat has reviewed ${st.unreviewed.length === 1 ? "it" : "them"} yet` : ""}${st.nodelta.length ? `; it was examined and reviewed, and nothing it cites says how the new evidence bears on the answer (a delta)` : ""}${st.undelta.length ? `; ${list(st.undelta)} ${st.undelta.length === 1 ? "interprets" : "interpret"} it with no delta` : ""}${st.unexamined.length ? `; ${list(st.unexamined)} ${st.unexamined.length === 1 ? "carries a delta" : "carry deltas"} that no other seat reviewed: ${st.unexamined.length === 1 ? "it is" : "they are"} not among the results of a reviewed coverage record naming the import, nor attested` : ""}${hitsHere.length ? `. The reverse sweep found what this question's coverage looked for in it: ${boundedHits(hitsHere, importHitWords, (hitsHere[0] as { sweep?: { hits_all?: { file?: { path?: string } } } }).sweep?.hits_all?.file?.path ?? "ledger/sweeps.jsonl")}` : ""}`,
           fix: `examine ${importWords} for ${sec.section}${hitsHere.length ? ` (each object the reverse sweep names first)` : ""}: record what it shows as an entry whose refs name the import's files, with a delta, rel [{to: ${a.seq}, kind: supports | contradicts | adds_part | irrelevant | inconclusive}] (how the new evidence bears on this answer: it supports it, contradicts it, adds a part it left open, is irrelevant to it within its scope, or cannot say); record kind=coverage with answers=["${id}"] naming the import (or its files) among its objects and that entry among its results; have another seat review it (attest it with review); and record the answer again with supersedes=${a.seq} citing it. An entry resting on the new evidence with its delta, cited by the answer, clears it too once another seat has attested it. Or the operator accepts the question's limits after the evidence came (question accept)`,
           named_by: [],
         });
@@ -5778,7 +6092,7 @@ export function ledgerGate(o: { entries: LedgerEntry[]; attestations: LedgerAtte
           code: "late_evidence_hits",
           section: sec.section,
           seqs: [a.seq, ...[...new Set(left.flatMap((x) => x.records))].sort((x, y) => x - y)],
-          what: `answer #${a.seq} (${sec.section}) does not reach what the reverse sweep of evidence added late found for ${q}: ${left.map((x) => `import:${x.sweep.import} (E-${x.sweep.seq}): ${importHitWords(x)}`).join("; ")}`,
+          what: `answer #${a.seq} (${sec.section}) does not reach what the reverse sweep of evidence added late found for ${q}: ${boundedHits(left, (x) => `import:${x.sweep.import} (E-${x.sweep.seq}): ${importHitWords(x)}`, (left[0] as { sweep?: { hits_all?: { file?: { path?: string } } } } | undefined)?.sweep?.hits_all?.file?.path ?? "ledger/sweeps.jsonl")}`,
           fix: `examine each object named and record what it shows for ${q}: an entry whose refs name the object, with a delta rel [{to: ${a.seq}, kind: supports | contradicts | adds_part | irrelevant | inconclusive}], and record the answer again with supersedes=${a.seq} citing it (or a coverage record citing it among its results). A hit is a string found, not a fact: weigh it, and say so if it does not bear on the question`,
         });
       }
@@ -5816,9 +6130,10 @@ export function ledgerGate(o: { entries: LedgerEntry[]; attestations: LedgerAtte
           // The first of them named, the rest counted: a gate item is read by a seat, and ledger/sweeps.jsonl holds each.
           const holding = hold.hits ?? sw?.hits ?? [];
           const words = holding.slice(0, SWEEP_GATE_HITS).map((h) => `"${h.term}" in ${h.ref}${h.also?.length ? ` (also ${h.also.slice(0, 8).join(", ")}${h.also.length > 8 ? ` and ${h.also.length - 8} more` : ""})` : ""} (${h.count} time${h.count === 1 ? "" : "s"}, first at byte ${h.first_offset}${h.encodings.includes("utf-16le") ? `, ${h.encodings.join(" and ")}` : ""})`);
-          if (holding.length > SWEEP_GATE_HITS) words.push(`and ${holding.length - SWEEP_GATE_HITS} more (ledger/sweeps.jsonl holds each)`);
+          if (holding.length > SWEEP_GATE_HITS) words.push(`and ${holding.length - SWEEP_GATE_HITS} more (${(sw as { hits_all?: { file?: { path?: string } } } | undefined)?.hits_all?.file?.path ?? "ledger/sweeps.jsonl"} holds each)`);
           const unexamined = hold.unexamined ?? [];
-          const named = unexamined.map((u) => `${u.ref}${u.also.length ? ` (also ${u.also.join(", ")})` : ""} (${u.terms.map((t) => `"${t}"`).join(", ")}, found by the sweep of E-${u.found_by})`);
+          const named = unexamined.slice(0, SWEEP_GATE_HITS).map((u) => `${u.ref}${u.also.length ? ` (also ${u.also.slice(0, 8).join(", ")}${u.also.length > 8 ? ` and ${u.also.length - 8} more` : ""})` : ""} (${u.terms.slice(0, 8).map((t) => `"${t}"`).join(", ")}${u.terms.length > 8 ? ` and ${u.terms.length - 8} more` : ""}, found by the sweep of E-${u.found_by})`);
+          if (unexamined.length > SWEEP_GATE_HITS) named.push(`and ${unexamined.length - SWEEP_GATE_HITS} more`);
           const said = [
             ...(words.length ? [`the store sweep for coverage record E-${c.seq} found what it looked for in objects the record does not name: ${words.join("; ")}`] : []),
             ...(named.length ? [`coverage record E-${c.seq} names ${unexamined.length === 1 ? "an object" : `${unexamined.length} objects`} an earlier sweep found hits in with no entry among its results that says what ${unexamined.length === 1 ? "it" : "each"} showed: ${named.join("; ")}. Naming a hit is not examining it`] : []),

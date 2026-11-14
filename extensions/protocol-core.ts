@@ -8313,6 +8313,19 @@ export type LedgerEntry = {
   images_unread?: Array<{ job: string; dir: string; total: number; unread: string[] }>;
   /** A finding's carriers of a value, each decoded, undecodable or not examined. */
   carriers?: Array<{ carrier: string; state: "decoded" | "undecodable" | "not_examined"; why: string }>;
+  /**
+   * An answer's or a finding's candidate values beside its value: each still
+   * open, ruled out by a machine check it names (by: job:<id>/<path> or
+   * E-<seq>), or a decoy (a payload that declares itself fake, a test or a
+   * vendor's sample). A revision carries them; only a check removes one.
+   */
+  candidates?: Array<{ value: string; state: "open" | "ruled_out" | "decoy"; why: string; by?: string }>;
+  /** An answer's: the carriers its value could be in, by name; "nothing open" and established wait for a carrier-table row for each. */
+  carrier_names?: string[];
+  /** A finding's: what in the artefact declares it fake, a test or a vendor's sample (a decoy candidate). */
+  decoy?: string;
+  /** An answer's whose value rests on a decoy: the machine check that shows it is the answer all the same. */
+  decoy_check?: { by: string; why: string };
   source_class?: (typeof LEDGER_SOURCE_CLASSES)[number];
   /** An external entry: who supplied it, when, from where, its sha256, what it may be used for (and, for a capture, its grant and request). */
   provenance?: { supplied_by: string; at: string; from: string; sha256?: string; permitted_use: string } & Record<string, unknown>;
@@ -8415,6 +8428,11 @@ function ledgerV4Fields(e: LedgerEntry): Record<string, unknown> {
     ...(e.images_read?.length ? { images_read: e.images_read } : {}),
     ...(e.images_unread?.length ? { images_unread: e.images_unread.map((x) => ({ job: x.job, dir: x.dir, total: x.total, unread: x.unread })) } : {}),
     ...(e.carriers?.length ? { carriers: e.carriers.map((c) => ({ carrier: c.carrier, state: c.state, why: c.why })) } : {}),
+    // A record's candidates, an answer's carrier names and decoy check, a finding's decoy mark: each only when present.
+    ...(e.candidates?.length ? { candidates: e.candidates.map((c) => ({ value: c.value, state: c.state, why: c.why, ...(c.by ? { by: c.by } : {}) })) } : {}),
+    ...(e.carrier_names?.length ? { carrier_names: e.carrier_names } : {}),
+    ...(e.decoy ? { decoy: e.decoy } : {}),
+    ...(e.decoy_check ? { decoy_check: { by: e.decoy_check.by, why: e.decoy_check.why } } : {}),
   };
 }
 

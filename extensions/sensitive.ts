@@ -43,7 +43,7 @@ import type { LedgerEntry } from "./protocol-core.ts";
 import { readLedger } from "./ledger-rules.ts";
 
 /** The fields of an entry, of any version, that can hold what it says. */
-const ENTRY_TEXT_FIELDS = ["value", "evidence", "source", "indicates", "confidence_why", "reasoning", "would_change", "alternatives_open", "alternatives_none_why", "because", "time_range", "search_method", "settings", "coverage_actual", "skipped", "failures", "qualifier", "value_changed_because"] as const;
+const ENTRY_TEXT_FIELDS = ["value", "evidence", "source", "indicates", "confidence_why", "reasoning", "would_change", "alternatives_open", "alternatives_none_why", "because", "time_range", "search_method", "settings", "coverage_actual", "skipped", "failures", "qualifier", "value_changed_because", "decoy"] as const;
 
 /** One of a sensitive entry's words, with the entry it came from; `exact` when it is a value B9 matches as a whole phrase, never inside another word. */
 export type SensitiveToken = { token: string; seq: number; exact?: boolean };
@@ -74,6 +74,10 @@ export function sensitiveTokens(entries: LedgerEntry[]): SensitiveToken[] {
     for (const q of (raw.qualifies as Array<{ why?: string }> | undefined) ?? []) texts.push(q.why ?? "");
     for (const c of (raw.control as Array<{ found?: string }> | undefined) ?? []) texts.push(c.found ?? "");
     for (const c of (raw.carriers as Array<{ carrier?: string; why?: string }> | undefined) ?? []) texts.push(c.carrier ?? "", c.why ?? "");
+    // A candidate is a value the entry weighs (a second reading of a password, a decoy's string): as sensitive as value.
+    for (const c of (raw.candidates as Array<{ value?: string; why?: string }> | undefined) ?? []) texts.push(c.value ?? "", c.why ?? "");
+    for (const n of (raw.carrier_names as string[] | undefined) ?? []) texts.push(n);
+    if (raw.decoy_check && typeof raw.decoy_check === "object") texts.push((raw.decoy_check as { why?: string }).why ?? "");
     // A sensitive coverage record's looked_for strings are what its sweep searched for: sensitive words too.
     for (const t of e.looked_for ?? []) texts.push(t);
     for (const w of texts) {
@@ -147,8 +151,10 @@ export function b9SensitiveValues(entries: LedgerEntry[]): SensitiveToken[] {
   for (const e of entries) {
     if (!e.sensitive) continue;
     const value = String(e.value ?? "").trim();
-    if (sensitiveFold(value).length >= 3 && !out.has(value)) out.set(value, { token: value, seq: e.seq, exact: true });
-    for (const text of [value, e.attribution?.subject ?? ""]) {
+    // A candidate beside the value (a second reading, a decoy's string) is a value the entry records too.
+    const candidates = (e.candidates ?? []).map((c) => String(c.value ?? "").trim());
+    for (const v of [value, ...candidates]) if (sensitiveFold(v).length >= 3 && !out.has(v)) out.set(v, { token: v, seq: e.seq, exact: true });
+    for (const text of [value, ...candidates, e.attribution?.subject ?? ""]) {
       for (const raw of String(text ?? "").split(/\s+/)) {
         const w = raw.replace(/^[(["'`<{]+/, "").replace(/[)\]"'`>},.;:!?]+$/, "").replace(/['’]s$/i, "");
         if (w && !out.has(w) && distinctiveValue(w)) out.set(w, { token: w, seq: e.seq });

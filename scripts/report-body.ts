@@ -1128,11 +1128,24 @@ function citeHead(e: LedgerEntry): Span[] {
  * An answer as the report words it: its value, then its qualifier (candidate, partial, the open part) set apart from it. An
  * answer that established no value has none to print, and says so instead of an empty line.
  */
-export function answerWords(a: { value: string; qualifier?: string }): string {
+export function answerWords(a: { value: string; qualifier?: string; candidates?: ReadonlyArray<{ value: string; state: string; why: string; by?: string }> }): string {
   const value = (a.value ?? "").trim();
   const q = (a.qualifier ?? "").trim();
-  if (!value) return q ? `No value is established. ${q}` : "No value is established.";
-  return q ? `${value}\n\nQualified: ${q}` : value;
+  const c = candidateWords(a.candidates ?? []);
+  if (!value) return [q ? `No value is established. ${q}` : "No value is established.", c].filter(Boolean).join("\n\n");
+  return [value, q ? `Qualified: ${q}` : "", c].filter(Boolean).join("\n\n");
+}
+
+/**
+ * The candidates an answer holds beside its value, for a reader: those still open, those that declare
+ * themselves decoys, and those a check ruled out, each with the check. Empty when it holds none.
+ */
+export function candidateWords(rows: ReadonlyArray<{ value: string; state: string; why: string; by?: string }>): string {
+  const of = (state: string) => rows.filter((r) => r.state === state);
+  const open = of("open").map((r) => `${r.value} (${r.why})`);
+  const decoy = of("decoy").map((r) => `${r.value} (${r.why})`);
+  const out = of("ruled_out").map((r) => `${r.value} (by ${r.by}: ${r.why})`);
+  return [open.length ? `Candidates still open: ${open.join("; ")}.` : "", decoy.length ? `Decoys (declare themselves fake, a test or a sample): ${decoy.join("; ")}.` : "", out.length ? `Ruled out by a check: ${out.join("; ")}.` : ""].filter(Boolean).join(" ");
 }
 
 function sectionName(section: string | undefined): string {
@@ -3116,6 +3129,8 @@ function resolveWords(d: LedgerGate["defects"][number]): string {
       return `the broad extraction of the source ${where}'s negative claims absence over (a parse of the whole source that a pack declares) run to an outcome: produced, partial, failed or declined, each on the record with what it does not hold; or the question's limits accepted by the operator.`;
     case "premise_inconsistent":
       return `the two answers reconciled on the record, neither side forced: one answer revised, the finding that rebuts the premise named in the contradiction (the premise then goes to the operator as a dispute), either answer's scope narrowed so the two no longer overlap, or one answer made conditional on the premise ("assuming P-n").`;
+    case "carriers_incomplete":
+      return `a carrier table with a row for each of the places ${where}'s value could be carried in (decoded, undecodable or not examined, and why), and the answer recorded again on it; or the answer recorded as partial, naming the places still open.`;
     case "completeness_uncovered":
       return `a search record for ${where} that says what was searched and which parts of the stored data it reached (live, deleted, unallocated, slack, secondary copies), and the answer recorded again on it. A question that asks for every item is not answered by the items found alone.`;
     default:
@@ -3235,6 +3250,9 @@ function exhibitBox(e: LedgerEntry, run: Run, memo: Map<number, EntryState>): Bl
   if (e.indicates) rows.push({ label: "Interpretation", voice: "interpretation", s: [e.indicates] });
   else if (interpretationMissing(e)) rows.push({ label: "Interpretation", s: [{ chip: { text: "interpretation not recorded", tone: "none" } }, " this finding was recorded before findings said what they indicate"] });
   if (e.significance) rows.push({ label: "Significance", voice: "opinion", s: [e.significance] });
+  if (e.decoy) rows.push({ label: "Decoy", s: [`the artefact declares itself fake, a test or a sample: ${e.decoy}. It is a candidate, never on its own an answer.`] });
+  if (e.kind !== "answer" && e.candidates?.length) rows.push({ label: "Candidates", s: [candidateWords(e.candidates)] });
+  if (e.decoy_check) rows.push({ label: "Decoy check", s: [`${e.decoy_check.by}: ${e.decoy_check.why}`] });
   if (e.confidence) rows.push({ label: "Confidence", s: [`${confidenceWords(s.confidence)}${e.confidence_why ? `: ${e.confidence_why}` : ""}`] });
   for (const alt of e.alternatives ?? []) rows.push({ label: alt.status === "rejected" ? "Rejected" : "Still open", s: [`${alt.explanation}: ${alt.why}${alt.test_refs?.length ? ` (tested with ${alt.test_refs.join(", ")})` : ""}`] });
   if (e.alternatives_none_why) rows.push({ label: "No alternative", s: [e.alternatives_none_why] });

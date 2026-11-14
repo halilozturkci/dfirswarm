@@ -32,3 +32,29 @@ test("a side list as its line names it passes; a changed, a missing and an oddly
   assert.match(r.bad.join("\n"), /: missing/);
   assert.match(r.bad.join("\n"), /not a side list's path/);
 });
+
+test("a line's file of hits is held the same way, beside its list of what was not searched; a file not named by its own sha256, or named for the other list, is named", async () => {
+  const hits = (body: string) => {
+    const sha = createHash("sha256").update(body).digest("hex");
+    const path = `ledger/sweeps/hits-${sha}.jsonl`;
+    writeFileSync(join(S, path), body);
+    return { path, sha256: sha, rows: body.split("\n").length - 1 };
+  };
+  const both = (u: unknown, h: unknown) => JSON.stringify({ v: 1, unsearched: [], unsearched_all: { total: 60, left: 0, by_reason: [], by_prefix: [], file: u }, hits: [], hits_all: { total: 60, counts: { hits: 60, named_hits: 0, echoes: 0 }, by_term: [], by_prefix: [], file: h } });
+  const u = put('{"ref":"job:j000002/a","why":"too_large"}\n');
+  const h = hits('{"list":"hits","ref":"job:j000002/b","term":"mallory","count":1,"first_offset":0,"encodings":["utf-8"]}\n');
+  assert.deepEqual(await sweepSideLists(S, both(u, h)), { named: 2, bad: [] });
+  // Its bytes changed: named.
+  const changed = hits('{"list":"hits","ref":"job:j000002/c","term":"mallory","count":1,"first_offset":0,"encodings":["utf-8"]}\n');
+  writeFileSync(join(S, changed.path), "something else\n");
+  // A name that is not the sha256 the line gives it; a list of hits named as one of what was not searched (no such file).
+  const renamed = { ...h, sha256: "2".repeat(64) };
+  const swapped = { ...h, path: `ledger/sweeps/unsearched-${h.sha256}.jsonl` };
+  const r = await sweepSideLists(S, [both(u, changed), both(u, renamed), JSON.stringify({ v: 2, unsearched: [], unsearched_all: { total: 60, left: 0, by_reason: [], by_prefix: [], file: swapped } })].join("\n"));
+  assert.equal(r.named, 4);
+  assert.deepEqual(r.bad.map((b) => b.replace(/[0-9a-f]{64}/g, "<sha>")).sort(), [
+    "ledger/sweeps/hits-<sha>.jsonl: not a side list's path",
+    "ledger/sweeps/hits-<sha>.jsonl: its bytes are not the " + changed.sha256.slice(0, 12) + "… its line names",
+    "ledger/sweeps/unsearched-<sha>.jsonl: missing",
+  ].sort().map((b) => b.replace(/[0-9a-f]{64}/g, "<sha>")));
+});

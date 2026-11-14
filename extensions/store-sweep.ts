@@ -37,7 +37,10 @@
  * line did not search is a summary on it (`unsearched_all`: how many, by
  * reason and by directory) with the first few named, and the whole list a
  * file under ledger/sweeps/ that the line names by sha256
- * (unsearchedRows reads it); a line is never as long as its store. The
+ * (unsearchedRows reads it); a line is never as long as its store. What a
+ * line found is bounded the same way when it is long (`hits_all`, the
+ * lists whole in ledger/sweeps/hits-<sha256>.jsonl, boundHits), and read
+ * whole again from that file by whoever reads the line (hydrateHits). The
  * file's lines are read once by a process and kept, bounded
  * (loadSweepFile), and an append is chained from the head it holds.
  *
@@ -80,8 +83,10 @@
  * holds. Its lines (version 2, `of: "import"`) are on the same chain, bound
  * to the addition's external entry by its hash. It runs after the
  * addition commits, never inside it: in the background of the hub's round,
- * or as a detached step when no hub runs, a pass at a time within a budget
- * of its own (reverseSweepBudget); what a pass leaves (`left`) is named on
+ * each pass searched in a process of its own (scripts/reverse-sweep-pass.ts)
+ * with what each object holds kept between passes, or as a detached step
+ * when no hub runs, a pass at a time within a budget of its own
+ * (reverseSweepBudget); what a pass leaves (`left`) is named on
  * its line and searched by the next pass, at the next round, until nothing
  * is left (the Fable review of the limits branch, P2-4). Each pass's hits
  * are delivered on the board when it completes, and to the re-examination
@@ -90,7 +95,7 @@
  */
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { closeSync, createReadStream, lstatSync, openSync, readSync } from "node:fs";
 import { appendFile, lstat, mkdir, open, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -255,6 +260,14 @@ export type SweepRecord = {
   unsearched: Array<{ ref: string; why: string }>;
   /** The summary of a list too long for the line, and the file that holds it whole (unsearchedRows reads it). */
   unsearched_all?: UnsearchedSummary;
+  /**
+   * When what the sweep found is longer than a line holds: the summary, and
+   * the file that holds `hits`, `named_hits` and `echoes` whole; the three
+   * lists on the written line are then the first few of each. The line as
+   * this process reads it (readSweeps) holds the lists whole again, read from
+   * that file and held to its sha256 (hydrateHits).
+   */
+  hits_all?: HitsSummary;
   started_at: string;
   at: string;
   /** On a line that continues an earlier pass of the same record's sweep: its number (the first pass is 1 and says nothing), and the hash of the line it continues. Its hits and what it searched are the union of the passes so far; `unsearched` is what is still not searched. */
@@ -325,12 +338,32 @@ export type ImportSweepRecord = {
   /** As a coverage record's sweep names them (SweepRecord.unsearched): whole, or the first few with `unsearched_all`. */
   unsearched: Array<{ ref: string; why: string; left?: true }>;
   unsearched_all?: UnsearchedSummary;
+  /** As a coverage record's sweep has it (SweepRecord.hits_all): the summary and the file of a list of hits too long for the line. */
+  hits_all?: HitsSummary;
   started_at: string;
   at: string;
   pass?: number;
   continues?: string;
   prev?: string;
   hash?: string;
+};
+/**
+ * What a sweep found, when it is too long for its line (the runs of
+ * Batman III held up to 920 hits a line): how many in all and in each list
+ * (`counts`), by string and by directory (the SWEEP_HITS_KEYS largest, the
+ * rest as one row `(other)`), each row with how many of them hold
+ * (`hits`, the list a gate holds a negative to) and how many in all
+ * (`count`), and the file that holds every list whole: its path under the
+ * run, its sha256 and its rows, one JSON object a line, the hit with the
+ * list it is in (`{"list": "hits" | "named_hits" | "echoes", ...hit}`), the
+ * lists in that order.
+ */
+export type HitsSummary = {
+  total: number;
+  counts: { hits: number; named_hits: number; echoes: number };
+  by_term: Array<{ term: string; hits: number; count: number }>;
+  by_prefix: Array<{ prefix: string; hits: number; count: number }>;
+  file: { path: string; sha256: string; rows: number };
 };
 /** Any line of ledger/sweeps.jsonl: a coverage record's sweep, or an addition's reverse sweep. */
 export type AnySweepLine = SweepRecord | ImportSweepRecord;
@@ -1199,6 +1232,11 @@ async function parseSweepRange(file: string, start: number, end: number, into: S
   if (parts.length) take(Buffer.concat(parts), lineAt, false);
 }
 
+/** Lines as written, held as this process holds them: what each found whole again where its line names a file of hits (hydrateHits). */
+async function hydrateLines(sandboxRoot: string, lines: AnySweepLine[]): Promise<void> {
+  for (let i = 0; i < lines.length; i++) lines[i] = await hydrateHits(sandboxRoot, lines[i]!);
+}
+
 /** The sweeps file, read once and kept while it does not change under this process. */
 function loadSweepFile(sandboxRoot: string): Promise<SweepFile> {
   const key = resolve(sandboxRoot);
@@ -1223,6 +1261,7 @@ function loadSweepFile(sandboxRoot: string): Promise<SweepFile> {
           // a torn line is the chain check's to name
         }
       }
+      await hydrateLines(sandboxRoot, out.lines);
       return out;
     }
     const had = sweepFiles.get(key);
@@ -1232,6 +1271,7 @@ function loadSweepFile(sandboxRoot: string): Promise<SweepFile> {
       // Grown: the lines after the last one read, when the first of them continues the chain's head.
       const tail = emptySweepFile();
       await parseSweepRange(file, had.parsedTo, st.size, tail);
+      await hydrateLines(sandboxRoot, tail.lines);
       if (tail.lines.length && tail.lines[0]!.prev === had.head) {
         had.lines.push(...tail.lines);
         for (const [h, at] of tail.legacy) had.legacy.set(h, at);
@@ -1241,6 +1281,7 @@ function loadSweepFile(sandboxRoot: string): Promise<SweepFile> {
     }
     const fresh = emptySweepFile();
     await parseSweepRange(file, 0, st.size, fresh);
+    await hydrateLines(sandboxRoot, fresh.lines);
     Object.assign(fresh, { cached: true, dev: st.dev, ino: st.ino, size: st.size, mtimeMs: st.mtimeMs });
     sweepFiles.set(key, fresh);
     return fresh;
@@ -1253,7 +1294,11 @@ function loadSweepFile(sandboxRoot: string): Promise<SweepFile> {
  * Lines appended to ledger/sweeps.jsonl under the sweeps' lock, chained
  * from the head this process holds (read again only when the file changed
  * under it), and added to what it holds: nothing is read back. `make` is
- * given the lines as they stand under the lock and says what to append.
+ * given the lines as they stand under the lock and says what to append, as
+ * this process holds them (their lists whole); what is written of each is
+ * the form boundHits or hydrateHits registered for it, made here only for a
+ * line no caller made ready (its file of hits is then written under the
+ * lock). Returns the lines as held, each with its hash.
  */
 async function appendSweepLines<T extends AnySweepLine>(sandboxRoot: string, make: (lines: readonly AnySweepLine[]) => Array<Omit<T, "prev" | "hash">> | Promise<Array<Omit<T, "prev" | "hash">>>): Promise<T[]> {
   const P = await import("./protocol.ts");
@@ -1265,11 +1310,19 @@ async function appendSweepLines<T extends AnySweepLine>(sandboxRoot: string, mak
     let body = "";
     const out: T[] = [];
     for (const n of next) {
-      const rec = { ...n, prev } as unknown as T;
+      let held = n as Omit<AnySweepLine, "prev" | "hash">;
+      let written = writtenForms.get(held) as typeof held | undefined;
+      if (!written) {
+        held = await boundHits(sandboxRoot, held as Unchained<SweepRecord> | Unchained<ImportSweepRecord>);
+        written = writtenForms.get(held) as typeof held;
+      }
+      const rec = { ...written, prev } as unknown as T;
       rec.hash = sweepHash(rec, prev);
       prev = rec.hash;
       body += `${JSON.stringify(rec)}\n`;
-      out.push(rec);
+      const kept = { ...held, prev: rec.prev, hash: rec.hash } as unknown as T;
+      writtenForms.set(kept, rec);
+      out.push(kept);
     }
     const file = join(sandboxRoot, LEDGER_SWEEPS);
     await mkdir(join(sandboxRoot, "ledger"), { recursive: true });
@@ -1356,9 +1409,311 @@ function clipWords(text: string, max: number): string {
   return `${cut} […]`;
 }
 
-/** The first `n` of a list in words, and how many more there are. */
-function someWords<T>(xs: readonly T[], n: number, say: (x: T) => string, more = "more"): string {
-  return xs.length <= n ? xs.map(say).join("; ") : `${xs.slice(0, n).map(say).join("; ")}; and ${xs.length - n} ${more} (ledger/sweeps.jsonl holds each)`;
+/** The first `n` of a list in words, and how many more there are, and where each is. */
+function someWords<T>(xs: readonly T[], n: number, say: (x: T) => string, more = "more", where = "ledger/sweeps.jsonl"): string {
+  return xs.length <= n ? xs.map(say).join("; ") : `${xs.slice(0, n).map(say).join("; ")}; and ${xs.length - n} ${more} (${where} holds each)`;
+}
+
+// --- what a sweep found: whole on a short line, else a summary on it and the lists beside the ledger ----------
+
+/** What a sweep found (hits, named hits and echoes together) is whole on its line when it is no more than this many rows, and SWEEP_HITS_INLINE_BYTES. */
+export const SWEEP_HITS_INLINE = 50;
+const SWEEP_HITS_INLINE_BYTES = 24 * 1024;
+/** How many of each list a longer line names (within SWEEP_HITS_SAMPLE_BYTES a list, a hit at most 2 KB). */
+export const SWEEP_HITS_SAMPLE = 12;
+const SWEEP_HITS_SAMPLE_BYTES = 4 * 1024;
+/** How many strings and directories a summary of hits counts by; the rest are one row, `(other)`. */
+export const SWEEP_HITS_KEYS = 24;
+const HIT_LISTS = ["hits", "named_hits", "echoes"] as const;
+type HitListName = (typeof HIT_LISTS)[number];
+/** A side file a sweep line names: what it did not search, or what it found; its name is its sha256. */
+export const SWEEP_SIDE_FILE = /^ledger\/sweeps\/(unsearched|hits)-([0-9a-f]{64})\.jsonl$/;
+
+/** A side file as a line of the sweeps file names it: its path under the run, its sha256 and rows, and which list it holds. */
+export type SweepSideFile = { path: string; sha256: string; rows: number | null; of: "unsearched" | "hits" };
+
+/**
+ * The side files the lines of a sweeps file name (`unsearched_all.file`,
+ * `hits_all.file`), each once, in the order first named; read from the
+ * text, a line at a time, as custody and a package's verify read the
+ * chain. A line that does not parse is the chain check's finding, not this
+ * one's; a redacted line names none.
+ */
+export function sweepSideFiles(text: string): SweepSideFile[] {
+  const out = new Map<string, SweepSideFile>();
+  for (const line of text.split("\n")) {
+    if (!line.includes('"unsearched_all"') && !line.includes('"hits_all"')) continue;
+    let o: { unsearched_all?: { file?: { path?: unknown; sha256?: unknown; rows?: unknown } }; hits_all?: { file?: { path?: unknown; sha256?: unknown; rows?: unknown } } };
+    try {
+      o = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    for (const [of, f] of [["unsearched", o.unsearched_all?.file], ["hits", o.hits_all?.file]] as const) {
+      if (!f || typeof f.path !== "string" || typeof f.sha256 !== "string" || out.has(f.path)) continue;
+      out.set(f.path, { path: f.path, sha256: f.sha256, rows: typeof f.rows === "number" ? f.rows : null, of });
+    }
+  }
+  return [...out.values()];
+}
+
+/**
+ * Each side file held to what its line names: a path of the form
+ * ledger/sweeps/<list>-<sha256>.jsonl whose name is the sha256 it names
+ * and holds the list it is named for, a regular file where `at` puts it
+ * (the run: under the run; a package: ledger-sweeps/<name>), whose bytes
+ * hash to that sha256. Returns how many were named and each that is not as
+ * named, in words.
+ */
+export function checkSweepSideFiles(files: readonly SweepSideFile[], at: (path: string) => string): { named: number; bad: string[] } {
+  const bad: string[] = [];
+  for (const f of files) {
+    const m = SWEEP_SIDE_FILE.exec(f.path);
+    if (!m || m[1] !== f.of || m[2] !== f.sha256) {
+      bad.push(`${f.path.slice(0, 120)}: not a side list's path`);
+      continue;
+    }
+    const abs = at(f.path);
+    let regular = false;
+    try {
+      regular = lstatSync(abs).isFile();
+    } catch {
+      regular = false;
+    }
+    if (!regular) {
+      bad.push(`${f.path}: missing`);
+      continue;
+    }
+    const h = createHash("sha256");
+    let fd: number | null = null;
+    try {
+      fd = openSync(abs, "r");
+      const buf = Buffer.alloc(1024 * 1024);
+      for (let n = readSync(fd, buf, 0, buf.length, null); n > 0; n = readSync(fd, buf, 0, buf.length, null)) h.update(buf.subarray(0, n));
+    } catch {
+      // Unreadable: its hash is not the one named.
+    } finally {
+      if (fd !== null) closeSync(fd);
+    }
+    if (h.digest("hex") !== f.sha256) bad.push(`${f.path}: its bytes are not the ${f.sha256.slice(0, 12)}… its line names`);
+  }
+  return { named: files.length, bad };
+}
+
+type Unchained<L> = Omit<L, "prev" | "hash">;
+/**
+ * The line as it is written, by the line as this process holds it (its
+ * lists whole): set where either is made (boundHits, hydrateHits), read
+ * where a line is chained (appendSweepLines), so that the chain hashes what
+ * the file holds.
+ */
+const writtenForms = new WeakMap<object, object>();
+/** Lines held whose file of hits is missing or not the one the line names: their lists are the line's few and a row that says so. */
+const hitsUnreadable = new WeakSet<object>();
+
+function listsOf(line: object): Array<[HitListName, SweepHit[]]> {
+  const l = line as Record<string, unknown>;
+  return HIT_LISTS.filter((k) => Array.isArray(l[k])).map((k) => [k, l[k] as SweepHit[]]);
+}
+
+/** Whether a line this process holds has what its sweep found whole: false when the file of hits its line names could not be read as named (its lists are then the line's few, and a row naming the file). */
+export function hitsReadWhole(line: object): boolean {
+  return !hitsUnreadable.has(line);
+}
+
+/** A hit made short for a line's few: eight of its other names, four of its makers with eight reads each. */
+function shortHit<H extends SweepHit>(h: H): H {
+  return {
+    ...h,
+    ...(h.also && h.also.length > 8 ? { also: h.also.slice(0, 8) } : {}),
+    ...(h.origins?.length ? { origins: h.origins.slice(0, 4).map((o) => ({ ...o, ...(o.reads && o.reads.length > 8 ? { reads: o.reads.slice(0, 8) } : {}) })) } : {}),
+  };
+}
+
+/** The first few of a list, within a bound of bytes: at most SWEEP_HITS_SAMPLE, none over 2 KB (made short first), and one at least when one fits. */
+function hitSample<H extends SweepHit>(xs: readonly H[]): H[] {
+  const out: H[] = [];
+  let left = SWEEP_HITS_SAMPLE_BYTES;
+  for (const h of xs) {
+    if (out.length >= SWEEP_HITS_SAMPLE) break;
+    let x = h;
+    let b = Buffer.byteLength(JSON.stringify(x));
+    if (b > 2048) {
+      x = shortHit(h);
+      b = Buffer.byteLength(JSON.stringify(x));
+    }
+    if (b > 2048 || b > left) break;
+    out.push(x);
+    left -= b;
+  }
+  return out;
+}
+
+/** Counts by key, the largest `n` first, the rest as one row. */
+function topCounts<K extends string>(m: Map<string, { hits: number; count: number }>, key: K): Array<Record<K, string> & { hits: number; count: number }> {
+  const all = [...m.entries()].sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]));
+  const row = (k: string, v: { hits: number; count: number }) => ({ [key]: k, hits: v.hits, count: v.count }) as Record<K, string> & { hits: number; count: number };
+  const top = all.slice(0, SWEEP_HITS_KEYS).map(([k, v]) => row(k, v));
+  const rest = all.slice(SWEEP_HITS_KEYS).reduce((n, [, v]) => ({ hits: n.hits + v.hits, count: n.count + v.count }), { hits: 0, count: 0 });
+  return rest.count ? [...top, row("(other)", rest)] : top;
+}
+
+/**
+ * A line made ready to be written: when what it found is longer than a line
+ * holds (SWEEP_HITS_INLINE rows, SWEEP_HITS_INLINE_BYTES), every list is
+ * written whole to a file under ledger/sweeps/ named by its sha256
+ * (`hits-<sha256>.jsonl`), and the line written names it (`hits_all`) and
+ * keeps the first few of each list. Returns the line as this process holds
+ * it, its lists whole and `hits_all` beside them; what is written is
+ * registered for appendSweepLines. A `hits_all` the line came with (read
+ * from an older line) is made again. Called before the sweeps' lock is
+ * taken, so that the lock is held for the append alone.
+ */
+export async function boundHits<L extends Unchained<SweepRecord> | Unchained<ImportSweepRecord>>(root: string, whole: L): Promise<L> {
+  const { hits_all: _old, ...line } = whole as L & { hits_all?: HitsSummary };
+  const lists = listsOf(line);
+  const total = lists.reduce((n, [, xs]) => n + xs.length, 0);
+  if (total <= SWEEP_HITS_INLINE && Buffer.byteLength(JSON.stringify(lists.map(([, xs]) => xs))) <= SWEEP_HITS_INLINE_BYTES) {
+    writtenForms.set(line, line);
+    return line as unknown as L;
+  }
+  const dir = join(root, LEDGER_SWEEP_LISTS);
+  await mkdir(dir, { recursive: true });
+  const tmp = join(dir, `.hits-${process.pid}-${Math.random().toString(16).slice(2)}.tmp`);
+  const fh = await open(tmp, "w");
+  const hash = createHash("sha256");
+  const terms = new Map<string, { hits: number; count: number }>();
+  const prefixes = new Map<string, { hits: number; count: number }>();
+  const tally = (m: typeof terms, k: string, holds: boolean) => {
+    const v = m.get(k) ?? { hits: 0, count: 0 };
+    v.count += 1;
+    if (holds) v.hits += 1;
+    m.set(k, v);
+  };
+  let rows = 0;
+  try {
+    let pending: string[] = [];
+    let size = 0;
+    const flush = async () => {
+      if (!pending.length) return;
+      const body = Buffer.from(pending.join(""), "utf8");
+      pending = [];
+      size = 0;
+      hash.update(body);
+      await fh.write(body);
+    };
+    for (const [list, xs] of lists) {
+      for (const h of xs) {
+        const row = `${JSON.stringify({ list, ...h })}\n`;
+        pending.push(row);
+        size += row.length;
+        rows += 1;
+        tally(terms, h.term, list === "hits");
+        tally(prefixes, unsearchedPrefix(h.ref), list === "hits");
+        if (size > 1024 * 1024) await flush();
+      }
+    }
+    await flush();
+    await fh.close();
+  } catch (err) {
+    await fh.close().catch(() => undefined);
+    await rm(tmp, { force: true }).catch(() => undefined);
+    throw err;
+  }
+  const sha256 = hash.digest("hex");
+  const path = `${LEDGER_SWEEP_LISTS}/hits-${sha256}.jsonl`;
+  // Named by what it holds: the same lists again are the same file.
+  await rename(tmp, join(root, path));
+  const count = (k: HitListName) => lists.find(([n]) => n === k)?.[1].length ?? 0;
+  const summary: HitsSummary = {
+    total,
+    counts: { hits: count("hits"), named_hits: count("named_hits"), echoes: count("echoes") },
+    by_term: topCounts(terms, "term"),
+    by_prefix: topCounts(prefixes, "prefix"),
+    file: { path, sha256, rows },
+  };
+  const written = { ...line, ...Object.fromEntries(lists.map(([k, xs]) => [k, hitSample(xs)])), hits_all: summary };
+  const held = { ...line, hits_all: summary };
+  writtenForms.set(held, written);
+  return held as unknown as L;
+}
+
+/** A line as it is written (boundHits), for a process that hands its lines to another (scripts/sweep-pass.ts, scripts/reverse-sweep-pass.ts): what it found in a file when it is long. */
+export async function sweepLineAsWritten<L extends Unchained<SweepRecord> | Unchained<ImportSweepRecord>>(root: string, line: L): Promise<L> {
+  return writtenForms.get(await boundHits(root, line)) as L;
+}
+
+/**
+ * A written line as this process holds it: what it found whole again, read
+ * from the file its `hits_all` names, the rows counted and their sha256
+ * checked. A file that is missing or not the one the line names is not
+ * trusted for a row: the lists are the line's few, and each list with more
+ * than those gets a row whose object is the file and what is missing of it
+ * (on a reverse sweep, bearing on every record it searched for), so that a
+ * hit the line names is never taken for examined because its list could not
+ * be read (hitsReadWhole says so). A line that names no file is as written.
+ */
+export async function hydrateHits<L extends object>(root: string, written: L): Promise<L> {
+  const all = (written as { hits_all?: HitsSummary }).hits_all;
+  if (!all?.file) {
+    writtenForms.set(written, written);
+    return written;
+  }
+  const got: Record<HitListName, SweepHit[]> = { hits: [], named_hits: [], echoes: [] };
+  const name = SWEEP_SIDE_FILE.exec(all.file.path);
+  let whole = Boolean(name && name[1] === "hits" && name[2] === all.file.sha256);
+  if (whole) {
+    try {
+      const hash = createHash("sha256");
+      let rows = 0;
+      let rest = Buffer.alloc(0);
+      const take = (b: Buffer) => {
+        if (!b.length) return;
+        const { list, ...h } = JSON.parse(b.toString("utf8")) as SweepHit & { list: HitListName };
+        if (!HIT_LISTS.includes(list)) throw new Error(`a row of no list (${String(list)})`);
+        got[list].push(h);
+        rows += 1;
+      };
+      for await (const raw of createReadStream(join(root, all.file.path), { highWaterMark: 1024 * 1024 })) {
+        const chunk = raw as Buffer;
+        hash.update(chunk);
+        const buf = rest.length ? Buffer.concat([rest, chunk]) : chunk;
+        let from = 0;
+        for (let nl = buf.indexOf(0x0a, from); nl >= 0; nl = buf.indexOf(0x0a, from)) {
+          take(buf.subarray(from, nl));
+          from = nl + 1;
+        }
+        rest = Buffer.from(buf.subarray(from));
+      }
+      take(rest);
+      whole = rows === all.file.rows && hash.digest("hex") === all.file.sha256;
+    } catch {
+      whole = false;
+    }
+  }
+  let held: L;
+  if (whole) held = { ...written, ...Object.fromEntries(listsOf(written).map(([k]) => [k, got[k]])) };
+  else {
+    const records = (written as { records?: Array<{ seq: number }> }).records;
+    const terms = (written as { terms?: string[] }).terms ?? [];
+    const lists = listsOf(written).map(([k, xs]): [HitListName, SweepHit[]] => {
+      const missing = (all.counts?.[k] ?? 0) - xs.length;
+      if (missing <= 0) return [k, xs];
+      const row: SweepHit & { bears_on?: number[] } = {
+        ref: `${all.file.path} (missing, or not the list its line names: ${missing} of the line's ${all.counts[k]} ${k === "hits" ? "hit(s)" : k === "named_hits" ? "named hit(s)" : "echo(es)"} not read)`,
+        term: terms[0] ?? "",
+        count: 0,
+        first_offset: 0,
+        encodings: [],
+        ...(records ? { bears_on: records.map((r) => r.seq) } : {}),
+      };
+      return [k, [...xs, row]];
+    });
+    held = { ...written, ...Object.fromEntries(lists) };
+    hitsUnreadable.add(held);
+  }
+  writtenForms.set(held, written);
+  return held;
 }
 
 // --- what each object holds of each string, kept between passes -----------------------------------
@@ -1616,20 +1971,22 @@ export async function runSweepPass(sandboxRoot: string, records: ReadonlyArray<{
     byRef.set(x.ref, g);
   }
   type Raw = { g: number; ref: string; also: string[]; term: number; found: Found };
-  const works = [] as Array<{ cov: SweepCoverage; prior: SweepRecord | null; terms: string[]; need: Uint8Array; why: Uint8Array; detail: Map<number, string>; gone: UnsearchedRow[]; raw: Raw[]; objects: number; bytes: number }>;
+  const works = [] as Array<{ cov: SweepCoverage; prior: SweepRecord | null; known: SweepRecord | null; terms: string[]; need: Uint8Array; why: Uint8Array; detail: Map<number, string>; gone: UnsearchedRow[]; raw: Raw[]; objects: number; bytes: number }>;
   for (const r of records) {
     const prior = r.prior ?? null;
+    // A line whose file of hits could not be read is continued by searching everything again: what its passes found is not known.
+    const known = prior && hitsReadWhole(prior) ? prior : null;
     const terms = [...(r.cov.looked_for ?? [])];
-    const w = { cov: r.cov, prior, terms, need: new Uint8Array(groups.length).fill(prior ? 0 : 1), why: new Uint8Array(groups.length), detail: new Map<number, string>(), gone: [] as UnsearchedRow[], raw: [] as Raw[], objects: 0, bytes: 0 };
-    if (prior) {
+    const w = { cov: r.cov, prior, known, terms, need: new Uint8Array(groups.length).fill(known ? 0 : 1), why: new Uint8Array(groups.length), detail: new Map<number, string>(), gone: [] as UnsearchedRow[], raw: [] as Raw[], objects: 0, bytes: 0 };
+    if (known) {
       // What the line it continues left, and what that line could not read (tried again: the reason may have passed).
-      for await (const row of unsearchedRows(sandboxRoot, prior)) {
+      for await (const row of unsearchedRows(sandboxRoot, known)) {
         const g = byRef.get(row.ref);
         if (g === undefined) w.gone.push({ ref: row.ref, code: "unreadable", why: "it is no longer in the store's listing", detail: "it is no longer in the store's listing" });
         else w.need[g] = 1;
       }
       // What its passes found so far, by the names the store gives each object now.
-      for (const h of [...prior.hits, ...prior.named_hits, ...(prior.echoes ?? [])]) {
+      for (const h of [...known.hits, ...known.named_hits, ...(known.echoes ?? [])]) {
         const t = terms.indexOf(h.term);
         if (t < 0) continue;
         const g = byRef.get(h.ref) ?? -1;
@@ -1751,7 +2108,7 @@ export async function runSweepPass(sandboxRoot: string, records: ReadonlyArray<{
         rules: SWEEP_RULES,
         state: hits.length ? "hits" : list.total ? "partial" : "clean",
         terms: w.terms,
-        searched: { objects: (p?.searched.objects ?? 0) + w.objects, bytes: (p?.searched.bytes ?? 0) + w.bytes },
+        searched: { objects: (w.known?.searched.objects ?? 0) + w.objects, bytes: (w.known?.searched.bytes ?? 0) + w.bytes },
         hits,
         named_hits: namedHits,
         echoes,
@@ -1836,7 +2193,8 @@ export async function resplitSweep(sandboxRoot: string, cov: Pick<LedgerEntry, "
     if (!made) hits.push(hit);
     else (isEcho(made) ? echoes : namedHits).push({ ...hit, origins: made });
   }
-  const { prev: _p, hash: _h, reread: _r, ...rest } = line;
+  // What it found is said again whole; boundHits makes its summary and file when the line is written.
+  const { prev: _p, hash: _h, reread: _r, hits_all: _ha, ...rest } = line;
   // A line from before 2026-11-13 holds its long list of unsearched objects in itself: the line that reads it again names it in a file, as every line now does.
   let list: Partial<Pick<SweepRecord, "unsearched" | "unsearched_all">> = {};
   if (line.unsearched_all && !line.unsearched_all.file) {
@@ -1953,13 +2311,14 @@ export function sweepWords(s: SweepRecord | null, c: Pick<LedgerEntry, "looked_f
   if (!s) return "store sweep pending";
   const head = `store sweep ${s.state}: ${s.searched.objects} object(s), ${s.searched.bytes} bytes searched for ${s.terms.map((t) => `"${t}"`).join(", ")}${s.pass ? ` in ${s.pass} passes` : ""}`;
   const left = unsearchedLeft(s);
+  const where = s.hits_all?.file ? s.hits_all.file.path : undefined;
   return clipWords(
     [
       head,
       s.reread ? rereadWords(s) : "",
-      s.hits.length ? `found outside the record's objects: ${someWords(s.hits, SWEEP_WORDS_HITS, hitWords)}` : "",
-      s.named_hits.length ? `found in objects the record names (does the answer account for them?): ${someWords(s.named_hits, SWEEP_WORDS_HITS, hitWords)}` : "",
-      s.echoes?.length ? `echoes, holding nothing (is each only the run's own words?): ${someWords(s.echoes, SWEEP_WORDS_HITS, hitWords)}` : "",
+      s.hits.length ? `found outside the record's objects: ${someWords(s.hits, SWEEP_WORDS_HITS, hitWords, "more", where)}` : "",
+      s.named_hits.length ? `found in objects the record names (does the answer account for them?): ${someWords(s.named_hits, SWEEP_WORDS_HITS, hitWords, "more", where)}` : "",
+      s.echoes?.length ? `echoes, holding nothing (is each only the run's own words?): ${someWords(s.echoes, SWEEP_WORDS_HITS, hitWords, "more", where)}` : "",
       unsearchedTotal(s) ? `not searched${left ? " yet (the next pass goes on with what was left)" : ""}: ${unsearchedWords(s)}` : "",
     ]
       .filter(Boolean)
@@ -2065,10 +2424,12 @@ async function passRound(sandboxRoot: string, q: PassQueue): Promise<void> {
     const log = passLog.get(resolve(sandboxRoot)) ?? [];
     log.push(result.stats);
     passLog.set(resolve(sandboxRoot), log.slice(-50));
+    // As this process holds them: a line the pass wrote its file of hits for is read whole from it, any other made ready; outside the lock.
+    const ready = await Promise.all(result.lines.map((l) => (l.hits_all ? hydrateHits(sandboxRoot, l) : boundHits(sandboxRoot, l))));
     const written = await appendSweepLines<SweepRecord>(sandboxRoot, (lines) => {
       const v1 = lines.filter((s): s is SweepRecord => s.v === 1);
       // Recorded by another process first: its line stands.
-      return result.lines.filter((l) => (sweepOf({ hash: l.target }, v1)?.hash ?? null) === (l.continues ?? null));
+      return ready.filter((l) => (sweepOf({ hash: l.target }, v1)?.hash ?? null) === (l.continues ?? null));
     });
     const P = await import("./protocol.ts");
     await P.renderLedger(sandboxRoot).catch(() => undefined);
@@ -2298,7 +2659,7 @@ async function rereadPass(S: string, o: { maxBytes?: number; maxMs?: number; cha
   const made: Array<{ e: LedgerEntry; line: SweepRecord; next: Omit<SweepRecord, "prev" | "hash"> }> = [];
   for (const { e, line } of due) {
     const from = sweepRulesOf(line);
-    const whole = Array.isArray(line.hits) && Array.isArray(line.named_hits) && Array.isArray(line.unsearched);
+    const whole = Array.isArray(line.hits) && Array.isArray(line.named_hits) && Array.isArray(line.unsearched) && hitsReadWhole(line);
     const how: SweepReread["how"] = whole && !changes.some((c) => c.version > from && c.bytes) ? "read" : "searched";
     let r: Omit<SweepRecord, "prev" | "hash">;
     try {
@@ -2308,7 +2669,8 @@ async function rereadPass(S: string, o: { maxBytes?: number; maxMs?: number; cha
       continue;
     }
     const reread: SweepReread = { from_version: typeof line.rules === "number" ? line.rules : null, reason: "rules changed", of: line.hash ?? "", at: new Date(now()).toISOString(), how };
-    made.push({ e, line, next: { ...r, rules: current, reread } });
+    // Its file of hits written now, outside the sweeps' lock.
+    made.push({ e, line, next: await boundHits(S, { ...r, rules: current, reread }) });
   }
   if (!made.length) return result;
   const kept: typeof made = [];
@@ -2402,6 +2764,23 @@ export function recordsStandingAt(entries: readonly LedgerEntry[], seq: number):
  * the store; `now` and the budget are the caller's (tests fix them).
  */
 export async function computeImportSweep(sandboxRoot: string, addition: { seq: number; hash: string; import: string }, records: readonly LedgerEntry[], o: { maxBytes?: number; maxMs?: number; now?: () => number; only?: readonly string[] | ReadonlySet<string>; carried?: readonly UnsearchedRow[] } = {}): Promise<Omit<ImportSweepRecord, "prev" | "hash">> {
+  return (await importSweepPass(sandboxRoot, addition, records, { ...o, results: false })).line;
+}
+
+/** What a pass of a reverse sweep did: the objects of the store it listed, those of the import it was to search, the objects it read and their bytes, those whose results were all kept already, how long it took, and the process it ran in. */
+export type ReverseSweepStats = { import: string; listed: number; objects: number; reads: number; bytes_read: number; from_results: number; ms: number; pid: number };
+
+/**
+ * computeImportSweep, with what each object holds of each string kept
+ * between passes when `results` is not false (SweepResults, as the store
+ * sweep keeps them): an object whose results are all kept is not read
+ * again, so a pass that died, or one started again after a restart, reads
+ * only what no pass got to. The line is the same either way: an object
+ * answered from the results passes the same budget checks, and counts as
+ * searched, as one read.
+ */
+async function importSweepPass(sandboxRoot: string, addition: { seq: number; hash: string; import: string }, records: readonly LedgerEntry[], o: { maxBytes?: number; maxMs?: number; now?: () => number; only?: readonly string[] | ReadonlySet<string>; carried?: readonly UnsearchedRow[]; results?: boolean } = {}): Promise<{ line: Omit<ImportSweepRecord, "prev" | "hash">; stats: ReverseSweepStats }> {
+  const wall = Date.now();
   const now = o.now ?? Date.now;
   const budget = { ...sweepBudget(), ...(o.maxBytes !== undefined ? { maxBytes: o.maxBytes } : {}), ...(o.maxMs !== undefined ? { maxMs: o.maxMs } : {}) };
   const started = now();
@@ -2422,7 +2801,8 @@ export async function computeImportSweep(sandboxRoot: string, addition: { seq: n
   const pats = patterns(terms);
   // The import's files, or those a previous pass left (`only`).
   const only = o.only ? (o.only instanceof Set ? (o.only as ReadonlySet<string>) : new Set(o.only as readonly string[])) : null;
-  const objects = terms.length ? (await sweepObjects(sandboxRoot)).filter((x) => x.ref.startsWith(`import:${addition.import}/`) && (!only || only.has(x.ref))) : [];
+  const listed = terms.length ? await sweepObjects(sandboxRoot) : [];
+  const objects = listed.filter((x) => x.ref.startsWith(`import:${addition.import}/`) && (!only || only.has(x.ref)));
   const groups = new Map<string, SweepObject[]>();
   for (const x of objects) groups.set(x.key, [...(groups.get(x.key) ?? []), x]);
   const hits: ImportSweepHit[] = [];
@@ -2430,6 +2810,10 @@ export async function computeImportSweep(sandboxRoot: string, addition: { seq: n
   const unsearched = new UnsearchedList(sandboxRoot, { flagLeft: true });
   let searchedObjects = 0;
   let searchedBytes = 0;
+  const results = o.results === false || !terms.length ? null : await SweepResults.open(sandboxRoot, terms);
+  let reads = 0;
+  let bytesRead = 0;
+  let fromResults = 0;
   try {
     for (const [, group] of groups) {
       const first = group[0]!;
@@ -2447,9 +2831,28 @@ export async function computeImportSweep(sandboxRoot: string, addition: { seq: n
         for (const g of group) unsearched.add(g.ref, "bytes", `its ${first.bytes} bytes would pass this pass's byte budget (${budget.maxBytes}, SWARM_REVERSE_SWEEP_MAX_BYTES; ${searchedBytes} searched): the next pass searches it`);
         continue;
       }
-      let found: Awaited<ReturnType<typeof searchFile>>;
+      let found: Map<number, { count: number; first: number; encodings: Iterable<"utf-8" | "utf-16le"> }>;
+      const key = resultKey(first);
+      // The strings no kept result answers for this object: read for those alone.
+      const missing = results ? terms.map((t, i) => [t, i] as const).filter(([t]) => results.get(key, t) === undefined) : terms.map((t, i) => [t, i] as const);
       try {
-        found = await searchFile(objectPath(first), pats);
+        const read = missing.length ? await searchFile(objectPath(first), missing.length === terms.length ? pats : patterns(missing.map(([t]) => t))) : new Map<number, { count: number; first: number; encodings: Set<"utf-8" | "utf-16le"> }>();
+        if (missing.length) {
+          reads += 1;
+          bytesRead += first.bytes;
+        } else fromResults += 1;
+        if (results) {
+          missing.forEach(([t], j) => {
+            const f = read.get(j);
+            results.set(key, t, f ? { count: f.count, first: f.first, encodings: [...f.encodings].sort() } : null);
+          });
+          await results.maybeFlush();
+          found = new Map();
+          terms.forEach((t, i) => {
+            const f = results.get(key, t);
+            if (f) found.set(i, f);
+          });
+        } else found = read;
       } catch (err) {
         const words = `it could not be read (${(err as Error).message})`;
         for (const g of group) unsearched.add(g.ref, "unreadable", words, words);
@@ -2469,12 +2872,14 @@ export async function computeImportSweep(sandboxRoot: string, addition: { seq: n
     }
   } catch (err) {
     await unsearched.abandon();
+    await results?.flush();
     throw err;
   }
+  await results?.flush();
   const total = unsearched.total;
   const left = await unsearched.finish();
   const state: SweepState = hits.length ? "hits" : total ? "partial" : "clean";
-  return {
+  const line: Omit<ImportSweepRecord, "prev" | "hash"> = {
     v: 2,
     of: "import",
     seq: addition.seq,
@@ -2490,6 +2895,7 @@ export async function computeImportSweep(sandboxRoot: string, addition: { seq: n
     started_at: new Date(started).toISOString(),
     at: new Date(now()).toISOString(),
   };
+  return { line, stats: { import: addition.import, listed: listed.length, objects: objects.length, reads, bytes_read: bytesRead, from_results: fromResults, ms: Date.now() - wall, pid: process.pid } };
 }
 
 /** An addition's reverse sweep, by its external entry's hash: the line, or null. */
@@ -2535,50 +2941,127 @@ export function importSweepWhole(target: string, sweeps: readonly ImportSweepRec
 }
 
 /**
+ * The next pass of an addition's reverse sweep, searched and not recorded:
+ * the first over every file of the import, a continuation over what the
+ * last pass left (read as a stream from its line, or from the file it
+ * names), what earlier passes could not read named again, within `budget`.
+ * The coverage records searched for are those standing at the addition
+ * (recordsStandingAt), from `entries` or the ledger. What each object holds
+ * of each string is kept (importSweepPass), so a pass started again after
+ * a restart reads only what no pass got to. `line` is null when the sweep
+ * has nothing left; `continues` is the hash of the line it continues (null
+ * for a first pass), for the asker to chain it only when that is still the
+ * latest. What the child process runs (scripts/reverse-sweep-pass.ts), and
+ * what runs here when no child is wanted.
+ */
+export async function reverseSweepPassFor(sandboxRoot: string, addition: { seq: number; hash: string; import: string }, budget: { maxBytes?: number; maxMs?: number }, entries?: readonly LedgerEntry[]): Promise<{ line: Omit<ImportSweepRecord, "prev" | "hash"> | null; continues: string | null; stats: ReverseSweepStats | null }> {
+  const had = importSweepWhole(addition.hash, await readImportSweeps(sandboxRoot));
+  if (had && !had.left_total) return { line: null, continues: had.latest.hash ?? null, stats: null };
+  const P = await import("./protocol.ts");
+  const all = entries ?? (await P.readLedger(sandboxRoot));
+  // What the last pass left is what this one searches; what earlier passes could not read is named on every later line, until it is searched.
+  let only: Set<string> | undefined;
+  const carried: UnsearchedRow[] = [];
+  if (had) {
+    only = new Set();
+    for await (const row of unsearchedRows(sandboxRoot, had.latest)) {
+      if (UNSEARCHED_LEFT.has(row.code)) only.add(row.ref);
+      else carried.push(row);
+    }
+  }
+  const { line, stats } = await importSweepPass(sandboxRoot, addition, recordsStandingAt(all, addition.seq), { ...budget, ...(only ? { only, carried } : {}) });
+  return { line: { ...line, ...(had ? { pass: had.passes.length + 1, continues: had.latest.hash } : {}) }, continues: had?.latest.hash ?? null, stats };
+}
+
+/** The reverse sweep passes this process asked for, by run (the last 50, oldest first): what each read, and in which process. */
+const reversePassLog = new Map<string, ReverseSweepStats[]>();
+export function reverseSweepPasses(sandboxRoot: string): ReverseSweepStats[] {
+  return [...(reversePassLog.get(resolve(sandboxRoot)) ?? [])];
+}
+
+/**
+ * A pass of a reverse sweep run off this process's loop: a child process
+ * (scripts/reverse-sweep-pass.ts) that lists the store, reads what the last
+ * pass left, searches, keeps its results and the long lists under
+ * ledger/sweeps/, and answers with the line as it is written, for this
+ * process to chain. A hub's loop otherwise held the listing of the whole
+ * store (212,000 objects on the run D), the stream of what the last pass
+ * left and the search of every object of the import. With
+ * SWARM_SWEEP_INPROCESS=1 the pass runs here.
+ */
+async function execReverseSweepPass(sandboxRoot: string, addition: { seq: number; hash: string; import: string }, budget: { maxBytes?: number; maxMs?: number }): Promise<Awaited<ReturnType<typeof reverseSweepPassFor>>> {
+  const request = JSON.stringify({ sandbox: resolve(sandboxRoot), addition, budget });
+  return new Promise((done, fail) => {
+    const child = spawn(process.execPath, ["--experimental-strip-types", "--no-warnings", fileURLToPath(new URL("../scripts/reverse-sweep-pass.ts", import.meta.url))], { stdio: ["pipe", "pipe", "pipe"], env: process.env });
+    const out: Buffer[] = [];
+    let err = "";
+    child.stdout.on("data", (c: Buffer) => out.push(c));
+    child.stderr.on("data", (c: Buffer) => {
+      if (err.length < 4096) err += c.toString("utf8");
+    });
+    child.on("error", fail);
+    child.on("close", (code, signal) => {
+      if (code !== 0) return fail(new Error(`the reverse sweep's pass ended ${signal ? `on ${signal}` : `with status ${code}`}${err.trim() ? `: ${err.trim().slice(0, 1000)}` : ""}`));
+      try {
+        done(JSON.parse(Buffer.concat(out).toString("utf8")));
+      } catch (e) {
+        fail(e as Error);
+      }
+    });
+    child.stdin.on("error", () => undefined);
+    child.stdin.end(request);
+  });
+}
+
+/**
  * Run one pass of an addition's reverse sweep and record it: the first
  * over every file of the import, a continuation over what the last pass
  * left, within `o`'s budget (the reverse sweep's own, reverseSweepBudget,
  * by default). A sweep with nothing left is not run again, and a pass
- * running in this process is not started twice. Written under the sweeps'
- * lock, chained; a pass that finds another process recorded the same step
- * first keeps that one. The coverage records searched for are those
- * standing at the addition (recordsStandingAt), read from `entries`.
- * Returns the line (this pass's, or the last one when nothing is left).
- * Throws what went wrong: the next round runs it again.
+ * running in this process is not started twice. The search runs in a
+ * process of its own (execReverseSweepPass) unless `inProcess` (a step
+ * that is itself off every hub's loop, scripts/reverse-sweep.ts) or
+ * SWARM_SWEEP_INPROCESS=1; this process only chains the line it answers,
+ * under the sweeps' lock; a pass that finds another process recorded the
+ * same step first keeps that one. The coverage records searched for are
+ * those standing at the addition (recordsStandingAt): from `entries` in
+ * this process, from the ledger in the child (an addition's standing
+ * records are read by seqs alone, so both find the same). Returns the line
+ * (this pass's, or the last one when nothing is left). Throws what went
+ * wrong: the next round runs it again.
  */
-export function startImportSweep(sandboxRoot: string, addition: { seq: number; hash: string; import: string }, entries: readonly LedgerEntry[], o: { maxBytes?: number; maxMs?: number } = {}): Promise<ImportSweepRecord> {
+export function startImportSweep(sandboxRoot: string, addition: { seq: number; hash: string; import: string }, entries: readonly LedgerEntry[], o: { maxBytes?: number; maxMs?: number; inProcess?: boolean } = {}): Promise<ImportSweepRecord> {
   const key = `${sandboxRoot}\u0000${addition.hash}`;
   const running = importInflight.get(key);
   if (running) return running;
   const p = (async (): Promise<ImportSweepRecord> => {
     const had = importSweepWhole(addition.hash, await readImportSweeps(sandboxRoot));
     if (had && !had.left_total) return had.latest;
-    const budget = { ...reverseSweepBudget(), ...o };
-    // What the last pass left is what this one searches; what earlier passes could not read is named on every later line, until it is searched. Read as a stream from the line, or from the file it names.
-    let only: Set<string> | undefined;
-    const carried: UnsearchedRow[] = [];
-    if (had) {
-      only = new Set();
-      for await (const row of unsearchedRows(sandboxRoot, had.latest)) {
-        if (UNSEARCHED_LEFT.has(row.code)) only.add(row.ref);
-        else carried.push(row);
-      }
+    const budget = { ...reverseSweepBudget(), ...(o.maxBytes !== undefined ? { maxBytes: o.maxBytes } : {}), ...(o.maxMs !== undefined ? { maxMs: o.maxMs } : {}) };
+    const here = o.inProcess || process.env.SWARM_SWEEP_INPROCESS === "1";
+    const r = here ? await reverseSweepPassFor(sandboxRoot, addition, budget, entries) : await execReverseSweepPass(sandboxRoot, addition, budget);
+    if (r.stats) {
+      const log = reversePassLog.get(resolve(sandboxRoot)) ?? [];
+      log.push(r.stats);
+      reversePassLog.set(resolve(sandboxRoot), log.slice(-50));
     }
-    const result = await computeImportSweep(sandboxRoot, addition, recordsStandingAt(entries, addition.seq), { ...budget, ...(only ? { only, carried } : {}) });
-    const pass: Omit<ImportSweepRecord, "prev" | "hash"> = { ...result, ...(had ? { pass: had.passes.length + 1, continues: had.latest.hash } : {}) };
-    const P = await import("./protocol.ts");
     let line: ImportSweepRecord | null = null;
-    const written = await appendSweepLines<ImportSweepRecord>(sandboxRoot, (lines) => {
-      const now = importSweepWhole(addition.hash, lines.filter((s): s is ImportSweepRecord => s.v === 2 && (s as ImportSweepRecord).of === "import"));
-      // Another process recorded this step first: its line stands.
-      if ((now?.latest.hash ?? null) !== (had?.latest.hash ?? null)) {
-        line = now!.latest;
-        return [];
-      }
-      return [pass];
-    });
-    line = written[0] ?? line;
+    if (r.line) {
+      // As this process holds it, made ready outside the lock: what it found read whole from its file, or its file written.
+      const pass = r.line.hits_all ? await hydrateHits(sandboxRoot, r.line) : await boundHits(sandboxRoot, r.line);
+      const written = await appendSweepLines<ImportSweepRecord>(sandboxRoot, (lines) => {
+        const now = importSweepWhole(addition.hash, lines.filter((s): s is ImportSweepRecord => s.v === 2 && (s as ImportSweepRecord).of === "import"));
+        // Another process recorded this step first: its line stands.
+        if ((now?.latest.hash ?? null) !== r.continues) {
+          line = now!.latest;
+          return [];
+        }
+        return [pass];
+      });
+      line = written[0] ?? line;
+    } else line = importSweepWhole(addition.hash, await readImportSweeps(sandboxRoot))?.latest ?? null;
     if (!line) throw new Error("the reverse sweep's pass was not recorded");
+    const P = await import("./protocol.ts");
     await P.renderLedger(sandboxRoot).catch(() => undefined);
     return line;
   })().finally(() => importInflight.delete(key));
@@ -2608,14 +3091,14 @@ export async function pendingImportSweeps(sandboxRoot: string, entries?: readonl
  * hits, and what the next pass searches). Nothing once the run has ended.
  * Returns the passes it recorded.
  */
-export async function reverseSweepRound(sandboxRoot: string, o: { maxBytes?: number; maxMs?: number } = {}): Promise<ImportSweepRecord[]> {
+export async function reverseSweepRound(sandboxRoot: string, o: { maxBytes?: number; maxMs?: number; inProcess?: boolean } = {}): Promise<ImportSweepRecord[]> {
   const P = await import("./protocol.ts");
   if ((await P.runOutcome(sandboxRoot).catch(() => ({ outcome: null }))).outcome) return [];
   const entries = await P.readLedger(sandboxRoot).catch(() => [] as LedgerEntry[]);
   const out: ImportSweepRecord[] = [];
   for (const a of await pendingImportSweeps(sandboxRoot, entries)) {
     const before = importSweepWhole(a.hash, await readImportSweeps(sandboxRoot))?.latest.hash ?? null;
-    const line = await startImportSweep(sandboxRoot, a, entries, o).catch(() => null);
+    const line = await startImportSweep(sandboxRoot, a, entries, { ...(o.maxBytes !== undefined ? { maxBytes: o.maxBytes } : {}), ...(o.maxMs !== undefined ? { maxMs: o.maxMs } : {}), ...(o.inProcess ? { inProcess: true } : {}) }).catch(() => null);
     if (!line || line.hash === before) continue;
     out.push(line);
     await P.systemPost(sandboxRoot, { tag: "ask", key: `reverse-sweep:${a.import}:${line.pass ?? 1}`, body: reverseSweepPostWords(line) }).catch(() => undefined);
@@ -2698,7 +3181,8 @@ export async function runReverseSweeps(sandboxRoot: string, o: { maxBytes?: numb
   let passes = 0;
   await P.withNamedLock(resolve(sandboxRoot), "reverse-sweep", async () => {
     for (;;) {
-      const recorded = await reverseSweepRound(sandboxRoot, o);
+      // This step is a process of its own, off every hub's loop: its passes run in it.
+      const recorded = await reverseSweepRound(sandboxRoot, { ...o, inProcess: true });
       passes += recorded.length;
       if (!recorded.length || !(await pendingImportSweeps(sandboxRoot)).length) break;
     }
@@ -2754,7 +3238,7 @@ export function importSweepWords(s: ImportSweepRecord): string {
   const found: string[] = [];
   for (const q of questions) {
     const hs = q ? importHitsFor(q, [s]) : s.hits.map((hit) => ({ sweep: s, hit, records: hit.bears_on.filter((n) => s.records.some((r) => r.seq === n && !r.questions.length)) })).filter((x) => x.records.length);
-    if (hs.length) found.push(`${!q ? "no question named" : /^\d+$/.test(q) ? `Q-${q}` : q}: ${someWords(hs, SWEEP_WORDS_HITS, importHitWords)}`);
+    if (hs.length) found.push(`${!q ? "no question named" : /^\d+$/.test(q) ? `Q-${q}` : q}: ${someWords(hs, SWEEP_WORDS_HITS, importHitWords, "more", s.hits_all?.file?.path)}`);
   }
   return clipWords([head, found.length ? `found: ${found.join(" | ")}` : "found none of them", unsearchedTotal(s) ? `not searched: ${unsearchedWords(s)}` : ""].filter(Boolean).join("; "), SWEEP_WORDS_MAX);
 }

@@ -17,7 +17,11 @@ parse seven, and a hub that ran out of heap twice. A record now holds a summary 
 (`ledger/sweeps/unsearched-<sha256>.jsonl`); every sentence made from a sweep is bounded; `ledger.md` is rendered outside the
 table lock. One pass, in a process of its own, serves every coverage record that waits, keeps what it found by object and
 string, goes on where a budget stopped the last, and ends clean over a store larger than the budget; sweeps lost in a crash are
-reconciled when the hub starts. Sweep rules 4.
+reconciled when the hub starts. Sweep rules 4. What a sweep found is bounded the same way (up to 920 hits a line were seen): past
+50 rows the line holds a summary and a few, the whole lists in `ledger/sweeps/hits-<sha256>.jsonl`, read back whole and held to
+that sha256 by the hub, by custody and by a package's verify. The reverse sweep's passes run in a process of their own and keep
+what each object holds, so the hub's loop no longer lists the store and a pass started again reads nothing twice. A package
+carries the sweeps' side lists (`ledger-sweeps/`); a redacted line's lists are withheld with it.
 
 ### Fixed: no answer to a seat is unbounded, and a seat whose process ended is started again
 
@@ -92,6 +96,11 @@ the limit; an 8 GiB heap by default (`SWARM_HUB_HEAP_MB`). `swarm.sh metrics` ha
 one, commit and queue waits, compactions per seat-hour, the hub's worst loop delay, restarts, lock timeouts, seats down. The
 kickoff's capacity check counts the seats and workers of the other runs going on the host. Calls of one process take a named
 lock in the order they asked (216 lock timeouts in one run were a process losing a poll to itself).
+Below the table, `swarm.sh metrics` prints the harness measures one a line, each with its figure or why the run cannot give
+it: job result delivery, sealing of large extractions, records needing two or more refusals, the library's share of tool
+text, the gap before a model call (from the gateway's log), idle waits, and the minutes from a value's first sighting in a tool
+result to its answer. Job answers and `store_find` results carry a sighting digest on the trace (hashed tokens, no text), so a
+value first seen there is found; no value is ever printed.
 
 ### Fixed: pack tools (computer-forensics-base, windows-forensics)
 
@@ -128,7 +137,12 @@ apart from the image's. A call that names no member over an image past 50,000 it
 `whole: true`. A recipe that declares `phases: ["listing"]` is run at kickoff once for its listing and then whole: the listing
 is posted as "the listing", with what follows, and the contract says nobody need walk the image for a list. `chunk_needles`
 names a compressed container by its first bytes and is partial over one. A kickoff catalogue that lists process or memory
-dumps says so to everyone, once, with the tools of the run's packs that read one.
+dumps says so to everyone, once, with the tools of the run's packs that read one. Since the packs are fixed before the
+catalogue exists, the kickoff looks at the top level of each `--inputs` directory before it resolves them (by name and first
+bytes: MDMP, PAGEDU64, hibr, LiME, ELF core): a run with packs gains `memory-forensics`, and `SWARM.md` lists each dump with
+its size. `--no-pack ID` keeps a pack out; a run without `--pack`, an excluded pack and one not installed are said, not added.
+`tests/tool-contract-jobrun.test.ts` calls every pack tool with an input path as `job_run` does (the run root as working
+directory, arguments on stdin, the job's environment, a relative path that holds a space).
 
 ### Changed: a reference given to a tool as an argument is the path it names
 
@@ -145,6 +159,16 @@ kind, and a refusal names every field that fails at once instead of one per call
 `qualifier`, says why a value changed (`value_changed_because`), the controls it ran (`control`), the images it read and did not
 read and the carriers it holds; the report prints the qualifier apart from the value and says when no value is established.
 `store_find` and `jobs` are seat tools. `image_crop` gives a region of a PNG at its own resolution.
+
+### Changed: only a check removes a candidate, a carrier choice waits for its table, and a decoy is never the answer alone
+
+A finding or an answer keeps `candidates [{value, state: open | ruled_out | decoy, why, by?}]` beside its value. A revision
+carries every candidate of the entry it corrects, the reading a dispute of it gives (`dispute` takes `reading`), and its earlier
+value when it lowers the confidence or answers an objection; a candidate leaves only as `ruled_out` naming a job, or an entry
+resting on one, whose result excludes it. An answer that names the carriers it chose among (`carrier_names`) is recorded
+established, or says nothing remains open, only once its carrier table has a row for each, and the finish line holds it
+otherwise (`carriers_incomplete`). A finding whose payload declares itself fake, a test or a vendor's sample is marked `decoy`,
+and an answer resting on decoys alone needs `decoy_check`, a machine check. `ledger.md` and the report show the candidates.
 
 ### Changed: a seat's shell output, its waits and its finish are bounded and said
 

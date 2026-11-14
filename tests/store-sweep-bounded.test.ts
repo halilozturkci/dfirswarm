@@ -47,9 +47,8 @@ async function hugeJob(S: string, id: string, n: number): Promise<void> {
   await writeFile(join(dir, "job.json"), JSON.stringify({ id, state: "committed", requester: { agent: "a0" }, status: "ok", exit: 0, spec: { kind: "command", scope: "declared", inputs: ["input:disk.E01"], command: "extract" } }));
 }
 
-/** The longest the table lock was seen held while `during` ran: its directory looked for at every turn of the loop. */
-async function lockHeld(S: string, during: () => Promise<unknown>): Promise<number> {
-  const lock = join(S, "locks", ".table.lock");
+/** The longest a lock (the table lock unless `lock` names another) was seen held while `during` ran: its directory looked for at every turn of the loop. */
+async function lockHeld(S: string, during: () => Promise<unknown>, lock = join(S, "locks", ".table.lock")): Promise<number> {
   let since = 0;
   let longest = 0;
   let done = false;
@@ -300,4 +299,108 @@ test("the run s17fdfe's own sweeps (280 MB, seven lines of 33 to 51 MB) are read
   assert.deepEqual(latest.map((s) => s.unsearched_all!.file!.rows), m.totals);
   for (const s of latest) assert.equal((await stat(join(base, s.unsearched_all!.file!.path))).isFile(), true);
   process.stdout.write(`# s17fdfe: read in ${m.ms} ms, heap ${(m.h0 / 1e6).toFixed(1)} MB before, ${(m.h1 / 1e6).toFixed(1)} MB after the read, ${(m.h2 / 1e6).toFixed(1)} MB after every sweep's words; what is held of each list ${Math.max(...m.unsearched_bytes)} B at most; words ${Math.max(...m.words)} B at most\n`);
+});
+
+/** A committed job of `n` real files, each holding `term` once, in 50 directories: a store a string is found all over. */
+async function hitJob(S: string, id: string, n: number, term: string): Promise<void> {
+  const dir = join(S, "store", "jobs", id);
+  const files: Array<{ path: string; sha256: string; bytes: number }> = [];
+  for (let i = 0; i < n; i++) {
+    const path = `export/part${String(i % 50).padStart(2, "0")}/row-${String(i).padStart(5, "0")}.txt`;
+    const body = `row ${i}: ${term}\n`;
+    await mkdir(join(dir, "out", "export", `part${String(i % 50).padStart(2, "0")}`), { recursive: true });
+    await writeFile(join(dir, "out", path), body);
+    files.push({ path, sha256: sha(body), bytes: Buffer.byteLength(body) });
+  }
+  await writeFile(join(dir, "manifest.json"), JSON.stringify({ files }));
+  await writeFile(join(dir, "job.json"), JSON.stringify({ id, state: "committed", requester: { agent: "a0" }, status: "ok", exit: 0, spec: { kind: "command", scope: "declared", inputs: ["input:disk.E01"], command: "export" } }));
+}
+
+test("a sweep that found 5,000 hits and left 200,000 objects writes a line under 64 KB: the hits a summary and a few on it, the whole list in a file named by its sha256 that custody holds it to; read back whole; every sentence made from it stays small", async () => {
+  const HITS = 5000;
+  const { S, a0, a1, a2 } = await run();
+  await hitJob(S, "j800000", HITS, "mallory");
+  await hugeJob(S, "j900000", ROWS);
+  // The huge job's objects are each larger than a pass's budget, by their manifest (never opened); the hit job's fit.
+  await writeFile(join(S, "store", "jobs", "j900000", "manifest.json"), JSON.stringify({ files: JSON.parse(await readFile(join(S, "store", "jobs", "j900000", "manifest.json"), "utf8")).files.map((f: { path: string; sha256: string }) => ({ ...f, bytes: 64 * 1024 * 1024 })) }));
+  await planned(a0, "2");
+  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], control: { ref: "job:j000001/hits.txt", found: "the same search finds a planted row" }, answers: ["2"] })).entry;
+  process.env.SWARM_SWEEP_MAX_BYTES = String(32 * 1024 * 1024);
+  let cov: P.LedgerEntry;
+  let before = 0;
+  let sweepsLock = 0;
+  try {
+    cov = ok(await rec(a0, coverage("2", ["input:disk.E01"], [`E-${abs.seq}`], { looked_for: ["mallory"] }))).entry;
+    before = (await stat(join(S, P.LEDGER_MD))).size;
+    sweepsLock = await lockHeld(S, () => SW.awaitSweeps(S), join(S, "locks", "sweeps"));
+  } finally {
+    delete process.env.SWARM_SWEEP_MAX_BYTES;
+  }
+  assert.ok(sweepsLock < 200, `the sweeps' lock was held for ${sweepsLock.toFixed(1)} ms`);
+  const text = await readFile(join(S, SW.LEDGER_SWEEPS), "utf8");
+  const lines = text.split("\n").filter(Boolean);
+  assert.equal(lines.length, 1);
+  assert.ok(Buffer.byteLength(lines[0]!) < 64 * 1024, `the line is ${Buffer.byteLength(lines[0]!)} bytes`);
+  assert.equal(SW.verifySweepChain(text).ok, true);
+  // As written: a few of the hits, the summary, and the file.
+  const written = JSON.parse(lines[0]!) as SW.SweepRecord;
+  assert.equal(written.state, "hits");
+  assert.ok(written.hits.length > 0 && written.hits.length <= SW.SWEEP_HITS_SAMPLE, String(written.hits.length));
+  const all = written.hits_all!;
+  assert.ok(all, "what it found is summarised");
+  assert.deepEqual([all.total, all.counts], [HITS, { hits: HITS, named_hits: 0, echoes: 0 }]);
+  assert.deepEqual(all.by_term, [{ term: "mallory", hits: HITS, count: HITS }]);
+  assert.deepEqual(all.by_prefix, [{ prefix: "job:j800000/export", hits: HITS, count: HITS }]);
+  assert.match(all.file.path, /^ledger\/sweeps\/hits-[0-9a-f]{64}\.jsonl$/);
+  const body = await readFile(join(S, all.file.path));
+  assert.equal(sha(body), all.file.sha256);
+  assert.ok(all.file.path.includes(all.file.sha256));
+  const rows = body.toString("utf8").split("\n").filter(Boolean).map((r) => JSON.parse(r) as SW.SweepHit & { list: string });
+  assert.deepEqual([rows.length, all.file.rows], [HITS, HITS]);
+  assert.ok(rows.every((r) => r.list === "hits" && r.term === "mallory" && r.count === 1));
+  assert.deepEqual(written.hits, rows.slice(0, written.hits.length).map(({ list: _l, ...h }) => h), "the line's few are the list's first");
+  assert.ok(SW.unsearchedTotal(written) >= ROWS, "and what it left is still the summary of its own");
+  // As this process holds it, and as another reads it: the whole list again.
+  const held = SW.sweepOf(cov, await SW.readSweeps(S))!;
+  assert.equal(held.hits.length, HITS);
+  assert.ok(SW.hitsReadWhole(held));
+  assert.deepEqual(held.hits, rows.map(({ list: _l, ...h }) => h));
+  const other = spawnSync(process.execPath, ["--experimental-strip-types", "--no-warnings", "--input-type=module", "-e", `const SW = await import(${JSON.stringify(join(import.meta.dirname, "..", "extensions", "store-sweep.ts"))}); const s = (await SW.readSweeps(process.argv[1]))[0]; console.log(JSON.stringify([s.hits.length, s.hits.at(-1).ref, SW.hitsReadWhole(s)]));`, S], { encoding: "utf8" });
+  assert.equal(other.status, 0, other.stderr);
+  assert.deepEqual(JSON.parse(other.stdout), [HITS, "job:j800000/export/part49/row-04999.txt", true]);
+  // In words: a few named, the rest counted, and where each is.
+  const words = SW.sweepWords(held, cov);
+  assert.ok(Buffer.byteLength(words) < 4096, `sweepWords is ${Buffer.byteLength(words)} bytes`);
+  assert.match(words, new RegExp(`^store sweep hits: \\d+ object\\(s\\), \\d+ bytes searched for "mallory"; found outside the record's objects: .*; and ${HITS - 12} more \\(${all.file.path} holds each\\)`));
+  await P.renderLedger(S);
+  const grown = (await stat(join(S, P.LEDGER_MD))).size - before;
+  assert.ok(grown < 8 * 1024, `ledger.md grew by ${grown} bytes`);
+  // The gate's item for an answer that rests on it.
+  ok(await rec(a1, { kind: "answer", section: "question:2", value: "No evidence of a remote tool was found on the disk", reasoning: `E-${cov.seq}`, ...A, result: "bounded_negative" }));
+  const attested = await P.attestEntry(a2, { seq: cov.seq, how: "ran the search again", review: REVIEW });
+  assert.ok(attested.ok, JSON.stringify(attested));
+  const r = await checkLedgerAnswers(S, ["2"], ["2"]);
+  const d = r.defects.find((x) => x.code === "sweep_hits")!;
+  assert.ok(d, r.lines.join("\n").slice(0, 2000));
+  assert.ok(Buffer.byteLength(d.what) < 8192 && Buffer.byteLength(d.fix) < 4096, `the gate's item is ${Buffer.byteLength(d.what)} + ${Buffer.byteLength(d.fix)} bytes`);
+  // The gate names its first twenty (ledger-rules.ts SWEEP_GATE_HITS) and counts the rest.
+  assert.match(d.what, /; and 4980 more \(/);
+  assert.ok(r.lines.join("\n").length < 64 * 1024, "the check's whole answer is small");
+  // Custody holds the file to the sha256 its line names, beside the list of what was not searched.
+  const C = await import("../scripts/custody.ts");
+  assert.deepEqual(await C.sweepSideLists(S, text), { named: 2, bad: [] });
+  const original = await readFile(join(S, all.file.path));
+  await writeFile(join(S, all.file.path), original.toString("utf8").replace('"row-04999.txt"', '"row-04998.txt"').replace("row-04999.txt", "row-04998.txt"));
+  const tampered = await C.sweepSideLists(S, text);
+  assert.equal(tampered.bad.length, 1);
+  assert.match(tampered.bad[0]!, new RegExp(`^${all.file.path}: its bytes are not the ${all.file.sha256.slice(0, 12)}`));
+  // A process that reads the line over a file that is not the one it names does not take the line's few for the whole: a row says what is missing, and it holds.
+  await writeFile(join(S, SW.LEDGER_SWEEPS), text);
+  const unread = SW.sweepOf(cov, await SW.readSweeps(S))!;
+  assert.equal(SW.hitsReadWhole(unread), false);
+  assert.deepEqual(unread.hits.slice(0, -1), written.hits);
+  assert.match(unread.hits.at(-1)!.ref, new RegExp(`^${all.file.path} \\(missing, or not the list its line names: ${HITS - written.hits.length} of the line's ${HITS} hit\\(s\\) not read\\)$`));
+  assert.ok((await checkLedgerAnswers(S, ["2"], ["2"])).defects.some((x) => x.code === "sweep_hits"), "the hold stands");
+  await writeFile(join(S, all.file.path), original);
+  process.stdout.write(`# 5,000 hits and ${SW.unsearchedTotal(written)} unsearched: line ${Buffer.byteLength(lines[0]!)} B, hits file ${body.length} B in ${rows.length} rows, sweepWords ${Buffer.byteLength(words)} B, gate item ${Buffer.byteLength(d.what)} B, ledger.md +${grown} B, the sweeps' lock held ${sweepsLock.toFixed(1)} ms\n`);
 });

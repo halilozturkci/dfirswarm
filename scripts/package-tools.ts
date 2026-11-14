@@ -40,13 +40,13 @@
  */
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, constants, copyFileSync, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { attestationHash, disputeHash, ledgerHash, readLedger, sensitiveTokens, type LedgerAttestation, type LedgerDispute, type LedgerEntry, type SensitiveToken } from "../extensions/protocol.ts";
 import { leadEventHash, type LeadEvent } from "../extensions/leads.ts";
-import { sweepHash, type SweepRecord } from "../extensions/store-sweep.ts";
+import { checkSweepSideFiles, LEDGER_SWEEPS, SWEEP_SIDE_FILE, sweepHash, sweepSideFiles, type SweepRecord } from "../extensions/store-sweep.ts";
 import { REVIEW_ACTIONS } from "./review.ts";
 import { packageLayout, verifyReleases } from "./release-record.ts";
 import { outputWords, sensitiveEntries, sensitiveIndex, withheldPaths } from "./output-hygiene.ts";
@@ -687,21 +687,60 @@ export async function redactPackage(sandbox: string, dir: string, opts: { leaks?
     );
   }
   // A store sweep of a sensitive coverage record, one that found its strings in a sensitive job's output, or one that says a sensitive entry's words (its looked_for terms, its hits' refs): the sweep kept by what chains it.
+  // A line whose lists are longer than it holds names its side lists (ledger-sweeps/, by sha256): they are read with it, so a hit past the line's
+  // first few is judged as one on the line is; a side list no line kept names is withheld with the lines that named it.
+  const sideTexts = new Map<string, string | null>();
+  const sideText = (path: string): string | null => {
+    if (!sideTexts.has(path)) {
+      const abs = packagedSweepList(dir, path);
+      sideTexts.set(path, SWEEP_SIDE_FILE.test(path) && lstatSync(abs, { throwIfNoEntry: false })?.isFile() ? readFileSync(abs, "utf8") : null);
+    }
+    return sideTexts.get(path)!;
+  };
+  const sideDigests = makeDigestReplacer(sensitiveDigests, (d) => d);
   chained(
     "ledger-sweeps.jsonl",
     (o, l) => {
       if (typeof o.target === "string" && sensitiveHashes.has(o.target)) return { seq: Number(o.seq), why: "the sweep of a sensitive coverage record" };
       type Hit = { ref?: string; also?: string[]; origins?: Array<{ by?: string; reads?: string[] }> };
       const hits = [...((o.hits as Hit[] | undefined) ?? []), ...((o.named_hits as Hit[] | undefined) ?? []), ...((o.echoes as Hit[] | undefined) ?? [])];
+      const sides = [(o.unsearched_all as { file?: { path?: unknown } } | undefined)?.file?.path, (o.hits_all as { file?: { path?: unknown } } | undefined)?.file?.path].filter((x): x is string => typeof x === "string");
+      const texts = sides.map(sideText).filter((t): t is string => t !== null);
+      const hitsFile = (o.hits_all as { file?: { path?: unknown } } | undefined)?.file?.path;
+      const hitsText = typeof hitsFile === "string" ? sideText(hitsFile) : null;
+      for (const row of (hitsText ?? "").split("\n")) {
+        if (!row.trim()) continue;
+        try {
+          hits.push(JSON.parse(row) as Hit);
+        } catch {
+          // A row that does not parse is the verify's to name (the list is not the one its line names).
+        }
+      }
       const refs = hits.flatMap((h) => [h.ref ?? "", ...(h.also ?? []), ...(h.origins ?? []).flatMap((x) => [x.by ?? "", ...(x.reads ?? [])])]);
       const job = refs.map((r) => /^job:([^/]+)/.exec(r)?.[1]).find((id) => id && index.jobs.has(id));
       if (job) return { seq: Number(o.seq), why: `found its strings in a sensitive output (job ${job})` };
+      for (const t of texts) {
+        const w = byWords(t);
+        if (w) return { seq: w.seq, why: `its side list ${w.why}` };
+        if (sideDigests.holds(t)) return { seq: Number(o.seq), why: "its side list holds a sensitive output's digest" };
+      }
       return byWords(l);
     },
     (o, l) => ({ v: o.v, seq: o.seq, target: o.target, state: o.state, redacted: true, line_sha256: sha256(l), prev: o.prev, hash: o.hash }),
     "line",
-    "store sweep(s) of a sensitive record, or holding a sensitive word or a sensitive output's ref, replaced keeping seq, target, state, prev and hash",
+    "store sweep(s) of a sensitive record, or holding a sensitive word or a sensitive output's ref (on the line or in a side list it names), replaced keeping seq, target, state, prev and hash",
   );
+  {
+    // The side lists: those a kept line names are carried as they are (their lines hold them to their sha256); any other is withheld.
+    const kept = new Set(existsSync(join(dir, "ledger-sweeps.jsonl")) ? sweepSideFiles(readFileSync(join(dir, "ledger-sweeps.jsonl"), "utf8")).map((f) => basename(f.path)) : []);
+    for (const name of existsSync(join(dir, SWEEP_LISTS_DIR)) ? readdirSync(join(dir, SWEEP_LISTS_DIR)).sort() : []) {
+      const rel = `${SWEEP_LISTS_DIR}/${name}`;
+      handled.add(rel);
+      if (kept.has(name) || !lstatSync(join(dir, rel)).isFile()) continue;
+      const before = readFileSync(join(dir, rel));
+      change(rel, before, `${REDACTED}: a side list of store sweep line(s) redacted in ledger-sweeps.jsonl, withheld with them\n`, "the side list of redacted sweep line(s), withheld whole", [{ what: "file", entry: null, sha256_of_original: sha256(before), why: "named only by sweep lines that were redacted" }]);
+    }
+  }
   // The trace: a line that holds a sensitive entry's words, or that is a seat's tool-result row the access record marks, replaced by its own sha256 (the chain still verifies).
   const traceJudge = (o: Record<string, unknown>, l: string) => byWords(l) ?? (marks.rows.has(rowMark(o.agent, o.sid, o.seq, o.tool)) ? { seq: null, why: "a seat's tool-result row that the access record marks as reaching a sensitive output" } : null);
   const traceKeep = (_o: Record<string, unknown>, l: string) => ({ redacted: true, line_sha256: sha256(l) });
@@ -1225,6 +1264,43 @@ function reviewChain(text: string): { ok: boolean; lines: number; redacted: numb
   return { ok: true, lines: n, redacted, detail: `${n} act(s), chain intact${redacted ? `, ${redacted} redacted` : ""}`, signed };
 }
 
+/** Where a package carries the side lists the sweep lines name: ledger/sweeps/<name> in the run is ledger-sweeps/<name> here. */
+export const SWEEP_LISTS_DIR = "ledger-sweeps";
+/** Where a side list a sweep line names (ledger/sweeps/<name>) lies in a package. */
+export function packagedSweepList(dir: string, path: string): string {
+  return join(dir, SWEEP_LISTS_DIR, basename(path));
+}
+
+/**
+ * The side lists the run's sweep lines name, copied into the package
+ * (swarm.sh package): each a regular file under ledger/sweeps/ whose path
+ * is a side list's (store-sweep.ts SWEEP_SIDE_FILE), never through a link,
+ * to ledger-sweeps/<name>. What is copied is held to its line by the
+ * package's verify, not here; one that is missing in the run is left for
+ * that verify (and custody) to name. The results kept between passes
+ * (ledger/sweeps/cache/) are not a record and are not copied.
+ */
+export function copySweepLists(sandbox: string, dir: string): { named: number; copied: number; missing: string[] } {
+  const file = join(sandbox, LEDGER_SWEEPS);
+  const st = lstatSync(file, { throwIfNoEntry: false });
+  if (!st?.isFile()) return { named: 0, copied: 0, missing: [] };
+  const named = sweepSideFiles(readFileSync(file, "utf8"));
+  const missing: string[] = [];
+  let copied = 0;
+  for (const f of named) {
+    const from = join(sandbox, f.path);
+    const at = lstatSync(from, { throwIfNoEntry: false });
+    if (!SWEEP_SIDE_FILE.test(f.path) || !at?.isFile()) {
+      missing.push(f.path.slice(0, 160));
+      continue;
+    }
+    mkdirSync(join(dir, SWEEP_LISTS_DIR), { recursive: true });
+    copyFileSync(from, packagedSweepList(dir, f.path));
+    copied += 1;
+  }
+  return { named: named.length, copied, missing };
+}
+
 /**
  * Every part a recipient holds the record to, by its path in the package:
  * what it is and why it would be absent. `core` parts must be there or be
@@ -1244,6 +1320,7 @@ export const PACKAGE_COMPONENTS: ReadonlyArray<{ path: string; source: string; w
   { path: "ledger-attestations.jsonl", source: "ledger/attestations.jsonl", what: "the ledger's attestations", absent: "no entry has a second author", sealed: "attestations" },
   { path: "ledger-disputes.jsonl", source: "ledger/disputes.jsonl", what: "the agents' disputes of entries", absent: "no agent disputed an entry", sealed: "disputes", since: "2026-09-27" },
   { path: "ledger-sweeps.jsonl", source: "ledger/sweeps.jsonl", what: "the store sweeps: what the hub found when it searched every output the run held for each coverage record's strings, and each evidence addition's reverse sweep of its files for the standing records' strings (a chain of its own, sealed by custody)", absent: "no store sweep ran (no coverage record named what a hit would contain)", sealed: "sweeps", since: "2026-09-29" },
+  { path: SWEEP_LISTS_DIR, source: "<the side lists the sweep lines name, under ledger/sweeps/>", what: "the store sweeps' side lists: what a sweep did not search, and what it found, where either is longer than its line holds (each named by its line with its sha256, held to it by custody and by this package's verify)", absent: "no sweep line names a side list: each holds what it did not search and what it found whole", since: "2026-11-14" },
   { path: "finish.jsonl", source: "leads/finish.jsonl", what: "the finish register: the coordinator's lease, readiness, the checks and the report's reviews (unsigned, sealed by custody)", absent: "the run has no finish register (no seat coordinated a finish, or a run from before it)", sealed: "finish", since: "2026-09-29" },
   { path: "leads.jsonl", source: "leads/leads.jsonl", what: "the lead register: how the investigation proceeded (unsigned, sealed by custody)", absent: "no lead was opened", sealed: "leads", since: "2026-09-28" },
   { path: "leads.md", source: "leads/leads.md", what: "the lead register, rendered", absent: "no lead was opened", since: "2026-09-28" },
@@ -1509,6 +1586,18 @@ export function verifyPackage(dir: string): { ok: boolean; lines: string[] } {
     const sealed = !h.sealed || ((h.sealed.head ?? null) === v.head && (h.sealed.lines === undefined || h.sealed.lines === v.total));
     out.push(`${h.label}${v.ok ? `${v.total} ${h.unit}, chain intact${v.redacted ? `, ${v.redacted} redacted (their hashes kept)` : ""}` : `CHAIN BROKEN at line ${v.broken_at} (${v.reason})`}${h.sealed ? (sealed ? "; head sealed" : "; HEAD NOT THE ONE SEALED") : `; not sealed by this verdict (a custody from before ${h.what} were sealed)`}`);
     ok &&= v.ok && sealed;
+  }
+  // The sweeps' side lists (what a sweep did not search, what it found, where either is longer than its line holds): each line that
+  // names one is held to it here, in ledger-sweeps/, by its sha256. A package from before they were carried says so and is not failed.
+  const sweepsText = read("ledger-sweeps.jsonl");
+  const sides = sweepsText === null ? [] : sweepSideFiles(sweepsText);
+  if (sides.length) {
+    if (!declared?.has(SWEEP_LISTS_DIR)) out.push(`Sweep lists:  ${sides.length} side list(s) named by the sweep lines, not carried (a package from before 2026-11-14: COMPONENTS.json does not list ${SWEEP_LISTS_DIR})`);
+    else {
+      const v = checkSweepSideFiles(sides, (path) => packagedSweepList(dir, path));
+      if (v.bad.length) fail(`Sweep lists:  ${v.named} side list(s) named by the sweep lines, ${v.bad.length} NOT AS NAMED in ${SWEEP_LISTS_DIR}/ (${v.bad.slice(0, 3).join("; ")}${v.bad.length > 3 ? `; and ${v.bad.length - 3} more` : ""})`);
+      else out.push(`Sweep lists:  ${v.named} side list(s) named by the sweep lines, each in ${SWEEP_LISTS_DIR}/ as its line names it`);
+    }
   }
   // The model gateway's log: each line names the sha256 of the one before (the first, null); its first sealed lines hash to what the verdict sealed.
   const gateway = read("trace/model-gateway.jsonl");
@@ -2233,6 +2322,10 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       console.error(`sessions: ${(err as Error).message}`);
       process.exit(1);
     }
+  } else if (cmd === "sweep-lists" && a && b) {
+    const r = copySweepLists(a, b);
+    console.log(JSON.stringify(r));
+    if (r.missing.length) console.error(`sweep-lists: ${r.missing.length} side list(s) named by the sweep lines are not regular files in the run: ${r.missing.slice(0, 3).join("; ")}`);
   } else if (cmd === "components" && a && b) {
     console.log(JSON.stringify(writeComponents(a, b)));
   } else if (cmd === "verify" && a) {
@@ -2246,7 +2339,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     const unchecked = rel.signatures.some((s) => s.adopted && s.state !== "verified");
     process.exit(!r.ok || !rel.ok ? 1 : unchecked && opt("--allowed-signers") ? 3 : 0);
   } else {
-    console.error("usage: package-tools.ts redact <sandbox> <package dir> | hygiene <sandbox> <package dir> | sessions <sandbox> <package dir> | components <sandbox> <package dir> | verify <package dir>");
+    console.error("usage: package-tools.ts redact <sandbox> <package dir> | hygiene <sandbox> <package dir> | sessions <sandbox> <package dir> | sweep-lists <sandbox> <package dir> | components <sandbox> <package dir> | verify <package dir>");
     process.exit(2);
   }
 }

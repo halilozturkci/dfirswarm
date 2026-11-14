@@ -2,11 +2,12 @@
  * The dump-named members of a catalogue and their post (scripts/dump-members.ts).
  */
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import { dumpKind, dumpMembers, dumpsPost, DUMPS_SHOWN } from "../scripts/dump-members.ts";
+import { dumpKind, dumpMembers, dumpReaders, dumpsPost, DUMPS_SHOWN, headerKind, kickoffDumps, kickoffDumpsNote, KICKOFF_DUMPS_SHOWN } from "../scripts/dump-members.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "dump-members-"));
 after(() => rmSync(dir, { recursive: true, force: true }));
@@ -55,4 +56,91 @@ test("no dump, no table, or a table without the columns: nothing is said", async
   assert.equal(await dumpMembers(join(dir, "absent.tsv")), null);
   writeFileSync(join(dir, "odd.tsv"), "a\tb\n1\t2\n");
   assert.equal(await dumpMembers(join(dir, "odd.tsv")), null);
+});
+
+test("a dump is known by its first bytes: minidump, kernel crash dump, hibernation, LiME, ELF core", () => {
+  const b = (s: string | number[]) => (typeof s === "string" ? new Uint8Array(Buffer.from(s, "latin1")) : new Uint8Array(s));
+  assert.equal(headerKind(b("MDMP\x93\xa7")), "process or crash dump");
+  assert.equal(headerKind(b("PAGEDU64")), "kernel crash dump");
+  assert.equal(headerKind(b("PAGEDUMP")), "kernel crash dump");
+  for (const h of ["HIBR", "hibr", "WAKE", "RSTR"]) assert.equal(headerKind(b(h)), "hibernation file", h);
+  assert.equal(headerKind(b("EMiL\x01\x00\x00\x00")), "memory image");
+  const elf = (data: number, type: number[]) => [0x7f, 0x45, 0x4c, 0x46, 2, data, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, ...type];
+  assert.equal(headerKind(b(elf(1, [4, 0]))), "process or crash dump");
+  assert.equal(headerKind(b(elf(2, [0, 4]))), "process or crash dump");
+  assert.equal(headerKind(b(elf(1, [2, 0]))), null, "an ELF executable is not a dump");
+  for (const no of ["MDM", "PAGEDU", "MZ\x90\x00", "", "hib"]) assert.equal(headerKind(b(no)), null, JSON.stringify(no));
+});
+
+test("the kickoff looks at the top of each input directory: names and headers, never through a link, a FIFO or a folder", async () => {
+  const a = join(dir, "set a");
+  const c = join(dir, "set-c");
+  mkdirSync(join(a, "deeper"), { recursive: true });
+  mkdirSync(c, { recursive: true });
+  writeFileSync(join(a, "crash.bin"), Buffer.concat([Buffer.from("MDMP"), Buffer.alloc(4096)]));
+  writeFileSync(join(a, "app.dmp"), "MDMP and more");
+  writeFileSync(join(a, "pagefile.sys"), Buffer.alloc(2048));
+  writeFileSync(join(a, "empty.dmp"), "");
+  writeFileSync(join(a, "notes.txt"), "text");
+  writeFileSync(join(a, "deeper", "inner.dmp"), "MDMP");
+  symlinkSync(join(a, "crash.bin"), join(a, "linked.dmp"));
+  execFileSync("mkfifo", [join(a, "pipe.dmp")]);
+  writeFileSync(join(c, "host.vmem"), Buffer.alloc(100));
+  const found = await kickoffDumps([
+    { dir: a, under: "inputs/set a" },
+    { dir: c, under: "inputs/set-c" },
+  ]);
+  assert.equal(found.whole, true);
+  assert.deepEqual(
+    found.dumps.map((d) => [d.path, d.bytes, d.kind, d.by]),
+    [
+      ["inputs/set a/crash.bin", 4100, "process or crash dump", "header"],
+      ["inputs/set a/pagefile.sys", 2048, "page or swap file", "name"],
+      ["inputs/set-c/host.vmem", 100, "memory image", "name"],
+      ["inputs/set a/app.dmp", 13, "process or crash dump", "name and header"],
+    ],
+  );
+  assert.equal(found.total, 4);
+  assert.equal(found.bytes, 4100 + 2048 + 100 + 13);
+  assert.deepEqual(await kickoffDumps([{ dir: c, under: "inputs" }]).then((f) => f.dumps.map((d) => d.path)), ["inputs/host.vmem"]);
+});
+
+test("the kickoff note lists each dump with its size, says what was done about the memory pack and why, and which tools read one", () => {
+  const dumps = Array.from({ length: KICKOFF_DUMPS_SHOWN + 3 }, (_, i) => ({ path: `inputs/p${i}.dmp`, bytes: (i + 1) * 1024 ** 2, kind: "process or crash dump", by: "name" as const }));
+  const found = { total: dumps.length, bytes: dumps.reduce((n, d) => n + d.bytes, 0), dumps, whole: true };
+  const added = kickoffDumpsNote(found, ["minidump_map", "mem_profile"], "added")!;
+  assert.match(added, /^## Dumps among the inputs\n\n/);
+  assert.match(added, /found 43 inputs at the top of `inputs\/` that are a process or memory dump/);
+  assert.match(added, /- `inputs\/p0\.dmp` \(1\.0 MiB, process or crash dump, by its name\)/);
+  assert.match(added, /- … and 3 more/);
+  assert.match(added, /The kickoff added memory-forensics/);
+  assert.match(added, /minidump_map, mem_profile read one/);
+  assert.ok(added.endsWith("\n\n"));
+  assert.match(kickoffDumpsNote(found, [], "excluded")!, /memory-forensics was not added: the operator excluded it \(--no-pack memory-forensics\)\. No tool of this run's packs reads a dump/);
+  assert.match(kickoffDumpsNote(found, [], "no-packs")!, /started without packs/);
+  assert.match(kickoffDumpsNote(found, [], "unavailable")!, /not installed on this host/);
+  assert.match(kickoffDumpsNote({ ...found, whole: false }, [], "named")!, /and only its first 10000 entries/);
+  assert.equal(kickoffDumpsNote({ total: 0, bytes: 0, dumps: [], whole: true }, [], "added"), null);
+});
+
+test("the dump readers are the tools a pack carries, once each", () => {
+  const p1 = join(dir, "pack1");
+  const p2 = join(dir, "pack2");
+  for (const [p, t] of [[p1, "mem_profile"], [p2, "mem_profile"], [p2, "minidump_map"], [p2, "other"]] as const) {
+    mkdirSync(join(p, "tools", t), { recursive: true });
+    writeFileSync(join(p, "tools", t, "manifest.json"), "{}");
+  }
+  assert.deepEqual(dumpReaders([p1, p2]), ["mem_profile", "minidump_map"]);
+  assert.deepEqual(dumpReaders([join(dir, "absent")]), []);
+});
+
+test("detect prints one JSON line for the kickoff", () => {
+  const d = join(dir, "cli");
+  mkdirSync(d);
+  writeFileSync(join(d, "MEMORY.DMP"), "PAGEDU64");
+  const out = execFileSync(process.execPath, ["--experimental-strip-types", "--no-warnings", join(import.meta.dirname, "..", "scripts", "dump-members.ts"), "detect", "--inputs", d, "--under", "inputs/x"], { encoding: "utf8" });
+  const j = JSON.parse(out);
+  assert.equal(j.total, 1);
+  assert.deepEqual(j.dumps[0], { path: "inputs/x/MEMORY.DMP", bytes: 8, kind: "kernel crash dump", by: "name and header" });
+  assert.deepEqual(j.reader_names, ["minidump_map", "mem_profile"]);
 });

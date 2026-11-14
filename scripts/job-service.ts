@@ -48,7 +48,7 @@ import { assessJob, HEARTBEAT_LINES, HEARTBEAT_STOP, keepSample, readSamples, sa
 import type { Mount, WorkerSpec } from "./vm.ts";
 import { jobNetworkHosts } from "./net-grants.ts";
 import { argRefsWords, resolveToolArgs, type ArgRef } from "./tool-arg-refs.ts";
-import { dumpMembers, dumpsPost, membersTsv } from "./dump-members.ts";
+import { dumpMembers, dumpReaders, dumpsPost, membersTsv } from "./dump-members.ts";
 import { indexOutputs, objectsMatch, opMatch, rankSimilar, reuseOf, SAME_AS_SHOWN, sameAsOf, sameAsView, type Reuse, type SameAs, type Similar } from "./job-reuse.ts";
 import { declaredSecretOutput, jobSensitivity, parseSecretDeclaration, recipeSecretRefusal, sensitiveIndex, targetPaths, type SecretDeclaration, type Sensitivity } from "./output-hygiene.ts";
 import { execRefused, execRefusedWords, type ExecRefused } from "./job-exec-refused.ts";
@@ -3255,9 +3255,7 @@ export class JobService {
       const found = await dumpMembers(membersTsv(this.S, generation));
       if (!found || !found.total) return;
       this.dumpsTold.add(key);
-      const readers: string[] = [];
-      for (const pack of this.o.packDirs) for (const t of ["minidump_map", "mem_profile"]) if (existsSync(join(pack, "tools", t, "manifest.json"))) readers.push(t);
-      const post = dumpsPost(generation, over, found, [...new Set(readers)]);
+      const post = dumpsPost(generation, over, found, dumpReaders(this.o.packDirs));
       if (post) await this.o.notify("all", post).catch(() => undefined);
     } catch (e) {
       this.log(`dump members of ${generation}: ${(e as Error).message}`);

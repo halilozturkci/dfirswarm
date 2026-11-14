@@ -11,6 +11,7 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
@@ -268,4 +269,109 @@ test("evidence_stale clears only on a delta: an entry that interprets the import
   const ansN = ok(await rec(c2.a1, { kind: "answer", section: "question:2", value: "No evidence of the tool's install was found on the disk; the export shows its beacon", reasoning: `E-${covN.seq}; E-${seen.seq} says otherwise`, ...A, contrary: [seen.seq], result: "bounded_negative", supersedes: c2.ans2.seq })).entry;
   await attested(c2.a2, { seq: covN.seq, how: "ran the search again over both", review: REVIEW, second_review_why: "the export is new" });
   assert.equal(P.evidenceStale(ansN, await P.readLedger(c2.S), await P.readAttestations(c2.S)), null);
+});
+
+/** A committed job whose manifest lists `n` files and holds none: a store a listing has to walk, that a reverse sweep never reads. */
+async function listedJob(S: string, id: string, n: number): Promise<void> {
+  const dir = join(S, "store", "jobs", id);
+  await mkdir(join(dir, "out"), { recursive: true });
+  const files = Array.from({ length: n }, (_, i) => ({ path: `Users/dir${String(i % 400).padStart(3, "0")}/AppData/Local/file-${String(i).padStart(6, "0")}.dat`, sha256: createHash("sha256").update(`f${i}`).digest("hex"), bytes: 4096 }));
+  await writeFile(join(dir, "manifest.json"), JSON.stringify({ files }));
+  await writeFile(join(dir, "job.json"), JSON.stringify({ id, state: "committed", requester: { agent: "a0" }, status: "ok", exit: 0, spec: { kind: "command", scope: "declared", inputs: ["input:disk.E01"], command: "extract" } }));
+}
+
+/** A 20 ms timer of this process, through `during`: how late each tick was. */
+async function timerLag(during: () => Promise<unknown>): Promise<{ p99: number; max: number; ticks: number }> {
+  const lags: number[] = [];
+  let last = performance.now();
+  const tick = setInterval(() => {
+    const now = performance.now();
+    lags.push(Math.max(0, now - last - 20));
+    last = now;
+  }, 20);
+  try {
+    await during();
+  } finally {
+    clearInterval(tick);
+  }
+  lags.sort((a, b) => a - b);
+  return { p99: lags[Math.min(lags.length - 1, Math.floor(lags.length * 0.99))] ?? 0, max: lags.at(-1) ?? 0, ticks: lags.length };
+}
+
+/** A line without what only its time and place on the chain make. */
+const timeless = (l: object) => {
+  const { started_at: _s, at: _a, prev: _p, hash: _h, continues: _c, ...rest } = l as Record<string, unknown>;
+  return rest;
+};
+
+test("a reverse sweep over a large store runs off the asker's loop, a pass at a time: a timer keeps time while the child lists 200,000 objects and searches 3,000 files; its line is the one a pass in this process writes, its hits a summary on the line and a file; a pass whose line was lost resumes from what was kept and reads nothing again", async () => {
+  const N = 3000;
+  const c = await before();
+  await listedJob(c.S, "j900000", 200_000);
+  const files: Record<string, string> = {};
+  for (let i = 0; i < N; i++) files[`part-${String(i).padStart(4, "0")}.csv`] = `row,user\n${i},alice\n`;
+  // The first pass, at the addition, searches one object (a byte budget of one byte): the rest is the next pass's.
+  const added = await admitMaterial(c.S, { mode: "evidence", path: await lateDir(c.S, files), why: "a proxy export in 3,000 parts", supplied_by: "t", via: "cli" }, { sweepBudget: { maxBytes: 1 } });
+  assert.equal(added.ok, true, String(added.reason ?? ""));
+  await SW.awaitSweeps(c.S);
+  const ext = (await P.readLedger(c.S)).find((e) => e.seq === added.entry)!;
+  const addition = { seq: ext.seq, hash: ext.hash!, import: "ev-0001" };
+  let whole = SW.importSweepWhole(ext.hash!, await SW.readImportSweeps(c.S))!;
+  assert.deepEqual([whole.passes.length, whole.latest.searched.objects, whole.left_total], [1, 1, N - 1]);
+  const first = SW.reverseSweepPasses(c.S).at(-1)!;
+  assert.notEqual(first.pid, process.pid, "the first pass ran in a process of its own");
+  // The store as it stands now, twice: for a pass in this process, and (below) for a pass whose line is lost.
+  const copy = join(c.S, "..", "copy-inprocess");
+  assert.equal(spawnSync("cp", ["-R", c.S, copy]).status, 0);
+  // The hub's round: the next pass, in a child, while this process's timer runs.
+  const lag = await timerLag(async () => {
+    await SW.reverseSweepInBackground(c.S);
+    await SW.awaitSweeps(c.S);
+  });
+  const stats = SW.reverseSweepPasses(c.S).at(-1)!;
+  assert.notEqual(stats.pid, process.pid, "the pass ran in a process of its own");
+  assert.ok(stats.listed >= 200_000, `it listed the store: ${stats.listed} objects`);
+  assert.equal(stats.objects, N - 1, "and searched what the last pass left");
+  assert.deepEqual([stats.reads, stats.from_results], [N - 1, 0]);
+  assert.ok(lag.p99 < 1000, `the 20 ms timer was ${lag.p99.toFixed(0)} ms late at p99 (${lag.max.toFixed(0)} ms at most)`);
+  whole = SW.importSweepWhole(ext.hash!, await SW.readImportSweeps(c.S))!;
+  assert.deepEqual([whole.passes.length, whole.left_total, whole.state, whole.searched.objects, whole.hits.length], [2, 0, "hits", N, N]);
+  const pass2 = whole.latest;
+  assert.ok(pass2.hits.every((h) => h.term === "alice" && h.bears_on.length === 1 && h.bears_on[0] === c.cov2.seq));
+  // As written: under 64 KB, a few of its 2,999 hits, the summary and the file.
+  const raw = (await readFile(join(c.S, SW.LEDGER_SWEEPS), "utf8")).split("\n").filter(Boolean);
+  assert.equal(SW.verifySweepChain(`${raw.join("\n")}\n`).ok, true);
+  const written = JSON.parse(raw.at(-1)!) as SW.ImportSweepRecord;
+  assert.ok(Buffer.byteLength(raw.at(-1)!) < 64 * 1024, `the line is ${Buffer.byteLength(raw.at(-1)!)} bytes`);
+  assert.ok(written.hits.length <= SW.SWEEP_HITS_SAMPLE);
+  assert.deepEqual([written.hits_all!.total, written.hits_all!.counts.hits, written.hits_all!.by_term], [N - 1, N - 1, [{ term: "alice", hits: N - 1, count: N - 1 }]]);
+  assert.equal(createHash("sha256").update(await readFile(join(c.S, written.hits_all!.file.path))).digest("hex"), written.hits_all!.file.sha256);
+  // The same pass in this process, over the copy: the same line, to the byte but for its times and its place on the chain.
+  let inLoop: SW.ImportSweepRecord | null = null;
+  const lagHere = await timerLag(async () => {
+    inLoop = await SW.startImportSweep(copy, addition, await P.readLedger(copy), { inProcess: true });
+  });
+  assert.equal(SW.reverseSweepPasses(copy).at(-1)!.pid, process.pid);
+  assert.deepEqual(timeless(inLoop!), timeless(pass2));
+  const copied = (await readFile(join(copy, SW.LEDGER_SWEEPS), "utf8")).split("\n").filter(Boolean);
+  assert.deepEqual(timeless(JSON.parse(copied.at(-1)!)), timeless(written), "and written the same");
+  // A pass whose line was lost (the hub died after the child kept its results, before the line was chained): started again, it reads nothing.
+  const lost = join(c.S, "..", "copy-lost");
+  assert.equal(spawnSync("cp", ["-R", c.S, lost]).status, 0);
+  await writeFile(join(lost, SW.LEDGER_SWEEPS), `${raw.slice(0, -1).join("\n")}\n`);
+  const resumed = await SW.startImportSweep(lost, addition, await P.readLedger(lost));
+  const again = SW.reverseSweepPasses(lost).at(-1)!;
+  assert.deepEqual([again.reads, again.from_results], [0, N - 1], "every object answered from what the lost pass kept");
+  assert.deepEqual(timeless(resumed), timeless(pass2));
+  // What is said of it stays small: the board post.
+  const posts = await Promise.all((await readdir(join(c.S, "threads", "main"))).filter((n) => n.endsWith("-system.md")).map((n) => readFile(join(c.S, "threads", "main", n), "utf8")));
+  const swept = posts.filter((p) => /REVERSE SWEEP of import:ev-0001/.test(p));
+  assert.equal(swept.length, 2);
+  for (const p of swept) assert.ok(Buffer.byteLength(p) < 8192, `a board post of ${Buffer.byteLength(p)} bytes`);
+  assert.match(swept.find((p) => /, pass 2: /.test(p))!, new RegExp(`and \\d+ more \\(${written.hits_all!.file.path} holds each\\)`));
+  // The gate's words on the questions it bears on are ledger-rules.ts's (evidence_stale and the reverse-sweep warning join every hit): measured here, not held.
+  const r = await checkLedgerAnswers(c.S, ["1", "2"], ["2"]);
+  const gateBytes = Math.max(0, ...r.warnings.map((w) => Buffer.byteLength(w)), ...r.defects.map((d) => Buffer.byteLength(d.what) + Buffer.byteLength(d.fix)));
+  process.stdout.write(`# the gate's longest item over ${N} reverse hits: ${gateBytes} B\n`);
+  process.stdout.write(`# reverse sweep of ${N} files over a store of ${stats.listed} objects: child pass ${stats.ms} ms; this process's 20 ms timer late by ${lag.p99.toFixed(0)} ms at p99, ${lag.max.toFixed(0)} ms at most (${lag.ticks} ticks); the same pass in this process: ${lagHere.p99.toFixed(0)} ms at p99, ${lagHere.max.toFixed(0)} ms at most; line ${Buffer.byteLength(raw.at(-1)!)} B; resumed: ${again.reads} reads, ${again.from_results} from kept results\n`);
 });

@@ -562,6 +562,41 @@ toolbox check and, where the agents boot the packs' image, to the VM's probe (§
 its version and its checksum, so a reader knows which method produced the
 result.
 
+### A dump among the inputs adds the memory pack
+
+When the top level of an `--inputs` directory holds a process or memory dump,
+a run that has packs gains `memory-forensics` (and what it depends on). A dump
+is known by its name (`*.dmp`, `*.mdmp`, `*.hdmp`, `MEMORY.DMP`, `hiberfil.sys`,
+`pagefile.sys`, `swapfile.sys`, `*.vmem`, `*.vmsn`, `*.vmss`, `*.lime`,
+`*.core`, `*.mem`) or by its first bytes (a minidump's `MDMP`, a kernel crash
+dump's `PAGEDUMP` or `PAGEDU64`, a hibernation file's `hibr`, `wake` or
+`rstr`, a LiME image, an ELF core). The kickoff says it on the console
+(`Packs: memory-forensics added: ...`), the run record names the pack like any
+other, and `SWARM.md` gains a "Dumps among the inputs" section that lists each
+dump with its size and kind, what the kickoff did about the pack and why, and
+which tools of the run's packs read one. The pack's skills enter the index
+under the same budget as every pack's: above it, its router alone.
+
+It is done this way, and not from the catalogue, because a run's packs choose
+the images its census and its seats run in: they are fixed before the
+catalogue exists, and the catalogue cannot change them. So the kickoff looks at
+the top level of each input directory itself, before it resolves the packs,
+and opens nothing but the first 32 bytes of each regular file (never through a
+link, never a FIFO). A dump one folder down, inside a disk image or an archive,
+or in an `--inputs-image`, is not seen here; the kickoff catalogue says every
+member it lists by a dump's name to everyone once (`scripts/dump-members.ts`,
+`dumpsPost`), with the tools of the run's packs that read one.
+
+The pack is not added, and the console and `SWARM.md` say why, when:
+
+- the operator excluded it: `--no-pack memory-forensics` (a pack named in both
+  `--pack` and `--no-pack` is refused);
+- the run has no `--pack`: a run without packs stays without;
+- it is not installed on this host.
+
+A resume keeps the packs its run started with: a pack its kickoff added is
+added again, and a run that did not gain it does not gain it on a resume.
+
 ---
 
 ## 7. The packs in this repository

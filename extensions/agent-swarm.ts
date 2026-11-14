@@ -220,6 +220,7 @@ import { toolsListing } from "./tools-view.ts";
 import { lastKnown } from "./last-known.ts";
 import { cropPng, pngForModel } from "./png-scale.ts";
 import { coerceArgs } from "./forged-args.ts";
+import { sightingDigest } from "./sighting.ts";
 
 /** How long a read made before a model call may take before the call goes out on the last known value. */
 const PRECALL_DEADLINE_MS = 1500;
@@ -2949,7 +2950,7 @@ export default function (pi: ExtensionAPI) {
       // How much of the answer the hints at admission take (metrics: the library hint was three quarters of job_run's text in two runs).
       const answerChars = JSON.stringify(result).length;
       const hintChars = (["library", "similar", "similar_more", "similar_note", "coverage"] as const).reduce((n, k) => n + ((res.result as Record<string, unknown>)[k] === undefined ? 0 : JSON.stringify((res.result as Record<string, unknown>)[k]).length), 0);
-      await logEvent(toolCtx.cwd, agentId, "job_run", params, { ok: true, job: res.job, state: res.result.state, status: res.result.status, answer_chars: answerChars, hint_chars: hintChars, ...placed, ...(res.result.lead ? { lead: res.result.lead } : {}), ...(Array.isArray(res.result.similar) ? { similar: (res.result.similar as Array<{ job?: unknown }>).map((x) => x.job) } : {}), ...(code ? { evidence_code: code } : {}) }, Date.now() - started);
+      await logEvent(toolCtx.cwd, agentId, "job_run", params, { ok: true, job: res.job, state: res.result.state, status: res.result.status, answer_chars: answerChars, hint_chars: hintChars, library_chars: (res.result as Record<string, unknown>).library === undefined ? 0 : JSON.stringify((res.result as Record<string, unknown>).library).length, sighted: sightingDigest(result), ...placed, ...(res.result.lead ? { lead: res.result.lead } : {}), ...(Array.isArray(res.result.similar) ? { similar: (res.result.similar as Array<{ job?: unknown }>).map((x) => x.job) } : {}), ...(code ? { evidence_code: code } : {}) }, Date.now() - started);
       return okResult(result);
     },
   });
@@ -2967,9 +2968,11 @@ export default function (pi: ExtensionAPI) {
     async execute(_id, params, _signal, _onUpdate, toolCtx: ToolCtx) {
       const started = Date.now();
       const st = await jobStatus(toolCtx.cwd, { job_id: params.job_id, ...(params.offset !== undefined ? { offset: params.offset } : {}), ...(params.cancel ? { cancel: true } : {}), limit: 16384 });
-      await logEvent(toolCtx.cwd, agentId, "job_status", params, { ok: st.ok, state: st.job?.state, ...(st.ok ? {} : { reason: st.reason }) }, Date.now() - started);
-      if (!st.ok) return { content: [{ type: "text" as const, text: st.reason ?? "no answer" }], details: st, isError: true };
-      return okResult({ ok: true, ...st.job, ...(st.stdout ? stdoutWithNote(params.job_id, st.stdout) : {}) });
+      // The answer's size and sighting digest (extensions/sighting.ts) go on the trace: its text does not.
+      const answer = st.ok ? { ok: true, ...st.job, ...(st.stdout ? stdoutWithNote(params.job_id, st.stdout) : {}) } : null;
+      await logEvent(toolCtx.cwd, agentId, "job_status", params, { ok: st.ok, state: st.job?.state, ...(answer ? { answer_chars: JSON.stringify(answer).length, sighted: sightingDigest(answer) } : { reason: st.reason }) }, Date.now() - started);
+      if (!answer) return { content: [{ type: "text" as const, text: st.reason ?? "no answer" }], details: st, isError: true };
+      return okResult(answer);
     },
   });
 
@@ -3022,7 +3025,7 @@ export default function (pi: ExtensionAPI) {
     async execute(_id, params, _signal, _onUpdate, toolCtx: ToolCtx) {
       const started = Date.now();
       const r = (await storeFind(toolCtx.cwd, { ...params })) as { ok: boolean; reason?: string; matched?: number; returned?: number };
-      await logEvent(toolCtx.cwd, agentId, "store_find", params, { ok: r.ok, ...(r.ok ? { matched: r.matched, returned: r.returned } : { reason: r.reason }) }, Date.now() - started);
+      await logEvent(toolCtx.cwd, agentId, "store_find", params, { ok: r.ok, ...(r.ok ? { matched: r.matched, returned: r.returned, sighted: sightingDigest(r) } : { reason: r.reason }) }, Date.now() - started);
       if (!r.ok) return { content: [{ type: "text" as const, text: r.reason ?? "no answer" }], details: r, isError: true };
       return okResult(r);
     },
@@ -3400,7 +3403,7 @@ export default function (pi: ExtensionAPI) {
             ...(Object.keys(paths).length ? { paths } : {}),
             ...res.result,
           };
-          await logEvent(toolCtx.cwd, agentId, manifest.name, redactSecrets((params ?? {}) as Record<string, unknown>, secrets), redactSecrets({ ok: res.ok, forged: true, ran_as_job: res.job, why: answer.why, state: res.result.state, status: res.result.status }, secrets), Date.now() - started);
+          await logEvent(toolCtx.cwd, agentId, manifest.name, redactSecrets((params ?? {}) as Record<string, unknown>, secrets), redactSecrets({ ok: res.ok, forged: true, ran_as_job: res.job, why: answer.why, state: res.result.state, status: res.result.status, sighted: sightingDigest(redactSecrets(answer, secrets)) }, secrets), Date.now() - started);
           const text = redactSecrets(JSON.stringify(answer, null, 1), secrets);
           return res.ok ? okResult(answer) : { content: [{ type: "text" as const, text }], details: answer, isError: true };
         }
@@ -3592,7 +3595,7 @@ export default function (pi: ExtensionAPI) {
         const all = await listForgedTools(toolCtx.cwd);
         const rows = all.map((m) => ({ name: m.name, description: m.description, params: paramSummary(m), runtime: m.runtime, by: m.by, version: m.version, pack: (m as { pack?: string | null }).pack ?? null, ...(m.example ? { example: m.example } : {}), ...(runsAsJob(m) ? { call: `job_run(tool: "${m.name}", args: {...})` } : {}) }));
         const listing = toolsListing(rows, params.name);
-        await logEvent(toolCtx.cwd, agentId, "tools", params.name ? { name: params.name } : {}, { ok: listing.ok, n: all.length, loaded: fresh.length }, Date.now() - started);
+        await logEvent(toolCtx.cwd, agentId, "tools", params.name ? { name: params.name } : {}, { ok: listing.ok, n: all.length, loaded: fresh.length, answer_chars: JSON.stringify(listing).length }, Date.now() - started);
         if (!listing.ok) return { content: [{ type: "text" as const, text: `tools: ${listing.reason}${listing.nearest ? ` (nearest: ${listing.nearest.join(", ")})` : ""}` }], details: listing, isError: true };
         return okResult({ ...listing, ...newToolsNote(fresh) });
       },
@@ -3826,6 +3829,23 @@ export default function (pi: ExtensionAPI) {
           description: "A finding's carrier table, before choosing among several places a value could be carried in (files, streams, fields): one row each, {carrier, state: decoded | undecodable | not_examined, why}. An answer may not say nothing remains open while a row is not examined.",
         }),
       ),
+      candidates: Type.Optional(
+        Type.Array(
+          Type.Object({
+            value: Type.String({ description: "The candidate value, as the asked string would read" }),
+            state: Type.Optional(Type.Union([Type.Literal("open"), Type.Literal("ruled_out"), Type.Literal("decoy")], { description: "open (still weighed; the default), ruled_out (a check excludes it: by), or decoy (the payload declares itself fake, a test or a vendor's sample)" })),
+            why: Type.String({ description: "What reads it so; for ruled_out, what the check showed; for decoy, what in it declares it so" }),
+            by: Type.Optional(Type.String({ description: "With ruled_out: the machine check, job:<id>/<path>, or E-<seq> of an entry resting on a job's result. An argument or another reading rules nothing out" })),
+          }),
+          {
+            description:
+              "An answer's or a finding's: the values still weighed beside value. A revision carries every candidate of the entry it corrects, the readings disputes of it give, and its earlier value when it lowers the confidence or answers an objection; only a row ruled_out with a machine check (by) removes one. \"Nothing remains open\" is refused while a row is open.",
+          },
+        ),
+      ),
+      carrier_names: Type.Optional(Type.Array(Type.String(), { description: "An answer's that chose among several carriers (files, streams, fields, symbols): their names, N of them. It is recorded established, or says nothing remains open, only once the carrier table it cites has a row for each." })),
+      decoy: Type.Optional(Type.String({ description: "A finding's whose payload or artefact declares itself fake, a test or a vendor's sample: what in it says so. It is a decoy candidate, and no answer rests on it alone without decoy_check." })),
+      decoy_check: Type.Optional(Type.Object({ by: Type.String(), why: Type.String() }, { description: "An answer's whose value is a candidate marked decoy, or whose findings for its question are all marked decoy: the machine check (job:<id>/<path>, or E-<seq> of an entry resting on one) that shows it is the answer all the same, and why." })),
   });
   /** A field of recordProps as a kind's tool requires it (the optional mark is not copied), with that kind's own words when it has them. */
   const need = (s: TSchema, description?: string): TSchema => ({ ...s, ...(description ? { description } : {}) }) as TSchema;
@@ -3918,7 +3938,7 @@ export default function (pi: ExtensionAPI) {
       description:
         "Record a finding in the swarm's ledger, while the artefact is open: an observation and what you make of it. value is what you saw, fact only, one sentence; source where (a path, a log, a registry key); evidence how a reader re-derives it (the command, the query, the record id, the hash); refs the objects it rests on. basis is observed or inferred; confidence comes with confidence_why (where the data came from, whether the method is reliable for it, how specific the observation is, whether your sources depend on each other: the quality of the evidence, not a count); indicates says what the observation means and the step from one to the other, one to three sentences. " +
         "An inferred finding lists alternatives [{explanation, status: rejected | open, why}], or says in alternatives_none_why why none was considered: never invent one. A ref whose job did not succeed needs qualifies [{ref, why}] (ref may name the job, job:<id>, for every ref of the entry from it), and such bytes never show that something is absent. answers names the question it bears on (\"3\"): an answer can rest only on an entry that names its question. " +
-        "A finding that says what was NOT found (no hit, none, not present) and rests on your own script or shell line names its control: control {ref, found}, a job in which the same scanner, with the same pattern and layout, found a planted or known value. One about pictures holds for the images you read: the hub names the images of the same job you were not handed. Before choosing among several places a value could be carried in, record one finding with carriers [{carrier, state: decoded | undecodable | not_examined, why}], a row each. " +
+        "A finding that says what was NOT found (no hit, none, not present) and rests on your own script or shell line names its control: control {ref, found}, a job in which the same scanner, with the same pattern and layout, found a planted or known value. One about pictures holds for the images you read: the hub names the images of the same job you were not handed. Before choosing among several places a value could be carried in, record one finding with carriers [{carrier, state: decoded | undecodable | not_examined, why}], a row each. A payload that declares itself fake, a test or a vendor's sample is marked decoy (what in it says so). " +
         COMMON_WORDS,
       guidelines: ["Use record_finding for an observation and what it indicates; a dated event is record(kind=event), a search that found nothing record_absence, what could not be examined record_limitation.", "A negative from your own scanner names its control run; a finding names the question it bears on in answers."],
       schema: Type.Object({
@@ -3937,6 +3957,8 @@ export default function (pi: ExtensionAPI) {
         control: P().control,
         images_read: P().images_read,
         carriers: P().carriers,
+        candidates: P().candidates,
+        decoy: P().decoy,
         significance: P().significance,
         ts: P().ts,
         clock: P().clock,
@@ -3958,7 +3980,7 @@ export default function (pi: ExtensionAPI) {
       description:
         "Record the swarm's answer to one question of the goal (section question:<id>), written from the ledger, not from memory. value is the asked string alone, in the format the question asks (its Format line): the first line of value is what is graded, so it holds the answer and nothing else, no sentence, no label, no second candidate. qualifier holds whatever qualifies it (a candidate, a second reading, what is open). reasoning says how the cited entries lead to it, citing E-<seq> for every claim; the answer rests on at least one standing entry recorded with answers naming its question. " +
         "result is established (on findings), partial, bounded_negative or not_determinable (each on a coverage record, worded \"No evidence of <what> was found in <scope>\"), out_of_scope or premise_not_supported. confidence comes with confidence_why; alternatives_open says what else could still explain it (\"nothing remains open\" is refused while a carrier table or a partial coverage record it cites shows one unexamined); would_change says what evidence would change it. A partial answer carries parts [{id, part, status: established | open | limited, refs, open_by?, limited_by?}] with at least one open or limited: then value holds only the piece of the format that is established, or is empty, and nothing is asked for the open part. " +
-        "One answer stands per question: a second one from you is taken as its revision (supersedes). A revision that lowers confidence or result keeps value: a doubt, a dispute or a best_candidate review changes confidence, result and parts, never the asked string, and a candidate the answer held stays in qualifier; value changes only with value_changed_because naming the entry (E-<seq>) that shows it wrong. A superseded entry is cited only with its correction, and a disputed one or one resting on a failed job only with qualifies [{ref: \"E-<seq>\", why}]. " +
+        "One answer stands per question: a second one from you is taken as its revision (supersedes). A revision that lowers confidence or result keeps value: a doubt, a dispute or a best_candidate review changes confidence, result and parts, never the asked string; value changes only with value_changed_because naming the entry (E-<seq>) that shows it wrong. Other readings go in candidates [{value, state: open | ruled_out | decoy, why, by?}]: a revision carries them (and its earlier value when it lowers the confidence or answers an objection), and one leaves only as ruled_out with by, the machine check that excludes it. An answer that chose among carriers names them in carrier_names, and is established only once the carrier table it cites has a row for each; a value marked decoy needs decoy_check. A superseded entry is cited only with its correction, and a disputed one or one resting on a failed job only with qualifies [{ref: \"E-<seq>\", why}]. " +
         "An answer takes no refs, answers, basis or indicates: record the fact first (record_finding with answers: [\"<id>\"]), then this answer citing its E-<seq>. The summary and the narrative are record(kind=answer, section=summary | narrative). " +
         COMMON_WORDS,
       guidelines: ["record_answer's value is the asked string alone, as the question's Format line asks it; everything else goes in qualifier and reasoning.", "Lowering your confidence in an answer never changes its value: say the doubt in qualifier, confidence and result."],
@@ -3984,6 +4006,9 @@ export default function (pi: ExtensionAPI) {
         supersedes: P().supersedes,
         because: P().because,
         value_changed_because: P().value_changed_because,
+        candidates: P().candidates,
+        carrier_names: P().carrier_names,
+        decoy_check: P().decoy_check,
         downgrade: P().downgrade,
         material: P().material,
         sensitive: P().sensitive,
@@ -4283,7 +4308,7 @@ export default function (pi: ExtensionAPI) {
     name: "dispute",
     label: "Dispute",
     description:
-      "Say why a ledger entry somebody else recorded does not hold (a finding, an answer, any kind), with the objects that show it in refs; or, with withdraw: true, take back your own dispute and say why. The harness writes it, chained, into ledger/disputes.jsonl. An answer resting on a disputed entry stops standing until its author records it again with the dispute answered; to correct your own entry, record the correction with supersedes instead. A dispute about a reading (a transcription, a glyph, a look-alike character) adds a candidate: say yours, and the author keeps the earlier one beside it (an answer's qualifier) until a check rules one out; a dispute about how sure an answer is changes its confidence or result, never the asked string in its value.",
+      "Say why a ledger entry somebody else recorded does not hold (a finding, an answer, any kind), with the objects that show it in refs; or, with withdraw: true, take back your own dispute and say why. The harness writes it, chained, into ledger/disputes.jsonl. An answer resting on a disputed entry stops standing until its author records it again with the dispute answered; to correct your own entry, record the correction with supersedes instead. A dispute about a reading (a transcription, a glyph, a look-alike character) adds a candidate: say yours in reading, and it stands beside the entry's value (its candidates), never in its place, until a check rules one out; a dispute about how sure an answer is changes its confidence or result, never the asked string in its value.",
     promptSnippet: "Record why a peer's entry does not hold",
     promptGuidelines: ["dispute says what does not hold and what shows it; a wrong entry of your own is corrected with record(supersedes), never disputed."],
     parameters: Type.Object({
@@ -4291,10 +4316,11 @@ export default function (pi: ExtensionAPI) {
       why: Type.String({ description: "What does not hold and what shows it; with withdraw, why the dispute no longer stands." }),
       refs: Type.Optional(Type.Array(Type.String(), { description: "The objects that show it." })),
       withdraw: Type.Optional(Type.Boolean({ description: "Take back your own standing dispute of this entry." })),
+      reading: Type.Optional(Type.String({ description: "A dispute about a reading of an answer's or a finding's value (a transcription, a glyph, a look-alike character): the value as you read it. It becomes a candidate beside the entry's value, which it never replaces; the next revision carries it until a check rules one out." })),
     }),
     async execute(_id, params, _signal, _onUpdate, toolCtx: ToolCtx) {
       const started = Date.now();
-      const result = await disputeEntry(ctxFrom(toolCtx.cwd, agentId), { seq: params.seq, why: params.why, ...(params.refs?.length ? { refs: params.refs } : {}), ...(params.withdraw ? { withdraw: true } : {}) });
+      const result = await disputeEntry(ctxFrom(toolCtx.cwd, agentId), { seq: params.seq, why: params.why, ...(params.refs?.length ? { refs: params.refs } : {}), ...(params.withdraw ? { withdraw: true } : {}), ...(params.reading ? { reading: params.reading } : {}) });
       if (!result.ok) {
         await logEvent(toolCtx.cwd, agentId, "dispute", params as Record<string, unknown>, { ok: false, reason: result.reason }, Date.now() - started);
         return { content: [{ type: "text" as const, text: `dispute refused: ${result.reason}` }], details: { ok: false, reason: result.reason }, isError: true };

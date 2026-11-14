@@ -1,6 +1,6 @@
 /**
  * The contract (SWARM.md) rendered from the template, the goal and what the
- * kickoff measured: the inputs, the evidence catalog, the programs, the
+ * kickoff measured: the inputs and the dumps at their top, the evidence catalog, the programs, the
  * pack and seeded tools, this host's guards, the tool jobs and job images,
  * the case line, the goal with how its checks are run, and the caps and
  * bail-out by the run's stop policy. Called by swarm.sh (render_contract)
@@ -21,6 +21,7 @@
 import { existsSync, lstatSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { kickoffDumpsNote, type KickoffDump, type MemoryPackDecision } from "./dump-members.ts";
 
 type Obj = Record<string, unknown>;
 const env = (k: string): string | undefined => process.env[k];
@@ -210,6 +211,19 @@ function inputsSection(sandbox: string): string {
   }
   if (files.length > shown.length) lines.push(`- … and ${files.length - shown.length} more (see \`inputs\`)`);
   return `${lines.join("\n")}\n\n`;
+}
+
+/** The dumps the kickoff found at the top of the inputs (kickoff-dumps.json, swarm.sh kickoff_add_memory_pack), or nothing. */
+function dumpsSection(sandbox: string): string {
+  const file = join(sandbox, "kickoff-dumps.json");
+  if (!(isFile(file) && !isLink(file))) return "";
+  try {
+    const k = readJson(file) as { total?: number; bytes?: number; dumps?: KickoffDump[]; whole?: boolean; readers?: string[]; decision?: MemoryPackDecision };
+    const found = { total: Number(k.total) || 0, bytes: Number(k.bytes) || 0, dumps: Array.isArray(k.dumps) ? k.dumps : [], whole: k.whole !== false };
+    return kickoffDumpsNote(found, Array.isArray(k.readers) ? k.readers.map(String) : [], k.decision ?? "named") ?? "";
+  } catch {
+    return "";
+  }
 }
 
 function catalogSection(sandbox: string): string {
@@ -580,7 +594,7 @@ export function renderContract(argv: string[]): void {
     ["{{SWARM_ID}}", swarmId],
   ] as const)
     text = replaceAll(text, token, value);
-  text = replaceAll(text, "{{INPUTS}}\n\n", inputsSection(sandbox));
+  text = replaceAll(text, "{{INPUTS}}\n\n", inputsSection(sandbox) + dumpsSection(sandbox));
   // Nobody is given a job here: the swarm divides the work itself.
   text = replaceAll(text, "{{SEATS}}\n\n", "");
   text = replaceAll(text, "{{CATALOG}}\n\n", catalogSection(sandbox));

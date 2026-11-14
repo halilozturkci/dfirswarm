@@ -38,7 +38,8 @@
  * read after both ended.
  */
 import { skillMetrics, skillMetricsWords, type SkillMetrics } from "./skill-metrics.ts";
-import { frictionMetrics, frictionWords, type FrictionMetrics } from "./friction-metrics.ts";
+import { firstSightings, frictionMetrics, frictionWords, LARGE_FILES, type FirstSightings, type FrictionMetrics, type ModelCall, type SightingAnswer } from "./friction-metrics.ts";
+import { answerKey, answerPieces } from "../extensions/sighting.ts";
 import { existsSync, statSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
@@ -384,8 +385,17 @@ export type RunMetrics = {
   skills?: SkillMetrics;
   /** What the harness cost the seats: refusals, waits, compactions, the hub's health (friction-metrics.ts). */
   harness?: FrictionMetrics;
+  /**
+   * When each standing answer's value in scope was first in front of a seat (friction-metrics.ts firstSightings): the
+   * minutes to its first record and the kind of row that held it. Never the value. Absent without a readable trace.
+   */
+  first_sighting?: FirstSightings;
+  /** The harness measures, one a line, each with its figure or why the run cannot give it (metricsText's second table). */
+  measures: Measure[];
   notes: string[];
 };
+
+export type Measure = { measure: string; measured: boolean; value: string };
 
 type OfferCounts = { made: number; accepted: number; declined: number; taken_by_another: number; lapsed: number; open: number };
 export type NegativeRow = { section: string; id: string | null; answer: string; result: string };
@@ -1141,6 +1151,106 @@ async function network(S: string, now: number): Promise<RunMetrics["network"]> {
   return out;
 }
 
+/**
+ * The answers firstSightings looks for: each standing answer of a question in scope, matched by its value's first line
+ * (or the pieces of a format of several), with its first record with that value. The keys stay in memory.
+ */
+function sightingAnswers(c: Context, scope: RunMetrics["questions"]): SightingAnswer[] {
+  const live = new Set(scope.in_scope.map((q) => q.section));
+  const out: SightingAnswer[] = [];
+  for (const [section, e] of standingAnswers(c)) {
+    if (!live.has(section)) continue;
+    const q = c.qs?.bySection.get(section);
+    const value = str(e.value);
+    const key = answerKey(value);
+    const pieces = answerPieces(value, q?.text);
+    const sameValue = (x: P.LedgerEntry) => (key ? answerKey(str(x.value)) === key : pieces ? JSON.stringify(answerPieces(str(x.value), q?.text)) === JSON.stringify(pieces) : x.seq === e.seq);
+    let first: P.LedgerEntry = e;
+    for (const x of c.entries) {
+      if (x.kind !== "answer" || !str(x.section).startsWith("question:") || sectionOf(str(x.section), c.qs) !== section || !sameValue(x)) continue;
+      if ((ms(x.at) ?? Infinity) < (ms(first.at) ?? Infinity)) first = x;
+    }
+    out.push({ section, id: q?.id ?? null, answer: `E-${e.seq}`, by: str(first.by), at: ms(first.at), key, pieces });
+  }
+  return out;
+}
+
+/** The model gateway's requests, each with its start (its logged end less its duration); null when the run has no gateway log. */
+async function gatewayRequests(S: string): Promise<ModelCall[] | null> {
+  const path = join(S, "traces", "model-gateway.jsonl");
+  if (!existsSync(path)) return null;
+  const out: ModelCall[] = [];
+  for (const l of await jsonl(path)) {
+    if (l.refused || l.upstream_error || typeof l.seat !== "string") continue;
+    const end = ms(l.at);
+    if (end === null || typeof l.ms !== "number") continue;
+    out.push({ seat: l.seat, start: end - l.ms, end });
+  }
+  return out;
+}
+
+const share = (x: number | null): string => (x === null ? "?" : `${Math.round(x * 100)}%`);
+
+/**
+ * The harness measures of the improvement plan (section 8), one a line: each says its figure, or "not measured" and
+ * why the run's registers cannot give it. From the trace (f, with an empty trace when it is unreadable), the store's
+ * journal and the ledger.
+ */
+function measuresOf(c: Context, f: FrictionMetrics, trace: boolean, sight: FirstSightings | undefined): Measure[] {
+  const TRACE = "not measured: no readable traces/events.jsonl";
+  const yes = (measure: string, value: string): Measure => ({ measure, measured: true, value });
+  const no = (measure: string, why: string): Measure => ({ measure, measured: false, value: why.startsWith("not measured") ? why : `not measured: ${why}` });
+  const t = (measure: string, value: () => Measure | string): Measure => {
+    if (!trace) return no(measure, TRACE);
+    const v = value();
+    return typeof v === "string" ? yes(measure, v) : v;
+  };
+  const s = (x: number | null) => (x === null ? "?" : `${x} s`);
+  const out: Measure[] = [];
+  const d = f.delivery;
+  out.push(
+    !c.have.journal
+      ? no("Job result delivery time", "no store/journal.jsonl")
+      : !d.jobs
+        ? yes("Job result delivery time", "no job finished")
+        : !d.told
+          ? no("Job result delivery time", `no job_notified line on the journal for any of ${d.jobs} finished job(s) (a run from before them)`)
+          : yes("Job result delivery time", `from a job's end to the first time a seat was told: median ${s(d.median_s)}, p90 ${s(d.p90_s)}, max ${s(d.max_s)} over ${d.told} job(s); ${d.never_told} finished job(s) never told`),
+  );
+  const ls = f.large_seal;
+  out.push(
+    !c.have.journal
+      ? no("Sealing time for large extractions", "no store/journal.jsonl")
+      : yes("Sealing time for large extractions", ls.jobs ? `${ls.jobs} job(s) of ${LARGE_FILES} files or more, from the fence to the commit: median ${s(ls.median_s)}, max ${s(ls.max_s)} (the largest ${ls.max_files} files); every job's commit wait max ${s(f.commit_wait.max_s)}` : `no job sealed ${LARGE_FILES} files or more; every job's commit wait: median ${s(f.commit_wait.median_s)}, max ${s(f.commit_wait.max_s)} over ${f.commit_wait.jobs} job(s)`),
+  );
+  out.push(t("Hub heap and loop delay", () => (f.hub.samples ? `loop p99 at most ${f.hub.loop_p99_max_ms} ms, heap at most ${share(f.hub.heap_share_max)} of its limit (${f.hub.samples} sample(s)); ${f.hub.memory_high} memory warning(s), ${f.hub.restarts} restart(s)` : no("Hub heap and loop delay", "no hub_health rows on the trace (a run with no hub, or from before them)"))));
+  out.push(t("Seat-down events", () => `${f.seats.down} down, ${f.seats.relaunched} started again, ${f.seats.dead} recorded dead`));
+  out.push(t("Refusals per accepted record", () => (f.record.accepted ? `${f.record.per_accepted} (${f.record.refused} refused for ${f.record.accepted} accepted)` : `no record accepted (${f.record.refused} refused)`)));
+  out.push(t("Records needing two or more refusals", () => `${f.refused_twice.records} record(s) accepted after two or more refusals in a row; the longest run of refusals ${f.refused_twice.longest_run}`));
+  out.push(t("job_run result text and hint share", () => (f.job_run_text.answers ? `${f.job_run_text.answers} answer(s), ${f.job_run_text.chars} characters; hints at admission ${share(f.job_run_text.hint_share)} of them${f.library.recorded ? `, the library hint ${share(f.library.of_job_run)}` : ""}` : no("job_run result text and hint share", "no job_run row gives its answer's size (none ran, or a run from before answer_chars)"))));
+  out.push(t("Library share", () => (f.library.recorded ? `the library hint (${f.library.hint_chars} characters) and the tools listings (${f.library.listing_chars}) are ${share(f.library.of_all)} of the ${f.library.all_chars} characters of tool answers` : no("Library share", "no job_run row gives library_chars and no tools row answer_chars (a run from before them)"))));
+  out.push(t("Gap before a model call", () => (f.model_gap.source === null ? no("Gap before a model call", "no model gateway log (traces/model-gateway.jsonl): a request's start is recorded only there") : f.model_gap.calls ? `from a seat's last tool result to its next request: median ${s(f.model_gap.median_s)}, p90 ${s(f.model_gap.p90_s)}, max ${s(f.model_gap.max_s)} over ${f.model_gap.calls} request(s)` : no("Gap before a model call", "no request followed a seat's tool result on the trace"))));
+  out.push(t("Compactions per seat-hour", () => (f.compactions.per_seat_hour === null ? no("Compactions per seat-hour", "no seat time on the trace") : `${f.compactions.per_seat_hour} (${f.compactions.done} compaction(s), ${f.compactions.failed} failed)`)));
+  out.push(
+    !c.have.ledger
+      ? no("Minutes from first sighting to answer", "no ledger/entries.jsonl")
+      : !sight
+        ? no("Minutes from first sighting to answer", TRACE)
+        : !sight.answers.length
+          ? yes("Minutes from first sighting to answer", "no standing answer in scope")
+          : yes(
+              "Minutes from first sighting to answer",
+              `${sight.seen} of ${sight.answers.length} answer(s) seen in a tool result at or before their record: median ${sight.median_minutes === null ? "?" : `${sight.median_minutes} min`}, max ${sight.max_minutes === null ? "?" : `${sight.max_minutes} min`}; ${sight.answers
+                .map((x) => `${x.id ?? `question:${x.section}`} ${x.answer} ${x.status === "seen" || x.status === "seen_in_pieces" ? `${x.minutes} min (${x.kind}${x.status === "seen_in_pieces" ? ", its pieces" : ""}, ${x.same_seat ? "its own seat" : "another seat"})` : x.status === "seen_after" ? `seen only after its record (${x.kind})` : x.status === "not_seen" ? "not seen in a tool result the trace holds" : "not matchable (no value, or one under 4 characters)"}`)
+                .join("; ")}${sight.rows_without_text ? `; ${sight.rows_without_text} job answer row(s) carry neither text nor a sighting digest (a run from before the digests): a value first seen there is not found` : ""}${sight.rows_cut ? `; ${sight.rows_cut} row(s) hold more tokens than their digest's bound` : ""}`,
+            ),
+  );
+  out.push(t("Idle waits", () => (f.idle_waits.waits ? `${f.idle_waits.idle} of ${f.idle_waits.waits} wait(s) ended with nothing delivered: ${f.idle_waits.idle_s} s, ${share(f.idle_waits.share_of_seat_time)} of seat time; all waits ${f.idle_waits.wait_s} s` : "no wait call")));
+  out.push(t("Empty summaries", () => (!f.compactions.done ? "no compaction" : f.summaries_sized ? `${f.empty_summaries} of ${f.summaries_sized} compaction(s) that give their summary's size` : no("Empty summaries", "no compaction row gives its summary's size (a run from before summary_chars)"))));
+  out.push(t("Largest answer", () => (f.largest_answer.tool ? `${f.largest_answer.chars} characters (${f.largest_answer.tool})${f.hub.answers_too_large ? `; ${f.hub.answers_too_large} answer(s) too large to send` : ""}` : "no tool answer on the trace")));
+  return out;
+}
+
 // --- one run --------------------------------------------------------------------------------------
 
 /** `now`: when a grant's status is read for a run still going (tests fix it); a run that ended is read at its end. */
@@ -1161,6 +1271,9 @@ export async function measureRun(runDirArg: string, o: { now?: number } = {}): P
   const t = await tail(c, scope, outcome);
   if (!c.have.finish) c.notes.push("no finish register (a run from before readiness was recorded): the tail is measured from the first answers");
   const endAt = ms(outcome.at);
+  const traced = c.have.trace && !unreadable;
+  const fr = frictionMetrics(traced ? events : [], c.journal, { calls: await gatewayRequests(S) });
+  const sight = traced && c.have.ledger ? firstSightings(events, sightingAnswers(c, scope)) : undefined;
   const m: RunMetrics = {
     format: METRICS_FORMAT,
     run: basename(S),
@@ -1186,7 +1299,9 @@ export async function measureRun(runDirArg: string, o: { now?: number } = {}): P
     duplicates: dup,
     network: await network(S, endAt ?? o.now ?? Date.now()),
     ...(c.have.trace && !unreadable ? { skills: skillMetrics(events) } : {}),
-    ...(c.have.trace && !unreadable ? { harness: frictionMetrics(events, c.journal) } : {}),
+    ...(traced ? { harness: fr } : {}),
+    ...(sight ? { first_sighting: sight } : {}),
+    measures: measuresOf(c, fr, traced, sight),
     notes: c.notes,
   };
   if (!m.cost.source) m.notes.push("no per-call token record (no model gateway log, no Pi sessions, and no seat total with calls on the trace): cost per question is not measured");
@@ -1372,6 +1487,10 @@ export function metricsText(m: RunMetrics): string {
     ["Network", n.recorded ? `${n.requests} request(s): ${n.granted} granted, ${n.denied} denied (${counts(n.denied_by_code)}); ${n.operator_items} operator item(s), ${n.operator_items_open} open; ${n.grants} grant(s) (${counts(n.grants_by_status)}); ${n.fetches} fetch(es), ${n.captures} capture(s), ${n.fetch_refusals} refused by the fetch service${n.contamination ? `; contamination ${n.contamination}` : ""}` : "not used (no network/ records)"],
   ];
   lines.push(...table(rows));
+  if (m.measures?.length) {
+    lines.push("", "Harness measures (docs/usage.md, \"Harness measures\"):");
+    lines.push(...table([["Measure", "Value"], ...m.measures.map((x) => [x.measure, x.value])]));
+  }
   if (m.cost.per_question.length) {
     lines.push("", "Cost per question (tokens apportioned by lead):");
     lines.push(...table([["Question", "Tokens", "USD", "Leads"], ...m.cost.per_question.map((q) => [qname(q), String(q.tokens), String(q.usd), q.leads.join(" ")])]));
