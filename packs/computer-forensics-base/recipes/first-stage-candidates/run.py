@@ -19,10 +19,14 @@ the record, which the Windows pack's readers read.
 coverage.json says whether the whole list was read (whole_list_read) and carries the rule the ranking exists for: to answer
 "cannot be determined" to a "which file" question the whole member list must have been searched.
 
-Two rules hold every loop. Each one reads the clock often enough that no single step of it can carry the run past its seconds, and
-what it keeps is bounded by a limit named below. Every limit met (seconds, documents, antivirus files, Recent names, a directory's
-entries, a list's line, a file's size, a ZIP directory's records) is a line of limits_hit and makes the run partial, and so does a
-document whose VBA check could not be told (it is ranked, and its row says so). candidates.tsv has every scored document.
+Two rules hold every loop. Each one reads the clock often enough that no single step of it can carry the run past its seconds (a
+hive or an antivirus file is not opened past it), and what it keeps is bounded by a limit named below (a directory's entries are held
+DIRECTORY_BATCH at a time, as names; a member list keeps no hive's path). Every limit met (seconds, members, documents, hives,
+antivirus files, Recent names, directories waiting, a list's line, a file's size, a ZIP directory's records) is a line of limits_hit.
+The status is derived from one list, Unread: every place that leaves something unread or unjudged (a limit, an error, a link, a row
+with no path, a line outside the declared forms, a document whose VBA check could not be told, a name that is not text) counts it
+there, any count above zero makes the run partial, and coverage.json prints every counter (not_read_or_judged). candidates.tsv has
+every scored document.
 """
 
 # BEGIN SHARED ENDS
@@ -515,7 +519,7 @@ def open_regular(path):
 
 
 RECIPE = "first-stage-candidates"
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 HERE = os.path.dirname(os.path.abspath(__file__))
 COLUMNS = ["rank", "score", "path", "kind", "size", "profile", "signals"]
 MACRO_NAMES = {".docm": "word", ".dotm": "word", ".xlsm": "excel", ".xltm": "excel", ".xlam": "excel", ".xlsb": "excel", ".pptm": "powerpoint", ".potm": "powerpoint",
@@ -536,7 +540,10 @@ VBA_OLE = "_VBA_PROJECT".encode("utf-16-le")
 MAX_MEMBERS = 5_000_000
 MAX_DOCUMENTS = 100_000           # the most documents scored; every one of them is a row of candidates.tsv
 MAX_ANTIVIRUS = 400               # the most antivirus logs and detection files searched for names
-MAX_RECENT = 200_000              # the most Recent shortcut names (of documents) kept
+MAX_RECENT = 200_000              # the most Recent shortcut names (of documents) kept, and the most (name, profile) pairs of them
+MAX_HIVES = 20_000                # the most profiles' NTUSER.DAT kept (in a tree) to search for the names
+DIRECTORY_BATCH = 100_000         # a directory's entries are held this many at a time (names and kinds, never the scandir objects)
+MAX_PENDING_DIRECTORIES = 1_000_000  # the most directories waiting to be entered (each its own name and its parent's, shared); one past it is not entered
 SCAN_BYTES = 512 << 20            # the most of one hive or log file that is searched for names
 OLE_BYTES = 64 << 20
 ZIP_RECORDS = 20_000              # the most ZIP central-directory records walked for a VBA project
@@ -547,6 +554,41 @@ DETECT_LIST_BYTES = 256 << 20     # detect reads at most this much of a member l
 DETECT_SECONDS = 60               # ... and for at most this long; past either, it cannot tell
 CLOCK_EVERY = 256                 # a loop reads the clock at least once per this many steps of its own
 WHY_MAX, WHY_CHARS = 5, 400
+
+
+class Unread:
+    """The one list of what this run did not read or did not judge: every place that leaves something unread or unjudged counts it here,
+    under a name declared up front, with the sentence that says it. The status is derived from this list alone (a failed run aside): a
+    count above zero makes the answer partial. The answer prints every counter, zeros included (`not_read_or_judged`)."""
+
+    def __init__(self, *names):
+        self.counts = {n: 0 for n in names}
+        self.said = {}
+
+    def add(self, name, count=1, sentence=None):
+        if name not in self.counts:
+            raise KeyError("an undeclared counter: %s" % name)
+        if count <= 0:
+            return
+        self.counts[name] += count
+        if sentence and name not in self.said:
+            self.said[name] = sentence
+
+    def __bool__(self):
+        return any(self.counts.values())
+
+    def reasons(self):
+        return ["%s (%s: %d)" % (self.said.get(n, "not read or not judged"), n, c) for n, c in self.counts.items() if c]
+
+
+# The counters of a run. The first group is of the names themselves: a count above zero there means the tree or the list was not read
+# to its end (whole_list_read false). The second is of what the names were scored on.
+NAME_COUNTERS = ("walk_stopped_by_the_clock", "members_past_the_limit", "directories_not_entered", "walk_errors", "links_to_directories_outside",
+                 "list_lines_over_the_line_limit", "list_rows_without_a_path", "list_lines_of_another_form", "documents_past_the_cap",
+                 "member_list_not_known_whole")
+SIGNAL_COUNTERS = ("links_not_followed", "documents_not_looked_into", "documents_vba_not_told_by_a_limit", "documents_vba_not_told",
+                   "names_not_searched_in_bytes", "hives_past_the_cap", "antivirus_files_not_searched", "files_not_searched_past_the_clock",
+                   "files_searched_only_in_part", "files_not_read_to_their_end", "recent_shortcuts_past_the_cap")
 
 
 def limits():
@@ -616,10 +658,13 @@ def esc_listed(text):
     return "".join(out)
 
 
-def listing_rows(path, deadline, max_members, cov):
-    """The paths of a member list: a TSV whose header has a `path` column (and maybe `type` and `size`), or a path a line. Backslashes are
-    read as separators. Yields (path, size or None). A line is read LINE_MAX bytes at a time at most: a longer one is skipped (it is
-    in limits_hit, and the run is partial), so memory is bounded whatever the list holds."""
+def listing_rows(path, deadline, max_members, cov, unread):
+    """The paths of a member list: a TSV whose header has a `path` column (any case; and maybe `type` and `size`), or a path a line.
+    Backslashes are read as separators. Yields (path, size or None, False). A line is read LINE_MAX bytes at a time at most: a longer one
+    is skipped (it is in limits_hit, and the run is partial), so memory is bounded whatever the list holds. A line outside the declared
+    forms is counted in list_lines_of_another_form, which makes the run partial: one holding a NUL byte (a UTF-16 list) or a carriage
+    return inside (lines ended by CR alone) is not read; a line of a path-a-line list that holds a tab (a TSV with no path column) is
+    read whole as a path and counted. The members limit is met only by a member past it, never by the last one of a list."""
     with open_regular(path) as raw:
         column = size_column = type_column = None
         first = True
@@ -627,9 +672,7 @@ def listing_rows(path, deadline, max_members, cov):
         while True:
             if number % 4096 == 0 and time.monotonic() > deadline:
                 cov["limits_hit"].append("seconds: the clock ran out after %d lines of the list" % number)
-                return
-            if cov["members"] >= max_members:
-                cov["limits_hit"].append("members: the list has more than %d rows" % max_members)
+                unread.add("walk_stopped_by_the_clock", 1, "the clock ran out before the list was read to its end")
                 return
             line = raw.readline(LINE_MAX + 1)
             if not line:
@@ -641,33 +684,62 @@ def listing_rows(path, deadline, max_members, cov):
                     skipped += 1
                     if skipped % 16 == 0 and time.monotonic() > deadline:
                         cov["limits_hit"].append("seconds: the clock ran out inside line %d of the list, which is longer than %d bytes" % (number, LINE_MAX))
+                        unread.add("walk_stopped_by_the_clock", 1, "the clock ran out before the list was read to its end")
                         return
                     line = raw.readline(LINE_MAX + 1)
                 cov["long_lines"] = cov.get("long_lines", 0) + 1
                 if cov["long_lines"] == 1:
                     cov["limits_hit"].append("lines: line %d of the list (and any other line longer than %d bytes) was not read" % (number, LINE_MAX))
+                unread.add("list_lines_over_the_line_limit", 1, "a line of the list longer than %d bytes was not read" % LINE_MAX)
                 first = False
                 continue
-            text = line.rstrip(b"\r\n").decode("utf-8", "surrogateescape")
+            body = line.rstrip(b"\r\n")
+            if first and body.startswith(b"\xef\xbb\xbf"):
+                body = body[3:]                                  # a UTF-8 byte-order mark before the header
+            if b"\x00" in body or b"\r" in body:
+                if first:
+                    first = False
+                    cov["list_form"] = ("not UTF-8 text a line at a time (NUL bytes: a UTF-16 list?)" if b"\x00" in body else
+                                        "lines ended by a carriage return alone") + ": not a form this recipe reads"
+                cov["lines_of_another_form"] = cov.get("lines_of_another_form", 0) + 1
+                unread.add("list_lines_of_another_form", 1, "a line of the list holding a NUL byte (a UTF-16 list?) or a carriage return inside "
+                           "(lines ended by CR alone) was not read: the list is not in a form this recipe reads")
+                continue
+            text = body.decode("utf-8", "surrogateescape")
             if first:
                 first = False
-                cells = text.split("\t")
+                cells = [c.strip().lower() for c in text.split("\t")]
                 if "path" in cells:
                     column = cells.index("path")
                     size_column = cells.index("size") if "size" in cells else None
                     type_column = cells.index("type") if "type" in cells else None
                     cov["list_form"] = "a TSV with a path column (column %d)" % (column + 1)
+                    if cells.count("path") > 1:
+                        cov["list_form"] += ", the first of %d columns named path" % cells.count("path")
+                        unread.add("list_lines_of_another_form", 1, "the list's header names more than one path column: the first was read, the others not")
                     continue
                 cov["list_form"] = "a path a line"
             if not text:
                 continue
             if column is None:
+                if "\t" in text:
+                    cov["lines_of_another_form"] = cov.get("lines_of_another_form", 0) + 1
+                    unread.add("list_lines_of_another_form", 1, "a line of a path-a-line list holds a tab (a TSV with no path column?): it was read whole as one path")
+                if cov["members"] >= max_members:
+                    cov["limits_hit"].append("members: the list has more than %d rows" % max_members)
+                    unread.add("members_past_the_limit", 1, "the list has more than %d rows: the rest were not read" % max_members)
+                    return
                 yield text, None, False
                 continue
             cells = text.split("\t")
             if column >= len(cells):
                 cov["rows_without_a_path"] = cov.get("rows_without_a_path", 0) + 1
+                unread.add("list_rows_without_a_path", 1, "a row of the list has no cell in its path column: its name was not read")
                 continue
+            if cov["members"] >= max_members:
+                cov["limits_hit"].append("members: the list has more than %d rows" % max_members)
+                unread.add("members_past_the_limit", 1, "the list has more than %d rows: the rest were not read" % max_members)
+                return
             if type_column is not None and type_column < len(cells) and cells[type_column] in ("folder", "dir", "directory", "d"):
                 cov["members"] += 1
                 continue
@@ -751,9 +823,11 @@ def list_coverage(path):
     return out
 
 
-def note_error(cov, text):
-    """An error of the walk: every one is counted (errors_total), the first 200 are kept with their words, so memory stays bounded."""
+def note_error(cov, text, unread=None):
+    """An error of the walk: every one is counted (errors_total, and walk_errors), the first 200 are kept with their words, so memory stays bounded."""
     cov["errors_total"] = cov.get("errors_total", 0) + 1
+    if unread is not None:
+        unread.add("walk_errors", 1, "a directory or an entry of the tree could not be read: the names below it were not read")
     if len(cov["errors"]) < 200:
         cov["errors"].append(text)
 
@@ -762,59 +836,104 @@ def _inside(real, top):
     return real == top or real.startswith(top.rstrip(os.sep) + os.sep)
 
 
-def tree_rows(root, deadline, max_members, cov):
-    """Every file below a directory, links never followed: (path relative to it, size, False), and a link by its own name: (path, None, True).
-    The clock is read at least once per 4096 entries of a directory, and a directory is listed up to max_members entries. A link whose
-    target is a directory outside the tree is counted in links_to_directories_outside: what lies below it is not read (only a stat of the
-    target tells it is a directory; nothing in it is listed)."""
-    stack = [""]
+def _kind(entry):
+    """What a directory entry is, from what the listing gave (no stat): link, dir, file or other (a FIFO, a socket, a device)."""
+    if entry.is_symlink():
+        return "link"
+    if entry.is_dir(follow_symlinks=False):
+        return "dir"
+    return "file" if entry.is_file(follow_symlinks=False) else "other"
+
+
+def tree_rows(root, deadline, max_members, cov, unread):
+    """Every file below a directory, links never followed: (path relative to it, size, False), and a link by its own name: (path, None, True);
+    an entry that is neither a file, a directory nor a link (a FIFO, a socket, a device) is a name too, with no size. The clock is read at
+    least once per 4096 entries. A directory's entries are held DIRECTORY_BATCH at a time, as names and kinds (never the listing's own
+    objects), each batch in name order: a directory of millions of entries is read whole in bounded memory. At most MAX_PENDING_DIRECTORIES
+    directories wait to be entered; one found past that is not entered and is counted (directories_not_entered). A link whose target is a
+    directory outside the tree is counted in links_to_directories_outside: what lies below it is not read (only a stat of the target tells
+    it is a directory; nothing in it is listed)."""
+    stack = [("", "")]                # (the parent's path, shared by its subdirectories, and the directory's own name)
     top = os.path.realpath(root)
-    while stack:
-        rel = stack.pop()
-        if time.monotonic() > deadline:
-            cov["limits_hit"].append("seconds: the clock ran out inside %s; %d directories were not entered" % (esc(rel) or "the tree's root", len(stack) + 1))
-            return
-        listed = []
-        try:
-            with os.scandir(os.path.join(root, rel) if rel else root) as entries:
-                for entry in entries:
-                    listed.append(entry)
-                    if len(listed) % 4096 == 0 and time.monotonic() > deadline:
-                        cov["limits_hit"].append("seconds: the clock ran out while %s was listed; %d directories were not entered" % (esc(rel) or "the tree's root", len(stack) + 1))
-                        return
-                    if len(listed) > max_members:
-                        cov["limits_hit"].append("members: the tree has more than %d entries: %s alone has more, and was not listed" % (max_members, esc(rel)[:200] or "the tree's root"))
-                        return
-        except OSError as exc:
-            note_error(cov, "a directory could not be listed (%s): %s" % (getattr(exc, "strerror", None) or exc.__class__.__name__, esc(rel)[:200]))
-            continue
-        listed.sort(key=lambda e: e.name)
-        for number, entry in enumerate(listed, 1):
+    stop = []
+
+    def stopped_by_clock(rel, where):
+        cov["limits_hit"].append("seconds: the clock ran out %s %s; %d directories were not entered" % (where, esc(rel) or "the tree's root", len(stack) + 1))
+        unread.add("walk_stopped_by_the_clock", 1, "the clock ran out before the tree was walked to its end")
+        unread.add("directories_not_entered", len(stack) + 1, "directories of the tree were not entered: the names below them were not read")
+        stop.append(True)
+
+    def batch_rows(rel, batch):
+        batch.sort()
+        for number, (entry_name, kind) in enumerate(batch, 1):
             if number % 4096 == 0 and time.monotonic() > deadline:
-                cov["limits_hit"].append("seconds: the clock ran out inside %s; %d directories were not entered" % (esc(rel) or "the tree's root", len(stack) + 1))
+                stopped_by_clock(rel, "inside")
                 return
-            name = os.path.join(rel, entry.name) if rel else entry.name
+            name = os.path.join(rel, entry_name) if rel else entry_name
+            full = os.path.join(root, name)
+            if kind == "dir":
+                if len(stack) >= MAX_PENDING_DIRECTORIES:
+                    if not cov.get("pending_cut"):
+                        cov["pending_cut"] = True
+                        cov["limits_hit"].append("directories: more than %d directories were waiting to be entered at once; those found past that were not entered" % MAX_PENDING_DIRECTORIES)
+                    unread.add("directories_not_entered", 1, "directories of the tree were not entered: the names below them were not read")
+                else:
+                    stack.append((rel, entry_name))
+                continue
+            if cov["members"] >= max_members:
+                cov["limits_hit"].append("members: the tree has more than %d files" % max_members)
+                unread.add("members_past_the_limit", 1, "the tree has more than %d files: the rest were not read" % max_members)
+                stop.append(True)
+                return
             try:
-                if entry.is_symlink():
+                if kind == "link":
                     cov["links_not_followed"] = cov.get("links_not_followed", 0) + 1
                     try:
-                        if os.path.isdir(entry.path) and not _inside(os.path.realpath(entry.path), top):
+                        if os.path.isdir(full) and not _inside(os.path.realpath(full), top):
                             cov["links_to_directories_outside"] = cov.get("links_to_directories_outside", 0) + 1
+                            unread.add("links_to_directories_outside", 1, "a link in the tree leads to a directory outside it, which was not entered: the names below it were not read")
                     except (OSError, ValueError):
                         pass
-                    if cov["members"] >= max_members:
-                        cov["limits_hit"].append("members: the tree has more than %d files" % max_members)
-                        return
                     yield name, None, True
-                elif entry.is_dir(follow_symlinks=False):
-                    stack.append(name)
-                elif entry.is_file(follow_symlinks=False):
-                    if cov["members"] >= max_members:
-                        cov["limits_hit"].append("members: the tree has more than %d files" % max_members)
-                        return
-                    yield name, entry.stat(follow_symlinks=False).st_size, False
+                elif kind == "file":
+                    yield name, os.lstat(full).st_size, False
+                else:
+                    yield name, None, False
             except OSError:
-                note_error(cov, "an entry could not be read: %s" % esc(name)[:200])
+                note_error(cov, "an entry could not be read: %s" % esc(name)[:200], unread)
+
+    while stack:
+        parent, own = stack.pop()
+        rel = os.path.join(parent, own) if parent else own
+        if time.monotonic() > deadline:
+            stopped_by_clock(rel, "before")
+            return
+        try:
+            with os.scandir(os.path.join(root, rel) if rel else root) as entries:
+                batch, number, batched = [], 0, False
+                for entry in entries:
+                    number += 1
+                    if number % 4096 == 0 and time.monotonic() > deadline:
+                        stopped_by_clock(rel, "while listing")
+                        return
+                    try:
+                        batch.append((entry.name, _kind(entry)))
+                    except OSError:
+                        note_error(cov, "an entry could not be read: %s" % esc(os.path.join(rel, entry.name))[:200], unread)
+                    if len(batch) >= DIRECTORY_BATCH:
+                        if not batched:
+                            batched = True
+                            cov["directories_read_in_batches"] = cov.get("directories_read_in_batches", 0) + 1
+                        yield from batch_rows(rel, batch)
+                        batch = []
+                        if stop:
+                            return
+                yield from batch_rows(rel, batch)
+                if stop:
+                    return
+        except OSError as exc:
+            note_error(cov, "a directory could not be listed (%s): %s" % (getattr(exc, "strerror", None) or exc.__class__.__name__, esc(rel)[:200]), unread)
+            continue
 
 
 def zip_vba(fh, size, deadline):
@@ -912,8 +1031,10 @@ def name_index(names):
     """The names (lower-case file names, each ending in its suffix) as byte patterns, by the bytes of their suffix: {suffix bytes: (the
     pattern lengths, {pattern: name})}, UTF-16LE and UTF-8; and the longest pattern. A name occurs in a text exactly when, at some place
     where its suffix ends, the bytes of the name's length that end there are the name: so a search costs a find of each suffix and a few
-    look-ups per place, whatever the number of names."""
+    look-ups per place, whatever the number of names. The third value counts the names that are not text (a name of bytes that are not
+    UTF-8, kept as surrogates): they cannot be searched for as UTF-16LE or UTF-8, and the caller counts them as not searched."""
     index, longest = {}, 0
+    unencodable = 0                   # names that are not text (bytes no encoding names): not searched for, and counted
     for name in names:
         dot = name.rfind(".")
         if dot <= 0:
@@ -922,19 +1043,20 @@ def name_index(names):
             try:
                 pattern, suffix = name.encode(encoding), name[dot:].encode(encoding)
             except UnicodeError:
+                unencodable += encoding == "utf-8"
                 continue
             lengths, patterns = index.setdefault(suffix, (set(), {}))
             lengths.add(len(pattern))
             patterns[pattern] = name
             longest = max(longest, len(pattern))
-    return {suffix: (sorted(lengths), patterns) for suffix, (lengths, patterns) in index.items()}, longest
+    return {suffix: (sorted(lengths), patterns) for suffix, (lengths, patterns) in index.items()}, longest, unencodable
 
 
 def names_in_file(path, index, deadline):
     """Which of the names of a name_index occur in a file's bytes as UTF-16LE or UTF-8, case folded for ASCII: a set, and why the whole
     file was not searched (None when it was; "seconds", "size" past SCAN_BYTES, or "error"). The clock is read once per CLOCK_EVERY places a suffix occurs, so no block can hold the run past it."""
     found = set()
-    by_suffix, longest = index
+    by_suffix, longest = index[0], index[1]
     steps = 0
     try:
         with open_regular(path) as fh:
@@ -1058,11 +1180,13 @@ def run(path, out_dir):
         print(json.dumps({"ok": False, "status": "partial", "interrupted": True, "signal": signum, "members": cov["members"]}), flush=True)
     install_signal_handlers(_stopped)
 
+    unread = Unread(*NAME_COUNTERS, *SIGNAL_COUNTERS)
     documents, recent, hives, antivirus, prefetch, linked = [], collections.defaultdict(set), {}, [], set(), set()
+    hives_seen, recent_pairs = 0, 0
     applications = {a.lower() for a in APPLICATION.values()}
     document_suffixes = set(MACRO_NAMES) | set(LEGACY_NAMES) | (set(PLAIN_OOXML) if is_tree else set())
     antivirus_seen, source_limits = 0, []      # a cut of a signal's source: in limits_hit, but the names were still all read
-    rows = tree_rows(path, deadline, max_members, cov) if is_tree else listing_rows(path, deadline, max_members, cov)
+    rows = tree_rows(path, deadline, max_members, cov, unread) if is_tree else listing_rows(path, deadline, max_members, cov, unread)
     try:
         for raw, size, link in rows:
             cov["members"] += 1
@@ -1082,36 +1206,58 @@ def run(path, out_dir):
                         linked.add(raw)
                 else:
                     cov["limits_hit"].append("documents: more than %d macro-capable documents; the list was not read further and the rest were not scored" % MAX_DOCUMENTS)
+                    unread.add("documents_past_the_cap", 1, "more than %d macro-capable documents: the list was not read further" % MAX_DOCUMENTS)
                     break
             elif suffix == ".lnk" and ("/microsoft/windows/recent/" in lower or "/microsoft/office/recent/" in lower):
                 shortcut = base[:-4]
                 dot = shortcut.rfind(".")
                 if dot > 0 and shortcut[dot:] in document_suffixes:      # only a shortcut of a document can be a signal
-                    if shortcut in recent or len(recent) < MAX_RECENT:
+                    if owner in recent.get(shortcut, ()):
+                        pass
+                    elif recent_pairs < MAX_RECENT:
                         recent[shortcut].add(owner)
-                    elif not cov.get("recent_cut"):
-                        cov["recent_cut"] = True
-                        source_limits.append("recent: more than %d Recent shortcuts of documents; the names of the rest were not kept" % MAX_RECENT)
+                        recent_pairs += 1
+                    else:
+                        if not cov.get("recent_cut"):
+                            cov["recent_cut"] = True
+                            source_limits.append("recent: more than %d Recent shortcuts of documents; the names of the rest were not kept" % MAX_RECENT)
+                        unread.add("recent_shortcuts_past_the_cap", 1, "more than %d Recent shortcuts of documents: the names of the rest were not kept as a signal" % MAX_RECENT)
             elif base == "ntuser.dat" and owner and lower.endswith("/%s/ntuser.dat" % owner) and not link:
-                hives[owner] = raw
+                # Only a tree's hives are searched (a member list has names only): a list keeps none of them, and counts them.
+                hives_seen += 1
+                if is_tree:
+                    if owner in hives or len(hives) < MAX_HIVES:
+                        hives[owner] = raw
+                    else:
+                        if not cov.get("hives_cut"):
+                            cov["hives_cut"] = True
+                            source_limits.append("hives: more than %d profiles' NTUSER.DAT; the names were searched for in the first %d only" % (MAX_HIVES, MAX_HIVES))
+                        unread.add("hives_past_the_cap", 1, "more than %d profiles' NTUSER.DAT: the rest were not searched for the names" % MAX_HIVES)
             elif suffix == ".pf" and "/prefetch/" in lower and base.split("-")[0] in applications:
                 prefetch.add(base.split("-")[0])
             if ANTIVIRUS.search(lower) and not link:
                 antivirus_seen += 1
                 if len(antivirus) < MAX_ANTIVIRUS:
                     antivirus.append(raw)
-                elif antivirus_seen == MAX_ANTIVIRUS + 1:
+                elif antivirus_seen == MAX_ANTIVIRUS + 1 and is_tree:
                     source_limits.append("antivirus: more than %d antivirus logs and detection files; the names were searched for in the first %d only" % (MAX_ANTIVIRUS, MAX_ANTIVIRUS))
     except (OSError, ValueError) as exc:
         cov["errors"].append("the %s could not be read to its end: %s" % ("tree" if is_tree else "list", getattr(exc, "strerror", None) or exc.__class__.__name__))
-    if antivirus_seen > MAX_ANTIVIRUS:
+        unread.add("walk_errors", 1, "the %s could not be read to its end" % ("tree" if is_tree else "list"))
+    if antivirus_seen > MAX_ANTIVIRUS and is_tree:
         cov["antivirus_files_not_searched"] = antivirus_seen - MAX_ANTIVIRUS
+        unread.add("antivirus_files_not_searched", antivirus_seen - MAX_ANTIVIRUS, "more than %d antivirus logs and detection files: the rest were not searched for the names" % MAX_ANTIVIRUS)
+    if cov.get("links_not_followed"):
+        unread.add("links_not_followed", cov["links_not_followed"], "%d link(s) in the tree were not followed: each is ranked by its own name only, and what it points at was not read" % cov["links_not_followed"])
     outside = cov.get("links_to_directories_outside", 0)
-    read_to_the_end = not cov["limits_hit"] and not cov["errors"] and not outside
     # A member list is the whole of its object only when its own coverage record says so: a list cut by the recipe that wrote it (a
     # missing segment, a limit) is read to its end here and is still not the whole member list.
     list_cov = None if is_tree else list_coverage(path)
-    whole = read_to_the_end and (list_cov is None or list_cov["status"] == "complete")
+    read_to_the_end = not any(unread.counts[n] for n in NAME_COUNTERS)
+    if list_cov is not None and list_cov["status"] != "complete":
+        unread.add("member_list_not_known_whole", 1, "the member list itself is not known to be whole: its coverage record (%s) says %s%s" % (
+            esc(os.path.basename(list_cov["read_from"])), list_cov["status"], ": %s" % list_cov["why"][0] if list_cov.get("why") else ""))
+    whole = not any(unread.counts[n] for n in NAME_COUNTERS)
     cov["limits_hit"] += source_limits
 
     # What the files themselves say, in a tree: a VBA project inside, the name in the profile's hive, the name in an antivirus log.
@@ -1122,6 +1268,7 @@ def run(path, out_dir):
         for number, (raw, _lower, _base, suffix, _size, _owner) in enumerate(documents):
             if time.monotonic() > deadline:
                 cov["limits_hit"].append("seconds: the clock ran out before %d of the %d documents were looked into for a VBA project" % (len(documents) - number, len(documents)))
+                unread.add("documents_not_looked_into", len(documents) - number, "the clock ran out before every document was looked into for a VBA project")
                 break
             if raw in linked:
                 vba[raw] = (None, "it is a link, which is not followed: only its name was read")
@@ -1131,9 +1278,11 @@ def run(path, out_dir):
             if has is None:
                 if limit:
                     vba_limits[limit] += 1
+                    unread.add("documents_vba_not_told_by_a_limit", 1, "whether a VBA project is inside was not told for a document a limit of the recipe stopped (a size, a ZIP directory's records, the clock)")
                 else:
                     not_told += 1
                     first_not_told = first_not_told or "%s (%s)" % (esc(raw)[:200], how)
+                    unread.add("documents_vba_not_told", 1, "whether a VBA project is inside could not be told for a document, ranked with that said in its row")
         for limit, count in sorted(vba_limits.items()):
             cov["limits_hit"].append("%s (%d document%s: ranked, with whether a VBA project is inside not told)" % (limit, count, "" if count == 1 else "s"))
         if not_told:
@@ -1142,22 +1291,38 @@ def run(path, out_dir):
         # (or was not looked into) is ranked, and says so.
         documents = [d for d in documents if d[3] not in PLAIN_OOXML or vba.get(d[0], (None,))[0] is not False]
         index = name_index(sorted({d[2] for d in documents}))
+        if index[2] and (hives or antivirus):
+            cov["names_not_searched_in_bytes"] = index[2]
+            read_notes.append("%d document name(s) are not text (bytes that are not UTF-8): they were not searched for in the hives and the antivirus files" % index[2])
+            unread.add("names_not_searched_in_bytes", index[2], "document names that are not text (bytes that are not UTF-8) were not searched for in the hives and the antivirus files")
         searched = collections.Counter()
-        for owner, hive in sorted(hives.items()):
-            found, cut = names_in_file(os.path.join(path, hive), index, deadline)
-            hive_names[owner] = found
-            if cut == "error":
-                read_notes.append("the registry hive of %s could not be read to its end" % esc(owner))
-            elif cut:
-                searched[cut] += 1
-        for log in antivirus:
-            if os.path.isfile(os.path.join(path, log)) and not os.path.islink(os.path.join(path, log)):
-                found, cut = names_in_file(os.path.join(path, log), index, deadline)
+        # Every file searched reads the clock before it is opened: a run of many hives or logs ends at its seconds, and the files it did not
+        # reach are counted, never passed over in silence.
+        sources = [("hive", owner, hive) for owner, hive in sorted(hives.items())] + [("antivirus", None, log) for log in antivirus]
+        for number, (what, owner, rel) in enumerate(sources):
+            if time.monotonic() > deadline:
+                searched["seconds"] += len(sources) - number
+                unread.add("files_not_searched_past_the_clock", len(sources) - number, "the clock ran out before every registry hive and antivirus file was searched for the names")
+                break
+            full = os.path.join(path, rel)
+            if what == "antivirus" and (not os.path.isfile(full) or os.path.islink(full)):
+                read_notes.append("an antivirus file is no longer a regular file and was not searched: %s" % esc(rel)[:200])
+                unread.add("files_not_read_to_their_end", 1, "a registry hive or an antivirus file could not be read to its end")
+                continue
+            found, cut = names_in_file(full, index, deadline)
+            if what == "hive":
+                hive_names[owner] = found
+            else:
                 antivirus_names |= found
-                if cut == "error":
-                    read_notes.append("an antivirus file could not be read to its end: %s" % esc(log)[:200])
-                elif cut:
-                    searched[cut] += 1
+            if cut == "error":
+                read_notes.append("the registry hive of %s could not be read to its end" % esc(owner) if what == "hive" else "an antivirus file could not be read to its end: %s" % esc(rel)[:200])
+                unread.add("files_not_read_to_their_end", 1, "a registry hive or an antivirus file could not be read to its end")
+            elif cut == "seconds":
+                searched["seconds"] += 1
+                unread.add("files_not_searched_past_the_clock", 1, "the clock ran out before every registry hive and antivirus file was searched for the names")
+            elif cut == "size":
+                searched["size"] += 1
+                unread.add("files_searched_only_in_part", 1, "a registry hive or an antivirus file over %d bytes was searched only that far for the names" % SCAN_BYTES)
         if searched["seconds"]:
             cov["limits_hit"].append("seconds: the clock ran out before %d registry hive(s) or antivirus file(s) were searched to their end for the names" % searched["seconds"])
         if searched["size"]:
@@ -1241,7 +1406,11 @@ def run(path, out_dir):
         read_notes.append("%d link(s) in the tree were not followed: each is ranked by its own name only, and what it points at was not read" % cov["links_not_followed"])
     if outside:
         read_notes.insert(0, "%d link(s) in the tree lead to a directory outside it, which was not entered: the file names below them were not read" % outside)
-    cov["sources"] = {"recent_shortcuts": sum(len(v) for v in recent.values()), "registry_hives": len(hives), "antivirus_files": len(antivirus), "prefetch_applications": sorted(prefetch & {a.lower() for a in APPLICATION.values()})}
+    if cov.get("rows_without_a_path"):
+        read_notes.append("%d row(s) of the list have no cell in its path column: their names were not read" % cov["rows_without_a_path"])
+    if cov.get("lines_of_another_form"):
+        read_notes.append("%d line(s) of the list are outside the forms this recipe reads (%s)" % (cov["lines_of_another_form"], cov.get("list_form", "a TSV with a path column, or a path a line")))
+    cov["sources"] = {"recent_shortcuts": recent_pairs, "registry_hives": len(hives) if is_tree else hives_seen, "antivirus_files": len(antivirus), "prefetch_applications": sorted(prefetch & {a.lower() for a in APPLICATION.values()})}
     if read_notes:
         cov["not_read_to_the_end"] = read_notes[:20]
     cov["covered"] = ("%s file name%s of the %s (%d), ranked for macro-capable Office documents by their name%s, their folder, a Recent shortcut of the same name and the document application's Prefetch file%s"
@@ -1250,17 +1419,20 @@ def run(path, out_dir):
     cov["not_covered"] = ("no macro was read or run and no document was opened as a document; the registry key, the event record and the Prefetch file's list were not parsed (regkv, evtx_query and prefetch_mam of the Windows pack read them); "
                           + ("a member list has names only: nothing inside a file was read, so a macro in a file named .docx, the registry and the antivirus logs are not in the ranking; " if not is_tree else "")
                           + "other first stages (a shortcut, a script, an installer, a disc image, a OneNote file) are not ranked; a name that occurs in a hive or a log is a lead to the record, not the record")
-    status = "complete" if whole and not read_notes and not cov["limits_hit"] and not cov["errors"] else "partial"
+    # The status is derived from the one list of what was not read or not judged, and from nothing else.
+    status = "partial" if unread else "complete"
     cov["status"] = status
+    cov["not_read_or_judged"] = dict(unread.counts)
     cov["status_basis"] = ("the whole %s was read (%d members)%s and every macro-capable document in it is ranked (%d)" % (
                                "tree" if is_tree else "member list", cov["members"], "" if is_tree else ", its own coverage record says the list is complete,", len(scored))
                            if status == "complete" else
-                           "the ranking is of part of what was asked: %s" % "; ".join((cov["limits_hit"] + cov["errors"] + read_notes)[:5]))
+                           "the ranking is of part of what was asked: %s" % "; ".join(unread.reasons()[:5]))
     cov["seconds"] = round(time.monotonic() - started, 2)
     _write_json_whole(os.path.join(out_dir, "coverage.json"), cov, indent=2)
     _write_text_whole(os.path.join(out_dir, "index.tsv"),
                       "candidates.tsv\tfirst-stage candidates (%d), ranked: rank, score, path, kind, size, profile, signals; each signal says what it adds and what was not read\n" % len(scored))
     print_answer({"ok": True, "status": status, "members": cov["members"], "candidates": len(scored), "whole_list_read": whole,
+                  "not_read_or_judged": dict(unread.counts),
                   **({"list_coverage": list_cov["status"]} if list_cov is not None else {}), "rule": cov["rule"],
                   "first": [{"rank": i + 1, "score": s[0], "path": shown(s[1])[:300], "signals": len(s[5])} for i, s in enumerate(scored[:5])], "status_basis": cov["status_basis"]})
     return 0

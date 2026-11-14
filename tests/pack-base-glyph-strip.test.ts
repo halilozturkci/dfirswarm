@@ -13,7 +13,7 @@ import { chmod, lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { CLEAN } from "./host-gates.ts";
-import { call, CFB, filesBelow, greyPng, withRun, type Doc } from "./pack-base-media-fixture.ts";
+import { call, CFB, filesBelow, greyPng, ROOT, withRun, type Doc } from "./pack-base-media-fixture.ts";
 import { spawnSync } from "node:child_process";
 import { PYTHON3 } from "./host-gates.ts";
 
@@ -147,7 +147,7 @@ test("an OCR engine is a second reader when the image holds one, and the answer 
     const withIt = await call("glyph_strip", run, args, { out, path: await engine(run, ocrText) });
     assert.equal(withIt.doc.status, CLEAN, withIt.doc.status_basis);
     // The OCR text's length is not in the answer either: only whether its characters besides spaces are as many as the ink runs.
-    assert.deepEqual(withIt.doc.ocr, { available: true, engine: "tesseract 0.0-standin", read: true, text_file: "store/jobs/j000001/out/glyph_strip-2/ocr.txt" });
+    assert.deepEqual(withIt.doc.ocr, { available: true, engine: "tesseract 0.0-standin", read: true, read_from: "the crop as this tool decoded it (its first frame, grey), not the file", text_file: "store/jobs/j000001/out/glyph_strip-2/ocr.txt" });
     assert.deepEqual(Object.keys(withIt.doc.readers[0]).sort(), ["agrees_with_count", "read", "reader"], "the OCR reader's entry carries no length");
     assert.ok(!withIt.stdout.includes('"same_length"'));
     assert.deepEqual(withIt.doc.readers.map((x: Doc) => [x.reader, x.agrees_with_count ?? null]), [["tesseract 0.0-standin", true], ["glyph_strip (this tool)", null], ["the caller", true]]);
@@ -437,5 +437,77 @@ first.save(sys.argv[2], save_all=True, append_images=[second], duration=100)
     assert.equal(two.doc.count, 10, two.stdout.slice(0, 600));
     assert.equal(two.doc.status, "partial");
     assert.match(two.doc.frames_not_read, /holds frames after the first, and they were not read/);
+  });
+});
+
+test("the OCR engine reads the crop as this tool decoded it, never the file; an engine ended by a signal is partial; a lone surrogate is refused; every read-apart pair is counted", async () => {
+  await withRun(async (run, out) => {
+    await writeFile(join(run, "inputs/case files/line one.png"), line(TRUTH));
+    const args = { image: "inputs/case files/line one.png", reading: "x`7IO a`I0p", uncertain: [{ at: 1, among: "'`" }, { at: 3, among: "lI" }] };
+    // A stand-in engine that keeps what it was given: the path, and a copy of the file.
+    const bin = join(run, "work", "seen");
+    await mkdir(bin, { recursive: true });
+    await writeFile(join(bin, "tesseract"), `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "tesseract 0.0-standin"; exit 0; fi\nprintf '%s' "$1" > "$(dirname "$0")/path.txt"\ncp "$1" "$(dirname "$0")/given.png"\necho "the line"\n`);
+    await chmod(join(bin, "tesseract"), 0o755);
+    const r = await call("glyph_strip", run, args, { out, path: `${bin}:/usr/bin:/bin` });
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+    assert.equal(r.doc.ocr.read, true, JSON.stringify(r.doc.ocr));
+    const given = await readFile(join(bin, "given.png"));
+    const path = await readFile(join(bin, "path.txt"), "utf8");
+    assert.ok(!path.endsWith("line one.png"), `the engine was given ${path}, not the evidence file`);
+    assert.match(path, /\.ocr-input\.png$/);
+    assert.deepEqual([given.readUInt32BE(16), given.readUInt32BE(20), given[24], given[25]], [r.doc.pixels.split(" x ").map(Number)[0], r.doc.pixels.split(" x ").map(Number)[1], 8, 0], "an 8-bit grey PNG of the crop's size");
+    assert.ok(!filesBelow(out).some((f) => f.includes(".ocr-input")), "the decoded crop given to the engine is removed after");
+    // An engine ended by a signal made no reading: partial, and the signal is said.
+    await writeFile(join(bin, "tesseract"), `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "tesseract 0.0-standin"; exit 0; fi\nkill -9 $$\n`);
+    const killed = await call("glyph_strip", run, args, { out, path: `${bin}:/usr/bin:/bin` });
+    assert.equal(killed.doc.status, "partial", killed.doc.status_basis);
+    assert.equal(killed.doc.not_read_or_judged.ocr_not_read, 1);
+    assert.match(killed.doc.ocr.said, /ended by signal 9/);
+    // A lone surrogate in among or in a class is refused as one JSON document, not an unexpected failure.
+    for (const bad of [{ ...args, uncertain: [{ at: 3, among: "l\ud800" }], ocr: "none" }, { ...args, uncertain: undefined, classes: ["l\udfff"], ocr: "none" }]) {
+      const refused = await call("glyph_strip", run, bad, { out });
+      assert.equal(refused.code, 1, refused.stdout + refused.stderr);
+      assert.equal(refused.doc.status, "failed");
+      assert.match(refused.doc.error, /among must be|classes must be/);
+    }
+    // Fifteen l's drawn alike, read as eight l's and seven I's: 56 pairs are one drawing read apart (the answer lists 50 and counts them
+    // all), and the positions read alike are tied, two choices of two.
+    await writeFile(join(run, "inputs/case files/many.png"), line("l".repeat(15)));
+    const reading = "lIlIlIlIlIlIlIl";
+    const many = await call("glyph_strip", run, { image: "inputs/case files/many.png", reading, uncertain: Array.from({ length: 15 }, (_, at) => ({ at, among: "lI" })), ocr: "none" }, { out });
+    assert.equal(many.code, 0, many.stdout + many.stderr);
+    const c = many.doc.candidates as Doc;
+    assert.deepEqual([c.same_drawing_read_apart.length, c.same_drawing_read_apart_total, c.candidate_set_size, c.candidates_written], [50, 56, 4, 4]);
+    assert.equal(many.doc.not_read_or_judged.read_apart_pairs_not_listed, 6);
+    assert.equal(many.doc.status, "partial");
+  });
+});
+
+test("a JPEG crop cut short and given its end marker back is damaged and partial; the whole one is not", { skip: pillowHere(ROOT) ? false : "Pillow does not import here: the tool reads no JPEG without it" }, async () => {
+  await withRun(async (run, out) => {
+    // The line in the top third; the rest light grey, so that the cut part holds no ink.
+    await writeFile(join(run, "work/s1/line.png"), line(TRUTH));
+    withPillow(String.raw`
+import io, sys
+from PIL import Image
+d = sys.argv[1]
+top = Image.open(d + "/line.png").convert("L")
+im = Image.new("L", (top.width, top.height * 3), 235); im.paste(top, (0, 0))
+for name, kw in (("base", {}), ("prog", {"progressive": True})):
+    b = io.BytesIO(); im.save(b, "JPEG", quality=95, **kw); data = b.getvalue()
+    open(d + "/" + name + ".jpg", "wb").write(data)
+    open(d + "/" + name + " cut.jpg", "wb").write(data[:int(len(data) * 0.6)] + b"\xff\xd9")
+    Image.open(d + "/" + name + " cut.jpg").load()
+`, [join(run, "work/s1")], run);
+    for (const name of ["base", "prog"]) {
+      const whole = await call("glyph_strip", run, { image: `work/s1/${name}.jpg`, ocr: "none" }, { out });
+      assert.equal(whole.doc.status, "complete", `${name}: ${whole.doc.status_basis}`);
+      assert.equal(whole.doc.not_read_or_judged.picture_damaged, 0);
+      const cut = await call("glyph_strip", run, { image: `work/s1/${name} cut.jpg`, ocr: "none" }, { out });
+      assert.equal(cut.doc.status, "partial", `${name}: ${cut.doc.status_basis}`);
+      assert.equal(cut.doc.not_read_or_judged.picture_damaged, 1);
+      assert.match(cut.doc.picture_damaged, /coded data ends|cut|corrupt/i, name);
+    }
   });
 });

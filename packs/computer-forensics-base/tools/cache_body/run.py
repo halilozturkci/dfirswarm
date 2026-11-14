@@ -434,8 +434,8 @@ def _unexpected_tool(kind, value, _tb):
 sys.excepthook = _unexpected_tool
 
 
-TOOL = {"name": "cache_body", "version": 3}
-PARSER = "cache_body/3"
+TOOL = {"name": "cache_body", "version": 4}
+PARSER = "cache_body/4"
 DEFAULT_SECONDS, MAX_SECONDS = 100, 110         # under the manifest's 120
 DEFAULT_BYTES, MAX_BYTES = 256 << 20, 2 << 30   # the most one body may be when decoded
 MAX_RATIO = 2000                                # decoded bytes for one stored byte, past the first MiB
@@ -706,6 +706,30 @@ class Clock(Exception):
 def tick():
     if out_of_time():
         raise Clock()
+
+
+class Unread:
+    """The one list of what this call did not read or did not judge: every place that leaves something unread or unjudged counts it here,
+    under a name declared up front, with the sentence that says it. The status is derived from this list alone (a failed call aside): a
+    count above zero makes the answer partial. The answer prints every counter, zeros included (`not_read_or_judged`)."""
+
+    def __init__(self, *names):
+        self.counts = {name: 0 for name in names}
+        self.said = {}
+
+    def add(self, name, count=1, sentence=None):
+        if name not in self.counts:
+            raise KeyError(name)
+        if count:
+            self.counts[name] += count
+            if sentence and name not in self.said:
+                self.said[name] = sentence
+
+    def __bool__(self):
+        return any(self.counts.values())
+
+    def reasons(self):
+        return [self.said.get(name, name.replace("_", " ")) for name, count in self.counts.items() if count]
 
 
 class Unreadable(Exception):
@@ -1246,6 +1270,7 @@ class BlockCache:
             for slot in struct.unpack("<%dI" % (len(table) // 4), table):
                 address, hops = slot, 0
                 while address:
+                    tick()
                     if address in seen or hops > 10000:
                         problems["chains_cut"] += 1
                         break
@@ -1350,10 +1375,17 @@ def main():
     place = Place("cache_body")
     cache = None
     opened = []
-    reasons = []
+    unread = Unread("list_stopped_by_the_clock", "chains_cut", "entries_unreadable", "entries_past_the_limit", "index_table_cut",
+                    "entries_the_index_count_disagrees_by", "list_streams_unreadable", "structure_unreadable", "sparse_entry",
+                    "key_sha256_mismatch", "key_or_headers_not_written", "entry_without_a_check", "response_truncated",
+                    "content_length_disagrees", "content_length_not_one_number", "codings_not_decoded", "decoded_by_signature_only",
+                    "coding_not_decodable_here", "body_decode_error", "body_not_written_by_the_clock", "body_unreadable", "body_not_written",
+                    "body_rest_not_read_by_the_clock", "body_rest_unreadable", "bytes_after_the_stream_end", "crc32_mismatch")
 
     def finish(answer, status, basis):
-        answer.update({"status": status, "complete": status == "complete", "status_basis": basis, "output_directory": place.shown, "seconds": round(time.monotonic() - started, 2)})
+        reasons = unread.reasons()
+        answer.update({"status": status, "complete": status == "complete", "status_basis": basis, "not_read_or_judged": dict(unread.counts),
+                       "output_directory": place.shown, "seconds": round(time.monotonic() - started, 2)})
         if reasons:
             answer["partial_reasons"] = reasons
         if place.note():
@@ -1379,7 +1411,10 @@ def main():
                             if problem:
                                 problems["streams_unreadable"] = problems.get("streams_unreadable", 0) + 1
                                 problems.setdefault("first_stream_unreadable", "entry %d (0x%08x): %s" % (n, entry["address"], problem))
-                        where = cache.locate(entry["addresses"][1])[0] if entry["sizes"][1] and entry["addresses"][1] & 0x80000000 else ""
+                        try:
+                            where = cache.locate(entry["addresses"][1])[0] if entry["sizes"][1] and entry["addresses"][1] & 0x80000000 else ""
+                        except Unreadable:
+                            where = ""         # an address of no data file: counted above, as a stream that does not read
                         yield ("%d\t0x%08x\t%s\t%s\t%d\t%d\t%d\t%d\t%s\t%s\t%s\n" % (
                             n, entry["address"], ("normal", "evicted", "doomed")[entry["state"]], webkit_time(entry["created_raw"]) or "", entry["created_raw"], len(entry["key"]),
                             entry["sizes"][0], entry["sizes"][1], where, "parent" if entry["flags"] & 1 else "child" if entry["flags"] & 2 else "", esc(entry["key"]))).encode("utf-8")
@@ -1390,21 +1425,27 @@ def main():
                 except Clock:
                     listed, stopped = None, "the clock ran out after %d entries; the list was not kept" % count[0]
                 if stopped:
-                    reasons.append(stopped)
-                if problems["chains_cut"] or problems["entries_unreadable"] or problems.get("stopped_at_limit") or getattr(cache, "table_cut", False):
-                    reasons.append("%d chain(s) were cut at a loop, %d entry record(s) did not read as entries%s%s: what they led to is not in the list" % (
-                        problems["chains_cut"], problems["entries_unreadable"], ", the list stopped at %d entries" % MAX_ENTRIES if problems.get("stopped_at_limit") else "",
-                        ", the index is shorter than its table" if getattr(cache, "table_cut", False) else ""))
-                if problems.get("streams_unreadable"):
-                    reasons.append("%d stream(s) of listed entries point where the cache holds no readable bytes (the first: %s): those entries are listed, "
-                                   "and their headers or body cannot be taken" % (problems["streams_unreadable"], problems["first_stream_unreadable"]))
+                    unread.add("list_stopped_by_the_clock", 1, stopped)
+                unread.add("chains_cut", problems["chains_cut"], "%d chain(s) of the index's hash table were cut at a loop or at 10000 hops: what they led to is not in the list" % problems["chains_cut"])
+                unread.add("entries_unreadable", problems["entries_unreadable"], "%d entry record(s) did not read as entries (the first: %s): what they led to is not in the list" % (
+                    problems["entries_unreadable"], problems.get("first_unreadable")))
+                unread.add("entries_past_the_limit", 1 if problems.get("stopped_at_limit") else 0, "the list stopped at %d entries: the entries past them are not in the list" % MAX_ENTRIES)
+                unread.add("index_table_cut", 1 if getattr(cache, "table_cut", False) else 0, "the index is shorter than its table (or its table length is not one): the slots past it were not read")
+                if not stopped and not problems.get("stopped_at_limit") and cache.entries_said != count[0]:
+                    unread.add("entries_the_index_count_disagrees_by", abs(cache.entries_said - count[0]),
+                               "the index's own count says %d entries and its hash table reaches %d: %s" % (
+                                   cache.entries_said, count[0], "entries the count holds are not reached by the table (unlinked, or in a chain that is damaged)"
+                                   if cache.entries_said > count[0] else "the count is behind the table (a cache not closed cleanly): which of them the browser held is not settled here"))
+                unread.add("list_streams_unreadable", problems.get("streams_unreadable", 0),
+                           "%d stream(s) of listed entries point where the cache holds no readable bytes (the first: %s): those entries are listed, "
+                           "and their headers or body cannot be taken" % (problems.get("streams_unreadable", 0), problems.get("first_stream_unreadable")))
                 answer = {**common, "mode": "list", "entries": count[0], "entries_the_index_says": cache.entries_said, **({"entries_file": listed} if listed else {}),
                           "columns": ["n", "address", "state", "created_utc", "created_raw", "key_bytes", "headers_bytes", "body_bytes", "body_in", "sparse", "key"],
                           "created": "created_raw is microseconds since 1601-01-01 UTC, as the cache keeps it; created_utc is that value as ISO 8601",
                           "key_in_answer": False, "problems": problems}
-                finish(answer, "failed" if stopped else "partial" if reasons else "complete",
-                       ("every entry the index's hash table reaches was read and listed: %d (the index's own count says %d)" % (count[0], cache.entries_said)) if not reasons else
-                       "the list is not whole: %s" % "; ".join(reasons))
+                finish(answer, "failed" if stopped else "partial" if unread else "complete",
+                       ("every entry the index's hash table reaches was read and listed: %d, the index's own count" % count[0]) if not unread else
+                       "the list is not whole: %s" % "; ".join(unread.reasons()))
                 return
             entry = None
             if address is not None:
@@ -1431,7 +1472,7 @@ def main():
             body = cache.stream(entry, 1)
             if entry["flags"] & 3:
                 source["sparse"] = "parent" if entry["flags"] & 1 else "child"
-                reasons.append("the entry is a sparse %s: a sparse body is kept in child entries and is not put together here" % source["sparse"])
+                unread.add("sparse_entry", 1, "the entry is a sparse %s: a sparse body is kept in child entries and is not put together here" % source["sparse"])
             body_fd, body_offset, body_length = (body[0], body[1], body[2]) if body else (None, 0, 0)
             if body:
                 source["body_in"] = body[3]
@@ -1446,7 +1487,7 @@ def main():
             if "key_sha256_matches" in entry:
                 source["key_sha256_matches"] = entry["key_sha256_matches"]
                 if not entry["key_sha256_matches"]:
-                    reasons.append("the entry's key does not match the SHA-256 the entry records: the key or its length in the header is damaged, so where "
+                    unread.add("key_sha256_mismatch", 1, "the entry's key does not match the SHA-256 the entry records: the key or its length in the header is damaged, so where "
                                    "the body begins is not certain and the body file may not be the stored body")
             key, stream0 = entry["key"], entry["stream0"]
             body_fd, body_offset, body_length, expected_crc = fd, entry["body_offset"], entry["body_stored_bytes"], entry["body_crc32"]
@@ -1456,7 +1497,7 @@ def main():
             key, stream0, source = None, b"", {}
             body_fd, body_offset, body_length, expected_crc = fd, 0, size, None
     except Unreadable as exc:
-        reasons.append(str(exc))
+        unread.add("structure_unreadable", 1, str(exc))
         finish({**common, "error": "the cache structure did not read: %s" % exc}, "failed", "the structure did not read as the format says (%s): no body was written, and that is not an empty entry" % exc)
         return
     except Clock:
@@ -1478,21 +1519,21 @@ def main():
             answer["response"] = {"said": "no HTTP header block was found in the entry's first stream (%d bytes)" % len(stream0)}
     except OSError as exc:
         files["write_error"] = "the key or the headers could not be written (%s)" % describe(exc)
-        reasons.append("the key or the headers file could not be written")
+        unread.add("key_or_headers_not_written", 1, "the key or the headers file could not be written")
     answer["key_in_answer"] = False
     if kind == "simple" and "key_sha256_matches" not in source and expected_crc is None:
         answer["checks"] = "none: the entry records neither its key's SHA-256 nor its body's CRC-32"
-        reasons.append("the entry records neither its key's SHA-256 nor its body's CRC-32: where the body begins rests on the key length in the header alone, "
+        unread.add("entry_without_a_check", 1, "the entry records neither its key's SHA-256 nor its body's CRC-32: where the body begins rests on the key length in the header alone, "
                        "and nothing checks that the body file holds the stored body")
     flags = response_flags(stream0) if stream0 else None
     if flags is not None and flags & RESPONSE_INFO_TRUNCATED:
         answer.setdefault("response", {})["truncated"] = True
-        reasons.append("the entry marks its own response truncated (the browser stored it before the response had ended): the body is not the whole response")
+        unread.add("response_truncated", 1, "the entry marks its own response truncated (the browser stored it before the response had ended): the body is not the whole response")
     if headers and "content_length" in headers and headers["content_length"] != body_length:
-        reasons.append("the response's Content-Length says %d bytes and the entry stores %d: the stored body is %s" % (
+        unread.add("content_length_disagrees", 1, "the response's Content-Length says %d bytes and the entry stores %d: the stored body is %s" % (
             headers["content_length"], body_length, "cut" if body_length < headers["content_length"] else "not the length the response said"))
     if headers and "content_length_said" in headers:
-        reasons.append("the response's Content-Length lines are not one number: the stored body's length is not checked against them")
+        unread.add("content_length_not_one_number", 1, "the response's Content-Length lines are not one number: the stored body's length is not checked against them")
     # Which encoding: the caller's word, else the stored response's header, else a signature (gzip and zstd have one; deflate and brotli do not).
     said_by = "the caller"
     head = b""
@@ -1509,18 +1550,18 @@ def main():
                 if len(codings) > 1:
                     answer["not_decoded"] = ("the response names %d content codings at once (%s, in the order they were applied, from every Content-Encoding "
                                              "line): several codings are not decoded, and the stored bytes were written as they are" % (len(codings), ", ".join(codings)))
-                    reasons.append("the response names %d content codings at once (%s): several are not decoded, and the body file holds the stored bytes, "
+                    unread.add("codings_not_decoded", 1, "the response names %d content codings at once (%s): several are not decoded, and the body file holds the stored bytes, "
                                    "still coded" % (len(codings), ", ".join(codings)))
                 else:
                     answer["not_decoded"] = "the header names a coding this tool does not decode: the stored bytes were written as they are"
-                    reasons.append("the body's content coding is not one this tool decodes")
+                    unread.add("codings_not_decoded", 1, "the body's content coding is not one this tool decodes")
         elif head[:3] == b"\x1f\x8b\x08" or head[:4] == b"\x28\xb5\x2f\xfd":
             encoding, said_by = "gzip" if head[:1] == b"\x1f" else "zstd", "the stored bytes' own signature (no header said)"
             if headers:
                 answer["signature_note"] = ("the stored response names no Content-Encoding, and its body begins with a %s signature: it was decoded by that "
                                             "signature, so the body file holds what the %s file decodes to, while the response's own body is the %s file as "
                                             "stored (encoding: identity writes that)" % ((encoding,) * 3))
-                reasons.append("decoded as %s by the bytes' own signature although the stored response names no Content-Encoding: the body may be a %s "
+                unread.add("decoded_by_signature_only", 1, "decoded as %s by the bytes' own signature although the stored response names no Content-Encoding: the body may be a %s "
                                "file the server sent as it is (encoding: identity writes the stored bytes)" % (encoding, encoding))
         else:
             encoding, said_by = "identity", "nothing: no header named a coding and the bytes begin with no gzip or zstd signature (deflate and brotli have none)"
@@ -1535,7 +1576,7 @@ def main():
     if undecodable:
         answer["encoding"]["decoded"] = False
         answer["encoding"]["said"] = "%s (%s): the stored bytes were written as they are, still compressed" % (undecodable, why_not)
-        reasons.append(undecodable)
+        unread.add("coding_not_decodable_here", 1, undecodable)
     state = {}
     body_info = {"stored_bytes": body_length}
     if body_length == 0:
@@ -1571,22 +1612,22 @@ def main():
                                   "whole_kept_in": "the stored entry itself: its %d stored bytes from offset %d of the source (the body file holds the first %d decoded bytes)" % (body_length, body_offset, state["decoded"])})
             if state["error"]:
                 body_info["decode_error"] = state["error"]
-                reasons.append(state["error"])
+                unread.add("body_decode_error", 1, state["error"])
                 if state["decoded"] == 0 and place.remove("body.%s" % suffix):
                     del files["body"]                 # nothing decoded: an empty file would read as an empty body
                     body_info["said"] = "not written: not one byte of the body decoded"
                     for key in ("sha256", "sha256_of", "decoded_bytes_are", "detected_type", "detected_by"):
                         body_info.pop(key, None)
         except Clock:
-            reasons.append("the clock (max_seconds %d) ran out while the body was written: the body file was removed" % seconds)
+            unread.add("body_not_written_by_the_clock", 1, "the clock (max_seconds %d) ran out while the body was written: the body file was removed" % seconds)
             body_info["said"] = "not written: the clock ran out"
             files.pop("body", None)
         except Unreadable as exc:
-            reasons.append(str(exc))
+            unread.add("body_unreadable", 1, str(exc))
             body_info["said"] = "not written whole: %s" % exc
         except OSError as exc:
             files["write_error"] = "the body file could not be written (%s)" % describe(exc)
-            reasons.append("the body file could not be written")
+            unread.add("body_not_written", 1, "the body file could not be written")
         # The rest of the stored body is read whatever stopped the decoder (its end marker, a cap, damage): what follows the end of a
         # stream is counted from it, and the entry's own CRC-32 covers every stored byte.
         if "body" in files or state.get("error"):
@@ -1594,19 +1635,19 @@ def main():
                 for _block in source_chunks:
                     pass
             except Clock:
-                reasons.append("the clock (max_seconds %d) ran out before the rest of the stored body was read: what follows the stream and the entry's CRC-32 were not checked" % seconds)
+                unread.add("body_rest_not_read_by_the_clock", 1, "the clock (max_seconds %d) ran out before the rest of the stored body was read: what follows the stream and the entry's CRC-32 were not checked" % seconds)
             except Unreadable as exc:
-                reasons.append(str(exc))
+                unread.add("body_rest_unreadable", 1, str(exc))
         if state.get("ended") and state.get("stream_end") is not None and encoding != "identity" and not undecodable and crc[1] == body_length:
             after = body_length - state["stream_end"]
             if after > 0:
                 body_info.update({"stream_ends_at": state["stream_end"], "bytes_after_the_stream_end": after})
-                reasons.append("the %s stream ends at stored byte %d and %d stored byte(s) follow it, not decoded" % (
+                unread.add("bytes_after_the_stream_end", after, "the %s stream ends at stored byte %d and %d stored byte(s) follow it, not decoded" % (
                     {"br": "brotli"}.get(encoding, encoding), state["stream_end"], after))
         if expected_crc is not None and crc[1] == body_length:
             body_info["stored_crc32_matches"] = (crc[0] & 0xFFFFFFFF) == expected_crc
             if not body_info["stored_crc32_matches"]:
-                reasons.append("the stored body does not match the CRC-32 its entry records")
+                unread.add("crc32_mismatch", 1, "the stored body does not match the CRC-32 its entry records")
         elif expected_crc is not None:
             body_info["stored_crc32_matches"] = None
             body_info["stored_crc32_said"] = "not checked: the stored body was not read to its end"
@@ -1617,14 +1658,14 @@ def main():
     if cache is not None:
         cache.close()
     wrote = "body" in files
-    status = "partial" if reasons else "complete"
+    status = "partial" if unread else "complete"
     if body_length and not wrote:
         status = "failed"
     basis = ("the entry was read whole: its %d stored body bytes were %s and written (%d bytes), with the key and the headers beside it" % (
         body_length, "decoded as %s" % encoding if encoding != "identity" else "written as they are (no coding to lift)", state.get("decoded", 0))
         if status == "complete" and kind != "plain" else
         "the file was read whole: its %d bytes were %s and written (%d bytes)" % (body_length, "decoded as %s" % encoding if encoding != "identity" else "written as they are", state.get("decoded", 0))
-        if status == "complete" else "not everything asked for was done: %s" % "; ".join(reasons))
+        if status == "complete" else "not everything asked for was done: %s" % "; ".join(unread.reasons()))
     finish(answer, status, basis)
 
 

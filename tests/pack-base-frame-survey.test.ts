@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { inflateSync } from "node:zlib";
 import { CLEAN } from "./host-gates.ts";
-import { call, CFB, filesBelow, py, withRun, type Doc } from "./pack-base-media-fixture.ts";
+import { call, CFB, filesBelow, greyPng, py, withRun, type Doc } from "./pack-base-media-fixture.ts";
 
 const HAVE = spawnSync("ffmpeg", ["-version"]).status === 0 && spawnSync("ffprobe", ["-version"]).status === 0;
 const NO_DECODER: string | false = HAVE ? false : "this host has no ffmpeg and ffprobe on PATH: the clip cannot be encoded or decoded here (the job image declares them in the pack's requires/host.json)";
@@ -499,4 +499,58 @@ test("the rules are in the manifest, in every refusal and on the note's card, an
   assert.ok(card.length > 100 && card.length <= 700);
   assert.match(card, /\{"mode": "extract", "first": N, "last": M\}/);
   assert.match(card, /No ffmpeg in the image: status failed, not an empty video/);
+});
+
+test("a decoder log line longer than 64 KiB (a long metadata value) does not stop the reading of the log: every frame keeps its time and a cut file is partial", { skip: NO_DECODER }, async () => {
+  await withRun(async (run, out) => {
+    clip(run, "inputs/case files/plain.mkv");
+    // A title of 400 runs of 255 characters joined by vertical tabs, which ffmpeg's metadata dump drops without breaking the line: one
+    // log line of about 100 KB before the decoder's first frame line.
+    const dir = join(run, "inputs/case files");
+    writeFileSync(join(dir, "meta.txt"), ";FFMETADATA1\ntitle=" + Array.from({ length: 400 }, (_, i) => `T${String(i).padStart(4, "0")}` + "x".repeat(250)).join("\x0b") + "\n");
+    const m = spawnSync("ffmpeg", ["-v", "error", "-y", "-i", join(dir, "plain.mkv"), "-i", join(dir, "meta.txt"), "-map", "0", "-map_metadata", "1", "-c", "copy", join(dir, "titled.mkv")]);
+    assert.equal(m.status, 0, m.stderr.toString());
+    py(String.raw`
+import sys
+d = sys.argv[1]
+whole = open(d + "/titled.mkv", "rb").read()
+media = len(open(d + "/plain.mkv", "rb").read())
+open(d + "/titled cut.mkv", "wb").write(whole[:len(whole) - media // 2])
+`, [dir], run);
+    const whole = await call("frame_survey", run, { video: "inputs/case files/titled.mkv" }, { out });
+    assert.equal(whole.code, 0, whole.stdout + whole.stderr);
+    assert.equal(whole.doc.status, CLEAN, whole.doc.status_basis);
+    assert.equal(whole.doc.frames_decoded, 150);
+    assert.deepEqual(whole.doc.times, { from_the_frames_own_presentation_time: 150, from_frame_over_rate: 0, rate: 25 }, "every frame's own line was read past the long one");
+    assert.ok(whole.doc.decoder_log["lines_over_65536_bytes"] >= 1, JSON.stringify(whole.doc.decoder_log));
+    const cut = await call("frame_survey", run, { video: "inputs/case files/titled cut.mkv" }, { out });
+    assert.equal(cut.code, 0, cut.stdout + cut.stderr);
+    assert.equal(cut.doc.status, "partial");
+    assert.ok(cut.doc.frames_decoded > 20 && cut.doc.frames_decoded < 140, `${cut.doc.frames_decoded} frames`);
+    assert.match(JSON.stringify(cut.doc.partial_reasons), /the container states a duration of 6\.000 s .* and the last frame decoded is at \d+\.\d+ s/);
+    assert.ok(cut.doc.not_read_or_judged.frames_short_of_the_stated_duration > 0, JSON.stringify(cut.doc.not_read_or_judged));
+  });
+});
+
+test("a name with a printf pattern and a picture extension is the one file it names, never a numbered sequence of other files", { skip: NO_DECODER }, async () => {
+  await withRun(async (run, out) => {
+    const dir = join(run, "inputs/case files");
+    const flat = (v: number): number[][] => Array.from({ length: 16 }, () => Array.from({ length: 24 }, () => v));
+    writeFileSync(join(dir, "x%03d.png"), greyPng(flat(250)));
+    for (let i = 1; i <= 7; i++) writeFileSync(join(dir, `x${String(i).padStart(3, "0")}.png`), greyPng(flat(10)));
+    const s = await call("frame_survey", run, { video: "inputs/case files/x%03d.png" }, { out });
+    assert.equal(s.code, 0, s.stdout + s.stderr);
+    assert.equal(s.doc.frames_decoded, 1, "one picture, not the seven the pattern would name");
+    const e = await call("frame_survey", run, { video: "inputs/case files/x%03d.png", mode: "extract", first: 0 }, { out });
+    assert.equal(e.code, 0, e.stdout + e.stderr);
+    const file = join(run, (e.doc.frames as Doc[])[0].file as string);
+    const { pixels } = pngRgb(await readFile(file));
+    assert.deepEqual([...pixels.subarray(0, 3)], [250, 250, 250], "the frame written is the named file's (light), not x001.png's (dark)");
+    // A repair is refused for such a name rather than run on other files: an MP4 under a picture name with a pattern.
+    clip(run, "inputs/case files/clip.mp4");
+    writeFileSync(join(dir, "m%03d.png"), await readFile(join(dir, "clip.mp4")));
+    const r = await call("frame_survey", run, { video: "inputs/case files/m%03d.png", mode: "repair" }, { out });
+    assert.equal(r.doc.status, "failed");
+    assert.match(r.doc.error, /reads this file as a picture by its name/);
+  });
 });

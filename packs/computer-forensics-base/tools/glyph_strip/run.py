@@ -165,6 +165,7 @@ if __name__ == "__main__":
 # END SHARED ENDS
 
 
+import array
 import collections
 import errno
 import hashlib
@@ -1447,8 +1448,8 @@ def _unexpected_tool(kind, value, _tb):
 sys.excepthook = _unexpected_tool
 
 
-TOOL = {"name": "glyph_strip", "version": 3}
-PARSER = "glyph_strip/3"
+TOOL = {"name": "glyph_strip", "version": 4}
+PARSER = "glyph_strip/4"
 DEFAULT_SECONDS, MAX_SECONDS = 50, 55           # under the manifest's 60
 OCR_SECONDS = 20
 OCR_START_SECONDS = 2              # the OCR engine is started only with this much of the clock left (it is given at least a second, and its pipes one more)
@@ -1739,7 +1740,12 @@ MAX_PNG_ROWS = 256 << 20           # the inflated rows of a PNG the built-in rea
 
 
 class NotAPicture(Exception):
-    """The file is not a picture this tool can read; the text says what was found and what would read it."""
+    """The file is not a picture this tool can read; the text says what was found and what would read it. `damaged` is True when the
+    file is a picture of its kind that is cut or corrupt (not one of a form the reader does not take)."""
+
+    def __init__(self, text, damaged=False):
+        super().__init__(text)
+        self.damaged = damaged
 
 
 def check_crop(width, height):
@@ -1758,6 +1764,7 @@ class Picture:
     def __init__(self, width, height, gray, rgb=None, reader=""):
         self.width, self.height, self.gray, self.rgb, self.reader = width, height, gray, rgb, reader
         self.more_frames = False
+        self.damage, self.damage_by, self.unchecked = None, "the built-in reader", None
 
 
 def _unfilter(kind, line, previous, bpp):
@@ -1803,9 +1810,9 @@ def read_png(data, want_rgb=False, tick=None):
         kind = data[at + 4:at + 8]
         body = data[at + 8:at + 8 + length]
         if len(body) != length:
-            raise NotAPicture("a PNG cut inside its %s chunk" % kind.decode("ascii", "replace"))
+            raise NotAPicture("a PNG cut inside its %s chunk" % "".join(ch if ch.isalpha() else "?" for ch in kind.decode("latin-1")), damaged=True)
         if zlib.crc32(kind + body) != int.from_bytes(data[at + 8 + length:at + 12 + length], "big"):
-            raise NotAPicture("a PNG whose %s chunk fails its CRC" % "".join(ch if ch.isalpha() else "?" for ch in kind.decode("latin-1")))
+            raise NotAPicture("a PNG whose %s chunk fails its CRC" % "".join(ch if ch.isalpha() else "?" for ch in kind.decode("latin-1")), damaged=True)
         at += 12 + length
         if kind == b"acTL" and length == 8:
             animation = int.from_bytes(body[:4], "big")
@@ -1825,7 +1832,7 @@ def read_png(data, want_rgb=False, tick=None):
         elif kind == b"IEND":
             break
     if header is None or not parts:
-        raise NotAPicture("a PNG with no header or no image data")
+        raise NotAPicture("a PNG with no header or no image data", damaged=True)
     width, height, depth, colour, _compression, _filter, interlace = header
     if width == 0 or height == 0 or width * height > MAX_PIXELS:
         raise NotAPicture("a PNG of %d x %d pixels (this tool reads up to %d pixels)" % (width, height, MAX_PIXELS))
@@ -1836,7 +1843,7 @@ def read_png(data, want_rgb=False, tick=None):
     if interlace:
         raise NotAPicture("an interlaced PNG: the built-in reader does not read Adam7 (Pillow does, when it is installed)")
     if colour == 3 and palette is None:
-        raise NotAPicture("a palette PNG with no palette")
+        raise NotAPicture("a palette PNG with no palette", damaged=True)
     stride = (width * channels * depth + 7) // 8
     bpp = max(1, channels * depth // 8)
     if height * (stride + 1) > MAX_PNG_ROWS:
@@ -1844,14 +1851,17 @@ def read_png(data, want_rgb=False, tick=None):
     inflater = zlib.decompressobj()
     raw = bytearray()
     want = height * (stride + 1)
-    for part in parts:
-        raw += inflater.decompress(part, want - len(raw) + 1)
-        if len(raw) > want:
-            break
-        if tick:
-            tick()
+    try:
+        for part in parts:
+            raw += inflater.decompress(part, want - len(raw) + 1)
+            if len(raw) > want:
+                break
+            if tick:
+                tick()
+    except zlib.error:
+        raise NotAPicture("a PNG whose image data is not a zlib stream that inflates (after %d bytes)" % len(raw), damaged=True)
     if len(raw) < want:
-        raise NotAPicture("a PNG whose image data ends after %d of %d bytes" % (len(raw), want))
+        raise NotAPicture("a PNG whose image data ends after %d of %d bytes" % (len(raw), want), damaged=True)
     if palette is not None:
         entries = len(palette) // 3
         pal_gray = bytearray(256)
@@ -1968,6 +1978,400 @@ def jpeg_scans(data):
     restart marker, so FF DA is a marker wherever it is; one inside an embedded thumbnail is counted too, which only errs on the side of
     refusing."""
     return data.count(b"\xff\xda") if data[:2] == b"\xff\xd8" else 0
+
+
+# ---- the tool's own walk of a JPEG's coded data ------------------------------------------------------------------------------------
+# libjpeg (and so Pillow) takes a JPEG cut short and given its end-of-image marker back (what a carver makes of a fragmented file) as a
+# whole picture: it fills the blocks it did not find with grey and only warns, and Pillow does not pass the warning on. So a JPEG Pillow
+# decoded is walked here too, block by block through its Huffman codes, and must code every block its frame's size implies.
+JPEG_CHECK_SECONDS = 30            # at most this, and half of what the clock has left, for the walk of one picture
+
+class JpegUnchecked(Exception):
+    """The tool's own check of a JPEG's coded data does not reach this picture: the text says why (a coding it does not walk, its share
+    of the clock)."""
+
+
+def _jpeg_huffman(counts, symbols):
+    """A lookup of 65,536 entries for one Huffman table: (code length << 8) | symbol, 0 where no code begins with those 16 bits; None
+    for a table whose codes do not fit their lengths."""
+    table = [0] * 65536
+    code, at = 0, 0
+    for length in range(1, 17):
+        for _ in range(counts[length - 1]):
+            if code >= (1 << length):
+                return None
+            span = 1 << (16 - length)
+            start = code << (16 - length)
+            table[start:start + span] = [(length << 8) | symbols[at]] * span
+            code += 1
+            at += 1
+        code <<= 1
+    return table
+
+
+def _jpeg_pieces(data, at, most, check):
+    """The entropy-coded data of one scan from byte `at`: ([(the piece with its stuffed bytes taken out, the restart marker after it or
+    None)], the offset of the marker that ends the scan, or None when the file ends first; -1 past `most` pieces). check() is called
+    every 4096 bytes 0xFF met."""
+    pieces, start, size, met = [], at, len(data), 0
+    while True:
+        met += 1
+        if met % 4096 == 0:
+            check(0)
+        i = data.find(b"\xff", at)
+        if i < 0 or i + 1 >= size:
+            return pieces, None
+        following = data[i + 1]
+        if following == 0x00:
+            at = i + 2
+            continue
+        if following == 0xFF:
+            at = i + 1
+            continue
+        if 0xD0 <= following <= 0xD7:
+            pieces.append((data[start:i].replace(b"\xff\x00", b"\xff"), following - 0xD0))
+            if len(pieces) > most:
+                return pieces, -1
+            start = at = i + 2
+            continue
+        pieces.append((data[start:i].replace(b"\xff\x00", b"\xff"), None))
+        return pieces, i
+
+
+def _jpeg_scan(data, at, frame, scan, ss, se, ah, al, dc, ac, restart, nonzero, lowest, check):
+    """Walk one scan's coded data from byte `at`, block by block: the offset of the marker after it, or a sentence saying where the
+    data is cut or corrupt."""
+    progressive = frame["progressive"]
+    layout = frame["layout"]
+    if progressive:
+        if (ss == 0) != (se == 0) or se > 63 or ss > se or (ss > 0 and len(scan) != 1) or (ah and al != ah - 1) or al > 13:
+            return "a progressive scan whose spectral selection or approximation is not one the standard allows"
+        for cid, _d, _a in scan:
+            for k in range(ss, se + 1):
+                if (lowest[cid][k] is not None) if ah == 0 else (lowest[cid][k] != ah):
+                    return "a progressive scan that codes coefficients out of order (a scan missing before it, or one repeated)"
+    elif ss != 0 or se != 63 or ah or al:
+        return "a sequential scan whose spectral selection is not the whole block"
+    tables = []
+    for cid, d, a in scan:
+        need_dc = ss == 0 and ah == 0
+        need_ac = se > 0
+        if (need_dc and d not in dc) or (need_ac and a not in ac):
+            return "a scan of component %d names a Huffman table not defined before it" % cid
+        tables.append((cid, dc.get(d), ac.get(a)))
+    if len(scan) == 1:
+        cid = scan[0][0]
+        units = layout[cid]["bw"] * layout[cid]["bh"]
+    else:
+        units = frame["mcux"] * frame["mcuy"]
+    intervals = -(-units // restart) if restart else 1
+    pieces, end = _jpeg_pieces(data, at, intervals, check)
+    if end is None:
+        return "the file ends inside the scan's coded data, with no marker after it"
+    if end == -1:
+        return "more restart intervals than the scan has blocks"
+    if len(pieces) < intervals:
+        return ("the coded data ends after %d of the %d restart intervals the frame's size implies (a cut file given its end back)"
+                % (len(pieces), intervals))
+    if len(pieces) > intervals or pieces[-1][1] is not None:
+        return "more restart intervals than the scan has blocks"
+    for index, (_piece, number) in enumerate(pieces[:-1]):
+        if number != index % 8:
+            return "restart marker RST%d where RST%d was due (interval %d of %d)" % (number, index % 8, index + 1, intervals)
+    walked = 0
+    for index, (piece, _number) in enumerate(pieces):
+        count = min(restart, units - index * restart) if restart else units
+        found = _jpeg_interval(piece, frame, scan, tables, ss, se, ah, al, nonzero, walked, count, len(scan) == 1, check)
+        if found is not None:
+            return found
+        walked += count
+    if progressive:
+        for cid, _d, _a in scan:
+            for k in range(ss, se + 1):
+                lowest[cid][k] = al
+    return end
+
+
+def _ended_or(pos, bits, said):
+    """What a walk that went wrong at bit `pos` of `bits` says: that the data ends there (a code that would reach past the last byte) or
+    what it found."""
+    if pos + 16 > bits:
+        return ("the coded data ends before the last unit the frame's size implies (a cut file given its end back: the decoder fills what "
+                "follows, it is not read)")
+    return said
+
+
+def _jpeg_interval(piece, frame, scan, tables, ss, se, ah, al, nonzero, first, count, single, check):
+    """Walk `count` units (an MCU, or a block of a scan of one component) from unit `first` through one restart interval's data: None,
+    or a sentence saying where it is cut or corrupt."""
+    buf = piece + b"\x00\x00\x00\x00"
+    bits = len(piece) * 8
+    pos = 0
+    layout = frame["layout"]
+    eobrun = 0
+    if single:
+        cid, dct, act = tables[0]
+        geometry = layout[cid]
+        plan = None
+    else:
+        plan = []
+        for cid, dct, act in tables:
+            g = layout[cid]
+            for v in range(g["v"]):
+                for h in range(g["h"]):
+                    plan.append((dct, act))
+    progressive = frame["progressive"]
+    for unit in range(first, first + count):
+        if unit % 512 == 0:
+            check(unit)
+        if single:
+            blocks = ((dct, act),)
+        else:
+            blocks = plan
+        for dct, act in blocks:
+            if not progressive:
+                e = dct[(int.from_bytes(buf[pos >> 3:(pos >> 3) + 3], "big") >> (8 - (pos & 7))) & 0xFFFF]
+                if not e:
+                    return _ended_or(pos, bits, "a code no Huffman table holds, at bit %d of an interval" % pos)
+                pos += (e >> 8) + (e & 255)
+                k = 1
+                while k < 64:
+                    e = act[(int.from_bytes(buf[pos >> 3:(pos >> 3) + 3], "big") >> (8 - (pos & 7))) & 0xFFFF]
+                    if not e:
+                        return _ended_or(pos, bits, "a code no Huffman table holds, at bit %d of an interval" % pos)
+                    pos += e >> 8
+                    s = e & 15
+                    if s:
+                        k += ((e & 255) >> 4) + 1
+                        pos += s
+                    elif (e & 255) == 0xF0:
+                        k += 16
+                    else:
+                        break
+                if k > 64:
+                    return _ended_or(pos, bits, "a block whose coefficients run past the 64th")
+            elif ss == 0:
+                if ah:
+                    pos += 1
+                else:
+                    e = dct[(int.from_bytes(buf[pos >> 3:(pos >> 3) + 3], "big") >> (8 - (pos & 7))) & 0xFFFF]
+                    if not e:
+                        return _ended_or(pos, bits, "a code no Huffman table holds, at bit %d of an interval" % pos)
+                    pos += (e >> 8) + (e & 255)
+            else:
+                cid = scan[0][0]
+                g = layout[cid]
+                block = (unit // g["bw"]) * g["pw"] + unit % g["bw"]
+                marks = nonzero[cid]
+                if ah == 0:
+                    if eobrun:
+                        eobrun -= 1
+                        continue
+                    k = ss
+                    mask = marks[block]
+                    while k <= se:
+                        e = act[(int.from_bytes(buf[pos >> 3:(pos >> 3) + 3], "big") >> (8 - (pos & 7))) & 0xFFFF]
+                        if not e:
+                            return _ended_or(pos, bits, "a code no Huffman table holds, at bit %d of an interval" % pos)
+                        pos += e >> 8
+                        r, s = (e & 255) >> 4, e & 15
+                        if s:
+                            k += r
+                            if k > se:
+                                return _ended_or(pos, bits, "a block whose coefficients run past the scan's last")
+                            pos += s
+                            mask |= 1 << k
+                            k += 1
+                        elif r == 15:
+                            k += 16
+                        else:
+                            eobrun = (1 << r) - 1
+                            if r:
+                                eobrun += (int.from_bytes(buf[pos >> 3:(pos >> 3) + 3], "big") >> (24 - (pos & 7) - r)) & ((1 << r) - 1)
+                                pos += r
+                            break
+                    if k > se + 1:
+                        return _ended_or(pos, bits, "a block whose coefficients run past the scan's last")
+                    marks[block] = mask
+                else:
+                    k = ss
+                    mask = marks[block]
+                    if eobrun == 0:
+                        while k <= se:
+                            e = act[(int.from_bytes(buf[pos >> 3:(pos >> 3) + 3], "big") >> (8 - (pos & 7))) & 0xFFFF]
+                            if not e:
+                                return _ended_or(pos, bits, "a code no Huffman table holds, at bit %d of an interval" % pos)
+                            pos += e >> 8
+                            r, s = (e & 255) >> 4, e & 15
+                            if s:
+                                if s != 1:
+                                    return _ended_or(pos, bits, "a refinement code of a size other than one")
+                                pos += 1
+                            elif r != 15:
+                                eobrun = 1 << r
+                                if r:
+                                    eobrun += (int.from_bytes(buf[pos >> 3:(pos >> 3) + 3], "big") >> (24 - (pos & 7) - r)) & ((1 << r) - 1)
+                                    pos += r
+                                break
+                            while k <= se:
+                                if mask >> k & 1:
+                                    pos += 1
+                                else:
+                                    if r == 0:
+                                        break
+                                    r -= 1
+                                k += 1
+                            if s:
+                                if k > se:
+                                    return _ended_or(pos, bits, "a refinement that places a coefficient past the scan's last")
+                                mask |= 1 << k
+                            k += 1
+                    if eobrun > 0:
+                        while k <= se:
+                            if mask >> k & 1:
+                                pos += 1
+                            k += 1
+                        eobrun -= 1
+                    marks[block] = mask
+            if pos > bits:
+                return ("the coded data ends inside unit %d, before the last the frame's size implies (a cut file given its end back: the "
+                        "decoder fills what follows, it is not read)" % (unit + 1))
+    if pos > bits:
+        return "the coded data ends before the interval's last unit"
+    if bits - pos >= 8:
+        return "%d bytes of coded data follow the last unit the frame's size implies" % ((bits - pos) // 8)
+    return None
+
+
+def jpeg_check(data, tick, budget):
+    """The tool's own walk of a JPEG's entropy-coded data (Huffman-coded, sequential or progressive; ISO/IEC 10918-1 Annexes F and G),
+    without decoding a pixel: every scan is walked block by block through its Huffman codes, its restart markers are checked in order,
+    and the walk must code every block the frame's size implies before the scan's data ends; the scans must code every component (a
+    progressive set: every coefficient of every component to its last bit). Returns None when the data is whole, or a sentence saying
+    where it is cut or corrupt (libjpeg, and so Pillow, fills what is missing with grey and goes on). JpegUnchecked for what it does not
+    walk, and when `budget()` (seconds the walk may still take) runs out; tick() reads the tool's clock."""
+    size = len(data)
+    if data[:2] != b"\xff\xd8":
+        raise JpegUnchecked("not a JPEG")
+    at, dc, ac, frame, restart, scans = 2, {}, {}, None, 0, 0
+    nonzero, lowest, sequential = {}, {}, {}
+
+    def check(unit):
+        tick()
+        if budget() <= 0:
+            raise JpegUnchecked("the check's share of the clock ran out in scan %d" % scans)
+
+    while True:
+        check(0)
+        if at + 2 > size:
+            return "the data ends at byte %d without an end-of-image marker" % at
+        if data[at] != 0xFF:
+            return "at byte %d a marker was expected" % at
+        marker = data[at + 1]
+        if marker == 0xFF:
+            at += 1
+            continue
+        if marker == 0xD9:
+            break
+        if 0xD0 <= marker <= 0xD8 or marker == 0x01:
+            at += 2
+            continue
+        if at + 4 > size:
+            return "the data ends inside the marker at byte %d" % at
+        length = int.from_bytes(data[at + 2:at + 4], "big")
+        if length < 2 or at + 2 + length > size:
+            return "the segment of marker FF%02X at byte %d runs past the end of the file" % (marker, at)
+        body = data[at + 4:at + 2 + length]
+        segment_end = at + 2 + length
+        if marker in (0xC0, 0xC1, 0xC2):
+            if frame is not None:
+                raise JpegUnchecked("a JPEG with more than one frame header")
+            if len(body) < 6:
+                return "a frame header too short"
+            height, width, count = int.from_bytes(body[1:3], "big"), int.from_bytes(body[3:5], "big"), body[5]
+            if height == 0:
+                raise JpegUnchecked("a JPEG whose height is given after its first scan (a DNL marker)")
+            if width * height > MAX_PIXELS:
+                raise JpegUnchecked("a JPEG whose frame header says %d x %d pixels, more than the %d this tool reads" % (width, height, MAX_PIXELS))
+            if width == 0 or count == 0 or len(body) < 6 + 3 * count:
+                return "a frame header that names no size or no component"
+            sampling = {}
+            for i in range(count):
+                cid, factors = body[6 + 3 * i], body[7 + 3 * i]
+                if not 1 <= factors >> 4 <= 4 or not 1 <= factors & 15 <= 4:
+                    return "a component with a sampling factor out of range"
+                sampling[cid] = (factors >> 4, factors & 15)
+            hmax = max(h for h, _v in sampling.values())
+            vmax = max(v for _h, v in sampling.values())
+            mcux, mcuy = -(-width // (8 * hmax)), -(-height // (8 * vmax))
+            layout = {}
+            for cid, (h, v) in sampling.items():
+                cw, ch = -(-width * h // hmax), -(-height * v // vmax)
+                layout[cid] = {"h": h, "v": v, "bw": -(-cw // 8), "bh": -(-ch // 8), "pw": mcux * h, "ph": mcuy * v}
+            frame = {"progressive": marker == 0xC2, "layout": layout, "mcux": mcux, "mcuy": mcuy}
+            for cid in sampling:
+                sequential[cid] = 0
+                lowest[cid] = [None] * 64
+                if frame["progressive"]:
+                    nonzero[cid] = array.array("Q", bytes(8 * layout[cid]["pw"] * layout[cid]["ph"]))
+        elif 0xC3 <= marker <= 0xCF and marker not in (0xC4, 0xC8):
+            raise JpegUnchecked("a JPEG coded in a way the check does not walk (marker FF%02X: lossless, hierarchical or arithmetic coding)" % marker)
+        elif marker == 0xC4:
+            p = 0
+            while p < len(body):
+                if p + 17 > len(body):
+                    return "a Huffman table segment cut short"
+                kind, index = body[p] >> 4, body[p] & 15
+                counts = list(body[p + 1:p + 17])
+                total = sum(counts)
+                if p + 17 + total > len(body) or kind > 1 or index > 3:
+                    return "a Huffman table segment that does not hold its table"
+                table = _jpeg_huffman(counts, body[p + 17:p + 17 + total])
+                if table is None:
+                    return "a Huffman table whose codes do not fit their lengths"
+                (dc if kind == 0 else ac)[index] = table
+                p += 17 + total
+        elif marker == 0xDD:
+            if len(body) < 2:
+                return "a restart interval segment too short"
+            restart = int.from_bytes(body[:2], "big")
+        elif marker == 0xDA:
+            if frame is None:
+                return "a scan before the frame header"
+            ns = body[0] if body else 0
+            if ns < 1 or ns > 4 or len(body) < 1 + 2 * ns + 3:
+                return "a scan header that does not hold its components"
+            scan = []
+            for i in range(ns):
+                cid, chosen = body[1 + 2 * i], body[2 + 2 * i]
+                if cid not in frame["layout"]:
+                    return "a scan of a component the frame does not have"
+                scan.append((cid, chosen >> 4, chosen & 15))
+            ss, se, ah, al = body[1 + 2 * ns], body[2 + 2 * ns], body[3 + 2 * ns] >> 4, body[3 + 2 * ns] & 15
+            scans += 1
+            found = _jpeg_scan(data, segment_end, frame, scan, ss, se, ah, al, dc, ac, restart, nonzero, lowest, check)
+            if isinstance(found, str):
+                return "scan %d: %s" % (scans, found)
+            for cid, _d, _a in scan:
+                sequential[cid] += 1
+            at = found
+            continue
+        at = segment_end
+    if frame is None:
+        return "no frame header before the end-of-image marker"
+    if scans == 0:
+        return "no scan before the end-of-image marker"
+    for cid in frame["layout"]:
+        if frame["progressive"]:
+            missing = sum(1 for k in range(64) if lowest[cid][k] != 0)
+            if missing:
+                return ("the scans end before every coefficient of component %d is coded to its last bit (%d of 64 are not): the data "
+                        "that follows was not there to read" % (cid, missing))
+        elif sequential[cid] == 0:
+            return "component %d is in no scan before the end-of-image marker" % cid
+        elif sequential[cid] > 1:
+            return "component %d is in more than one sequential scan" % cid
+    return None
 
 
 def _send(fd, kind, body=b""):
@@ -2204,13 +2608,16 @@ def read_picture(data, want_rgb=False, reader="auto", tick=None):
     """The picture in `data` (its first frame): a PNG by the built-in reader when it reads it (or when reader is "builtin"), anything else,
     and a PNG the built-in reader refuses, by Pillow in a child when it imports (grey only: want_rgb is for the built-in reader).
     NotAPicture says which reader said what; Refused for a picture that is no crop of one line (by its size, before its rows are taken);
-    Clock when the clock runs out first. `more_frames` says whether the file holds frames after the first."""
-    first = None
+    Clock when the clock runs out first. `more_frames` says whether the file holds frames after the first. `damage` is what the built-in
+    reader found cut or corrupt in a PNG Pillow then read, or what the tool's own walk of a JPEG's coded data found (Pillow fills what is
+    missing), or None; `damage_by` says which; `unchecked` is why a JPEG's coded data was not walked, or None."""
+    first = damage = None
     if data[:8] == PNG_MAGIC or reader == "builtin":
         try:
             return read_png(data, want_rgb, tick)
         except NotAPicture as exc:
             first = str(exc)
+            damage = first if exc.damaged else None
             if reader == "builtin":
                 raise
     image_module = pillow() if reader != "builtin" else None
@@ -2235,6 +2642,16 @@ def read_picture(data, want_rgb=False, reader="auto", tick=None):
         raise NotAPicture("%s%s" % (said, exc))
     finally:
         stream.close()
+    picture.damage = damage
+    if data[:2] == b"\xff\xd8" and damage is None:
+        until = time.monotonic() + min(JPEG_CHECK_SECONDS, max(0.5, (clock_deadline() - time.monotonic()) / 2.0 if clock_deadline() is not None else JPEG_CHECK_SECONDS))
+        try:
+            found = jpeg_check(data, tick or (lambda: None), lambda: until - time.monotonic())
+        except JpegUnchecked as exc:
+            picture.unchecked = str(exc)
+        else:
+            if found is not None:
+                picture.damage, picture.damage_by = found, "the tool's own walk of the JPEG's coded data"
     return picture
 
 
@@ -2319,6 +2736,35 @@ def label_rows(text, scale=2):
 
 
 RUNS = re.compile(rb"\x01+|\x00+")
+
+
+class Unread:
+    """The one list of what this call did not read or did not judge: every place that leaves something unread or unjudged counts it here,
+    under a name declared up front, with the sentence that says it. The status is derived from this list alone (a failed call aside): a
+    count above zero makes the answer partial. The answer prints every counter, zeros included (`not_read_or_judged`)."""
+
+    def __init__(self, *names):
+        self.counts = {name: 0 for name in names}
+        self.said = {}
+
+    def add(self, name, count=1, sentence=None):
+        if name not in self.counts:
+            raise KeyError(name)
+        if count:
+            self.counts[name] += count
+            if sentence and name not in self.said:
+                self.said[name] = sentence
+
+    def __bool__(self):
+        return any(self.counts.values())
+
+    def reasons(self):
+        return [self.said.get(name, name.replace("_", " ")) for name, count in self.counts.items() if count]
+
+
+UNREAD = ("frames_not_read", "picture_damaged", "jpeg_data_not_walked", "shape_groups_not_whole", "crops_not_written", "ocr_not_run_by_the_clock",
+          "ocr_not_read", "ocr_text_not_written", "comparison_not_written", "ties_not_sought", "read_apart_pairs_not_listed",
+          "candidates_not_written", "candidates_file_not_written")
 
 
 class Clock(Exception):
@@ -2505,7 +2951,7 @@ def parse_uncertain(value, reading, classes):
             among = class_of(reading[at], classes)
             if among is None:
                 raise Refused("position %d of the reading is in no confusable class: say its alternatives with among" % at)
-        if not isinstance(among, str) or not 1 <= len(among) <= 16 or len(set(among)) != len(among) or any(ch < " " for ch in among):
+        if not isinstance(among, str) or not 1 <= len(among) <= 16 or len(set(among)) != len(among) or any(ch < " " or 0xD800 <= ord(ch) <= 0xDFFF for ch in among):
             raise Refused("among must be a string of 1 to 16 different characters: the characters the glyph at that position could be")
         chosen[at] = reading[at] + "".join(m for m in among if m != reading[at])
     return chosen, "the positions named in uncertain"
@@ -2566,28 +3012,45 @@ def read_program(argv, seconds, most, merge=False):
     return (None if cut else proc.returncode), bytes(out[:most]), cut
 
 
-def run_ocr(image_path, place):
-    """A second reader, when the image holds one: tesseract on the crop as one line (--psm 7). {engine, ...}; the text goes to a file. What
-    the engine writes is read up to MAX_OCR_BYTES: a line of text is far less, and more is not read."""
+def run_ocr(picture, place):
+    """A second reader, when the image holds one: tesseract as one line (--psm 7) on the crop as this tool decoded it (its first frame, grey,
+    written as a PNG of the tool's own and removed after), never on the file itself, so that the engine reads the pixels this tool counted
+    and no decoder of its own. {engine, ...}; the text goes to a file. What the engine writes is read up to MAX_OCR_BYTES: a line of text is
+    far less, and more is not read. `_partial` says why the reading asked for was not made (the clock, a cut, an exit code or a signal, an
+    output that is no text)."""
     program = find_program("tesseract")
     if program is None:
         return {"available": False, "said": "no OCR engine is in this image (tesseract is not on PATH): the count and the strip are this tool's own, and no second reading was made"}, None
-    target = image_path if os.path.isabs(image_path) else os.path.join(".", image_path)
     _code, out, cut = read_program([program, "--version"], seconds_left(10), MAX_OCR_BYTES, merge=True)     # an older tesseract prints it on stderr
     if seconds_until_clock() < OCR_START_SECONDS:
         return {"available": True, "read": False, "said": "the OCR engine was not run on the crop: the tool's clock had less than %d seconds left" % OCR_START_SECONDS,
                 "_partial": "the OCR engine was not run on the crop: the clock had run out, or nearly"}, None
     version = out.decode("utf-8", "replace").splitlines()[0].strip()[:60] if out.strip() and not cut else "tesseract, version not printed"
     version = "".join(ch if " " <= ch < "\x7f" else "?" for ch in version)
-    code, out, cut = read_program([program, target, "stdout", "--psm", "7"], seconds_left(OCR_SECONDS), MAX_OCR_BYTES)
+    name = ".ocr-input.png"
+    full = os.path.join(place.path, name)
+    try:
+        place.write(name, png_bytes(picture.width, picture.height, picture.gray), 0o600)
+        temp_hold(full)
+    except (OSError, Clock) as exc:
+        return {"available": True, "engine": version, "read": False, "said": "the decoded crop could not be written for the OCR engine (%s)" % (
+            "the clock ran out" if isinstance(exc, Clock) else describe(exc)), "_partial": "the OCR engine was not run: the decoded crop could not be written for it"}, None
+    try:
+        target = full if os.path.isabs(full) else os.path.join(".", full)
+        code, out, cut = read_program([program, target, "stdout", "--psm", "7"], seconds_left(OCR_SECONDS), MAX_OCR_BYTES)
+    finally:
+        place.remove(name)
+        temp_done(full)
     if cut or code != 0:
-        return {"available": True, "engine": version, "read": False, "said": "the OCR engine did not read the crop (%s)" % (cut or "exit code %s" % code),
-                **({"_partial": "the OCR engine was cut before it had read the crop (%s)" % cut} if cut else {})}, None
+        how = cut or ("it was ended by signal %d" % -code if code is not None and code < 0 else "exit code %s" % code)
+        return {"available": True, "engine": version, "read": False, "said": "the OCR engine did not read the crop (%s)" % how,
+                "_partial": "the OCR engine did not read the crop (%s): no second reading was made" % how}, None
     try:
         text = out.decode("utf-8").split("\n")[0].rstrip("\r")
     except UnicodeDecodeError:
-        return {"available": True, "engine": version, "read": False, "said": "the OCR engine's output is not UTF-8 text"}, None
-    result = {"available": True, "engine": version, "read": True}
+        return {"available": True, "engine": version, "read": False, "said": "the OCR engine's output is not UTF-8 text",
+                "_partial": "the OCR engine's output is not UTF-8 text: no second reading was made"}, None
+    result = {"available": True, "engine": version, "read": True, "read_from": "the crop as this tool decoded it (its first frame, grey), not the file"}
     try:
         result["text_file"] = place.write("ocr.txt", (text + "\n").encode("utf-8"), 0o600)
     except OSError as exc:
@@ -2605,8 +3068,10 @@ def main():
     if classes is None:
         classes = CLASSES
     elif (not isinstance(classes, list) or not 1 <= len(classes) <= 64
-          or any(not isinstance(c, str) or not 2 <= len(c) <= 16 or len(set(c)) != len(c) for c in classes) or len(set("".join(classes))) != len("".join(classes))):
-        raise Refused("classes must be a list of 1 to 64 strings of 2 to 16 different characters, no character in two classes: each string is one class of look-alikes")
+          or any(not isinstance(c, str) or not 2 <= len(c) <= 16 or len(set(c)) != len(c) or any(ch < " " or 0xD800 <= ord(ch) <= 0xDFFF for ch in c) for c in classes)
+          or len(set("".join(classes))) != len("".join(classes))):
+        raise Refused("classes must be a list of 1 to 64 strings of 2 to 16 different characters (no control character, no lone surrogate), no character in "
+                      "two classes: each string is one class of look-alikes")
     reading = args.get("reading")
     if reading is not None and (not isinstance(reading, str) or not 1 <= len(reading) <= MAX_READING or any(ch < " " or 0xD800 <= ord(ch) <= 0xDFFF for ch in reading)):
         raise Refused("reading must be the line as you read it: a string of 1 to %d characters on one line" % MAX_READING)
@@ -2627,14 +3092,25 @@ def main():
     except Clock:
         raise Refused("the tool's clock (max_seconds %d) ran out while the picture was being read: nothing was counted" % seconds)
     check_crop(picture.width, picture.height)
+    unread = Unread(*UNREAD)
     frames_not_read = None
     if picture.more_frames is None:
         frames_not_read = "whether the picture holds frames after the first is not known (Pillow did not say): the first was read"
     elif picture.more_frames:
         frames_not_read = "the picture holds frames after the first, and they were not read: this tool reads the first frame of a crop"
+    if frames_not_read:
+        unread.add("frames_not_read", 1, frames_not_read)
+    if picture.damage:
+        unread.add("picture_damaged", 1, "the picture is cut or corrupt (%s: %s): Pillow read it all the same and filled what is missing, so ink may be "
+                                         "missing from the line" % (picture.damage_by, picture.damage))
+    if picture.unchecked:
+        unread.add("jpeg_data_not_walked", 1, "the tool's own walk of the JPEG's coded data did not reach it (%s): a JPEG cut short and given its end "
+                                              "marker back is not told from a whole one" % picture.unchecked)
     common = {"tool": TOOL, "parser": PARSER, "image": printable(image), "sha256": hashlib.sha256(data).hexdigest(), "pixels": "%d x %d" % (picture.width, picture.height),
               "picture_reader": picture.reader, "rules": RULES, **({"unrecognised_parameters": unknown} if unknown else {}),
-              **({"frames_not_read": frames_not_read} if frames_not_read else {})}
+              **({"frames_not_read": frames_not_read} if frames_not_read else {}),
+              **({"picture_damaged": picture.damage, "picture_damaged_by": picture.damage_by} if picture.damage else {}),
+              **({"jpeg_data_not_walked": picture.unchecked} if picture.unchecked else {})}
     try:
         found = segment(picture)
     except Clock:
@@ -2643,15 +3119,15 @@ def main():
         raise SystemExit(1)
     glyphs = found["glyphs"]
     if not glyphs and reading is None:
-        print_answer({**common, "status": "partial" if frames_not_read else "complete", "complete": not frames_not_read, "count": 0, "polarity": found["polarity"],
+        reasons = unread.reasons()
+        print_answer({**common, "status": "partial" if unread else "complete", "complete": not unread, "count": 0, "polarity": found["polarity"],
+                      "not_read_or_judged": dict(unread.counts),
                       "status_basis": "the whole %s was read and it holds no ink against its background at the threshold %d: no glyph, and nothing was written%s"
-                      % ("first frame" if frames_not_read else "picture", found["threshold"], "; but %s" % frames_not_read if frames_not_read else ""),
-                      **({"partial_reasons": [frames_not_read]} if frames_not_read else {})})
+                      % ("first frame" if frames_not_read else "picture", found["threshold"], "; but %s" % "; ".join(reasons) if reasons else ""),
+                      **({"partial_reasons": reasons} if reasons else {})})
         return
     place = Place("glyph_strip")
-    reasons, files = [], {}
-    if frames_not_read:
-        reasons.append(frames_not_read)
+    files = {}
     spaces, wide, narrow_pairs, groups, rows = [], [], [], [], []
     if glyphs:
         widths = sorted(g["width"] for g in glyphs)
@@ -2671,7 +3147,7 @@ def main():
             if i in placed:
                 continue
             if out_of_time():
-                reasons.append("the clock ran out while the glyphs were compared: same_shape_groups is not whole")
+                unread.add("shape_groups_not_whole", len(glyphs) - i, "the clock ran out while the glyphs were compared: same_shape_groups is not whole")
                 break
             group = [i] + [j for j in range(i + 1, len(glyphs)) if j not in placed and same_shape(glyphs[i], glyphs[j])]
             if len(group) > 1:
@@ -2688,10 +3164,11 @@ def main():
                 rows[i - 1]["crop"] = place.write("glyph-%03d.png" % i, glyph_png(g, scale))
                 rows[i - 1]["crop_scale"] = scale
         except Clock:
-            reasons.append("the clock ran out while the strip and the crops were being written: %d of %d crops are there" % (sum(1 for r in rows if "crop" in r), len(glyphs)))
+            unread.add("crops_not_written", len(glyphs) - sum(1 for r in rows if "crop" in r) + ("strip" not in files),
+                       "the clock ran out while the strip and the crops were being written: %d of %d crops are there" % (sum(1 for r in rows if "crop" in r), len(glyphs)))
         except OSError as exc:
             files["write_error"] = "a crop could not be written (%s)" % describe(exc)
-            reasons.append("the strip or a crop could not be written")
+            unread.add("crops_not_written", len(glyphs) - sum(1 for r in rows if "crop" in r) + ("strip" not in files), "the strip or a crop could not be written")
     answer = {**common, "count": len(glyphs), "count_is": "separate ink runs along the line, specks of one pixel left out",
               "polarity": found["polarity"], "threshold": found["threshold"], "line_box": list(found["box"]) if found["box"] else None, "ink_bands": found["bands"],
               "specks_ignored": found["specks"], "spaces_after": spaces, "wide": wide, "narrow_pairs": narrow_pairs, "same_shape_groups": groups,
@@ -2703,13 +3180,13 @@ def main():
     ocr_text = None
     if ocr_mode == "auto" and seconds_until_clock() < OCR_START_SECONDS:
         ocr = {"available": None, "read": False, "said": "the OCR engine was not run: the tool's clock (max_seconds %d) had less than %d seconds left" % (seconds, OCR_START_SECONDS)}
-        reasons.append("the OCR engine was not run: the clock had run out, or nearly")
+        unread.add("ocr_not_run_by_the_clock", 1, "the OCR engine was not run: the clock had run out, or nearly")
     elif ocr_mode == "auto":
-        ocr, ocr_text = run_ocr(image, place)
+        ocr, ocr_text = run_ocr(picture, place)
         if "_partial" in ocr:
-            reasons.append(ocr.pop("_partial"))
+            unread.add("ocr_not_read", 1, ocr.pop("_partial"))
         if "write_error" in ocr:
-            reasons.append("the OCR text could not be written")
+            unread.add("ocr_text_not_written", 1, "the OCR text could not be written")
     else:
         ocr = {"available": None, "said": "no OCR engine was asked for (ocr: none)"}
     answer["ocr"] = ocr
@@ -2735,7 +3212,7 @@ def main():
                                                                          b"same_length\t%d\t-\n" % int(len(reading) == len(ocr_text))), 0o600)
             except OSError as exc:
                 against["write_error"] = "the comparison could not be written (%s)" % describe(exc)
-                reasons.append("the comparison with the OCR text could not be written")
+                unread.add("comparison_not_written", 1, "the comparison with the OCR text could not be written")
             answer["reading_against_ocr"] = against
         # The glyph of a position: by order, when the reading has as many characters besides spaces as there are ink runs.
         glyph_of = {}
@@ -2760,7 +3237,7 @@ def main():
             order = [at for at in sorted(uncertain) if at in glyph_of]
             for i, a in enumerate(order):
                 if out_of_time():
-                    reasons.append("the clock ran out while ties were sought: the positions from %d on were not tied, so the set is counted with fewer ties (larger, never smaller)" % a)
+                    unread.add("ties_not_sought", len(order) - i, "the clock ran out while ties were sought: the positions from %d on were not tied, so the set is counted with fewer ties (larger, never smaller)" % a)
                     break
                 for b in order[i + 1:]:
                     if set(uncertain[a]) != set(uncertain[b]) or not same_shape(glyphs[glyph_of[a]], glyphs[glyph_of[b]]):
@@ -2787,6 +3264,10 @@ def main():
                                           "takes them as one choice (an assumption where a font draws two of the alternatives alike)")
         if read_apart:
             candidates["same_drawing_read_apart"] = read_apart[:50]
+            candidates["same_drawing_read_apart_total"] = len(read_apart)
+            if len(read_apart) > 50:
+                unread.add("read_apart_pairs_not_listed", len(read_apart) - 50, "%d pairs of positions are the same drawing read apart and the answer lists the first 50: "
+                           "the other %d are not printed (the candidates file is whole)" % (len(read_apart), len(read_apart) - 50))
             candidates["read_apart_means"] = ("the glyphs at these positions are the same drawing but the reading gives them different characters: they were not "
                                               "tied and the reading is in the set; one of the two readings is likely wrong, unless the font draws the two alike")
         if not glyph_of:
@@ -2810,13 +3291,15 @@ def main():
             candidates["first_line_is_the_reading"] = first_line == [reading]
             if written < size:
                 candidates["truncated"] = True
-                reasons.append("the candidate set has %d members and %d were written (max_candidates %d, or the clock)" % (size, written, most))
+                unread.add("candidates_not_written", size - written, "the candidate set has %d members and %d were written (max_candidates %d, or the clock)" % (size, written, most))
         except OSError as exc:
             candidates["write_error"] = "the candidates could not be written (%s)" % describe(exc)
-            reasons.append("the candidates file could not be written")
+            unread.add("candidates_file_not_written", 1, "the candidates file could not be written")
         answer["candidates"] = candidates
     answer["readers"] = readers
-    status = "partial" if reasons else "complete"
+    reasons = unread.reasons()
+    answer["not_read_or_judged"] = dict(unread.counts)
+    status = "partial" if unread else "complete"
     answer["status"] = status
     answer["complete"] = status == "complete"
     answer["status_basis"] = (("the whole picture was read: %d ink runs along the line, each written as a crop and in the strip" % len(glyphs) if glyphs else

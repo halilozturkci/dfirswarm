@@ -515,6 +515,47 @@ test("a block-file cache is listed first, then one entry is taken by row or addr
   });
 });
 
+// The block-file layout as Chromium's disk_cache/blockfile/disk_format.h gives it: the index header's num_entries is the int32 at offset 8;
+// an address is initialised (bit 31), its file type in bits 28-30 (2 is a block file of 256-byte blocks, 5 to 7 name no data file), the
+// data file's number in bits 16-23 and the first block in bits 0-15; a block file's blocks follow its 8192-byte header, and an entry
+// record's data_addr[4] begins at byte 56 of it (data_addr[1], the body, at 60).
+const PATCH_BLOCKFILE = String.raw`
+import shutil, struct, sys
+src, dst, mode, address = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4], 16)
+shutil.copytree(src, dst)
+if mode == "count":
+    with open(dst + "/index", "r+b") as f:
+        f.seek(8); f.write(struct.pack("<i", 7))
+else:
+    assert (address >> 28) & 7 == 2, "an entry record in a 256-byte block file"
+    with open(dst + "/data_%d" % ((address >> 16) & 0xFF), "r+b") as f:
+        f.seek(8192 + (address & 0xFFFF) * 256 + 60); f.write(struct.pack("<I", 0x80000000 | (int(mode) << 28) | 0x10000))
+`;
+
+test("a block-file index whose own count disagrees with the entries its table reaches is partial; an entry whose body address names no data file is counted, and the rest are listed", async () => {
+  await withRun(async (run, out) => {
+    const dir = "inputs/case files";
+    py(BUILD, [join(run, dir), KEY], run);
+    const list = await call("cache_body", run, { path: `${dir}/Block Cache`, list: true }, { out });
+    assert.equal(list.doc.status, "complete");
+    const first = (await readFile(join(out, "cache_body", "entries.tsv"), "utf8")).trim().split("\n")[1]!.split("\t")[1]!;
+    py(PATCH_BLOCKFILE, [join(run, dir, "Block Cache"), join(run, dir, "Counted Cache"), "count", "0"], run);
+    const counted = await call("cache_body", run, { path: `${dir}/Counted Cache`, list: true }, { out });
+    assert.equal(counted.code, 0, counted.stdout + counted.stderr);
+    assert.deepEqual([counted.doc.status, counted.doc.entries, counted.doc.entries_the_index_says], ["partial", 3, 7]);
+    assert.equal(counted.doc.not_read_or_judged.entries_the_index_count_disagrees_by, 4);
+    assert.equal(list.doc.not_read_or_judged.entries_the_index_count_disagrees_by, 0);
+    assert.match(counted.doc.partial_reasons.join(" "), /the index's own count says 7 entries and its hash table reaches 3/);
+    for (const kind of [5, 6, 7]) {
+      py(PATCH_BLOCKFILE, [join(run, dir, "Block Cache"), join(run, dir, `Type ${kind} Cache`), String(kind), first], run);
+      const r = await call("cache_body", run, { path: `${dir}/Type ${kind} Cache`, list: true }, { out });
+      assert.equal(r.code, 0, r.stdout + r.stderr);
+      assert.deepEqual([r.doc.status, r.doc.entries, r.doc.problems.streams_unreadable], ["partial", 3, 1], `type ${kind}`);
+      assert.match(r.doc.problems.first_stream_unreadable, new RegExp(`stream 1: an address of file type ${kind}, which is no data file`));
+    }
+  });
+});
+
 test("the rules are in the manifest and on the note's card, and the manifest says what was and was not verified", async () => {
   const manifest = JSON.parse(await readFile(join(CFB, "tools", "cache_body", "manifest.json"), "utf8")) as Doc;
   await withRun(async (run, out) => {

@@ -1442,8 +1442,8 @@ def _unexpected_tool(kind, value, _tb):
 sys.excepthook = _unexpected_tool
 
 
-TOOL = {"name": "frame_survey", "version": 3}
-PARSER = "frame_survey/3"
+TOOL = {"name": "frame_survey", "version": 4}
+PARSER = "frame_survey/4"
 DEFAULT_SECONDS, MAX_SECONDS = 500, 540         # under the manifest's 600, with room for what may follow the clock: FINISH_SECONDS, the pairing's
                                                 # own 10 seconds, the decoder's ending and the settling of its group (about 40 seconds at most)
 PROBE_SECONDS = 30
@@ -1793,7 +1793,36 @@ def tick():
         raise Clock()
 
 
-SHOWINFO = re.compile(rb"\] n: *(\d+) +pts: *(-?\d+|N/A) +pts_time: *(-?[0-9.]+|N/A)")
+class Unread:
+    """The one list of what this call did not read or did not judge: every place that leaves something unread or unjudged counts it here,
+    under a name declared up front, with the sentence that says it. The status is derived from this list alone (a failed call aside): a
+    count above zero makes the answer partial. The answer prints every counter, zeros included (`not_read_or_judged`)."""
+
+    def __init__(self, *names):
+        self.counts = {name: 0 for name in names}
+        self.said = {}
+
+    def add(self, name, count=1, sentence=None):
+        if name not in self.counts:
+            raise KeyError(name)
+        if count:
+            self.counts[name] += count
+            if sentence and name not in self.said:
+                self.said[name] = sentence
+
+    def __bool__(self):
+        return any(self.counts.values())
+
+    def reasons(self):
+        return [self.said.get(name, name.replace("_", " ")) for name, count in self.counts.items() if count]
+
+
+# showinfo's own line about a frame, at the start of a log line (ffmpeg prints a value of the stream's metadata after an indent and never
+# begins a line with it, so a title that holds such text is not read as a frame).
+SHOWINFO = re.compile(rb"(?:^|\r)\[Parsed_showinfo[^\]\n]*\] n: *(\d+) +pts: *(-?\d+|N/A) +pts_time: *(-?[0-9.]+|N/A)")
+SHOWINFO_LINE = re.compile(rb"(?:^|\r)\[Parsed_showinfo")
+LOG_LINE_MOST = 1 << 16                         # a decoder log line is read in pieces of this many bytes
+LOG_TAIL = 256                                  # the end of one piece judged again with the next, so a word across two pieces is seen
 # A decoder's or a demuxer's line about damage: an error, a cut file ("File ended prematurely", "partial file", "Truncating packet", "end of
 # file"), a structure past its parent (Matroska's "exceeds containing master element"), a lost or broken reference ("Frame num gap",
 # "non-existing PPS", "no frame!"), a concealed or skipped frame. Plain words a title can hold ("lost", "skipping") are left out.
@@ -1845,13 +1874,31 @@ def mirror_of(stream):
     return None
 
 
+PROBE_ENTRIES = ("stream=codec_name,width,height,avg_frame_rate,r_frame_rate,nb_frames,duration,start_time:stream_side_data=rotation,displaymatrix"
+                 ":stream_tags=rotate:stream_disposition=attached_pic:format=format_name,duration,start_time")
+MAX_PIXELS = MAX_NATIVE_WIDTH * MAX_NATIVE_HEIGHT     # the decoder's own bound on a frame's pixels (-max_pixels): every frame, not only the first
+
+
+def picture_reader(form):
+    """Whether ffmpeg reads the file with its picture-sequence demuxer (image2), by the format name ffprobe printed."""
+    return "image2" in str(form).split(",")
+
+
+def input_options(info):
+    """The decoder's options for the input: its bound on a frame's pixels, and -pattern_type none where the picture-sequence demuxer reads
+    the file (that demuxer alone takes the option; any other refuses it)."""
+    return ["-max_pixels", str(MAX_PIXELS), *(["-pattern_type", "none"] if info.get("picture_reader") else [])]
+
+
 def probe(ffprobe, path):
     """The first video stream as ffprobe reads it: {codec, width, height (of the frame as the decoder gives it), coded, rotation, autorotate,
     rate, frames_said, duration_said, container, video_streams}, or (None, why). A rotation by a quarter or half turn is let through to the
     decoder, which turns each frame without resampling it (width and height are then of the turned frame); any other angle is not applied
     (-noautorotate), because turning by it resamples the frame."""
     given = seconds_left(PROBE_SECONDS)
-    code, out, err, timed_out = preflight([ffprobe, "-v", "error", "-select_streams", "v", "-show_entries", "stream:format=format_name,duration,start_time",
+    # Only the fields read here are asked for: a stream's other tags (of any size a file holds) are not printed. -pattern_type none: a
+    # name with a printf pattern and a picture extension is the one file it names, never a numbered sequence of other files.
+    code, out, err, timed_out = preflight([ffprobe, "-v", "error", "-pattern_type", "none", "-select_streams", "v", "-show_entries", PROBE_ENTRIES,
                                            "-of", "json", "-i", "file:" + target_of(path)], given)
     if timed_out:
         return None, "ffprobe did not finish in the %.0f seconds it was given (at most %d, and no more than the clock had left)" % (given, PROBE_SECONDS)
@@ -1898,7 +1945,7 @@ def probe(ffprobe, path):
             # The decoder shifts every time by the file's start time (it runs without -copyts): the stream's stated end is its own start
             # time less the file's, plus its duration; with only the file's duration, the end is that duration.
             "start_said": ((number(stream.get("start_time"), float) or 0.0) - (number(form.get("start_time"), float) or 0.0)) if number(stream.get("duration"), float) else 0.0,
-            "container": clean(str(form.get("format_name")), 60),
+            "container": clean(str(form.get("format_name")), 60), "picture_reader": picture_reader(form.get("format_name")),
             "video_streams": len(streams)}, None
 
 
@@ -2003,9 +2050,12 @@ class LogTimes:
     is the k-th frame on the pipe), never showinfo's own n: that counter starts again when the decoder rebuilds its filters. A rebuild
     (its "Reconfiguring filter graph" line, or an n that is not the one after the last) is counted in `restarts`, with the output index it
     came at: the select filter's count started again with it, so a frame number chosen by that filter is not a decoded frame's number past
-    it. The log is read on from where the last reading stopped, a line that is not whole yet waits for the next. A line about an error is
-    counted with the input's own name taken out of it first (a file named "missing" is no error), and showinfo's own lines are never
-    counted as one."""
+    it. The log is read on from where the last reading stopped, a line that is not whole yet waits for the next (the last reading takes
+    it as it is). A line longer than LOG_LINE_MOST (a metadata value ffmpeg prints on one line) is read in pieces: the first is judged as
+    a line, every other for words about an error, each with the end of the piece before it, and the line is counted in long_lines; no
+    piece is left unjudged. A line about an error is counted with the input's own name taken out of it first (a file named "missing" is
+    no error), and showinfo's own lines are never counted as one. The reading stops at the clock and the FINISH_SECONDS past it: the
+    bytes it did not read are counted in bytes_not_read."""
 
     def __init__(self, path, size, quiet=(), keep=20):
         self.path, self.at, self.times = path, 0, {}
@@ -2018,6 +2068,9 @@ class LogTimes:
         self.last_time = None                      # the presentation time of the last frame that had one
         self.other_size, self.other_first = 0, {}  # frames decoded at another size than the stream's: how many, and the first (index: "w x h")
         self.trouble, self.said = 0, []            # the decoder's own lines about errors: how many, and the first three
+        self.long_lines = 0                        # lines longer than LOG_LINE_MOST, read in pieces
+        self.inside, self.inside_done = None, False    # the end of the last piece of a long line not yet ended, and whether that line is judged
+        self.bytes_not_read = 0                    # bytes of the log the clock left unread
 
     @property
     def restarts(self):
@@ -2028,44 +2081,74 @@ class LogTimes:
         if self.restart_at is None:
             self.restart_at = self.lines
 
-    def read(self):
+    def _troubled(self, text):
+        """Count `text` as a line about an error when it is one (the input's names taken out first); True when it was counted."""
+        for name in self.quiet:
+            text = text.replace(name, b"")
+        if TROUBLE.search(text):
+            self.trouble += 1
+            if len(self.said) < 3:
+                self.said.append(clean(text))
+            return True
+        return False
+
+    def _judge(self, line):
+        """Read one line (or the first piece of a long one); True when nothing more of it is to be judged."""
+        found = SHOWINFO.search(line)
+        if found:
+            index = self.lines
+            self.lines += 1
+            if int(found.group(1)) != self.last_n + 1:
+                self.jumps += 1
+                self._restart()
+            self.last_n = int(found.group(1))
+            self.seen.add(index)
+            if found.group(3) != b"N/A":
+                self.times[index] = self.last_time = float(found.group(3))
+            size = FRAME_SIZE.search(line)
+            if size and (int(size.group(1)), int(size.group(2))) != self.size:
+                self.other_size += 1
+                if len(self.other_first) < self.keep:
+                    self.other_first[index] = "%s x %s" % (size.group(1).decode(), size.group(2).decode())
+            return True
+        if SHOWINFO_LINE.search(line):
+            return True
+        named = line
+        for name in self.quiet:
+            named = named.replace(name, b"")
+        if REBUILT.search(named):
+            self.rebuilt += 1
+            self._restart()
+            return True
+        return self._troubled(line)
+
+    def read(self, final=False):
         try:
             with open(self.path, "rb") as fh:
                 fh.seek(self.at)
                 while True:
-                    line = fh.readline(1 << 16)
-                    if not line.endswith(b"\n"):
+                    if past_finish():
+                        try:
+                            self.bytes_not_read = max(self.bytes_not_read, os.fstat(fh.fileno()).st_size - self.at)
+                        except OSError:
+                            self.bytes_not_read = max(self.bytes_not_read, 1)
                         break
+                    line = fh.readline(LOG_LINE_MOST)
+                    if not line:
+                        break
+                    ends = line.endswith(b"\n")
+                    if not ends and len(line) < LOG_LINE_MOST and not final:
+                        break                      # a line not whole yet: it waits for the next reading
                     self.at += len(line)
-                    found = SHOWINFO.search(line)
-                    if found:
-                        index = self.lines
-                        self.lines += 1
-                        if int(found.group(1)) != self.last_n + 1:
-                            self.jumps += 1
-                            self._restart()
-                        self.last_n = int(found.group(1))
-                        self.seen.add(index)
-                        if found.group(3) != b"N/A":
-                            self.times[index] = self.last_time = float(found.group(3))
-                        size = FRAME_SIZE.search(line)
-                        if size and (int(size.group(1)), int(size.group(2))) != self.size:
-                            self.other_size += 1
-                            if len(self.other_first) < self.keep:
-                                self.other_first[index] = "%s x %s" % (size.group(1).decode(), size.group(2).decode())
+                    if self.inside is not None:    # a later piece of a long line
+                        if not self.inside_done:
+                            self.inside_done = self._troubled(self.inside + line)
+                        self.inside = None if ends else line[-LOG_TAIL:]
                         continue
-                    if b"Parsed_showinfo" in line:
-                        continue
-                    for name in self.quiet:
-                        line = line.replace(name, b"")
-                    if REBUILT.search(line):
-                        self.rebuilt += 1
-                        self._restart()
-                        continue
-                    if TROUBLE.search(line):
-                        self.trouble += 1
-                        if len(self.said) < 3:
-                            self.said.append(clean(line))
+                    done = self._judge(line)
+                    if not ends and len(line) >= LOG_LINE_MOST:
+                        self.long_lines += 1
+                        self.inside, self.inside_done = line[-LOG_TAIL:], done
         except (OSError, ValueError):
             pass
         return self.times
@@ -2094,19 +2177,20 @@ def passthrough(ffmpeg):
 
 
 def shortfall(info, last_time):
-    """Why a whole-stream survey that ended cleanly did not reach the end the container states (None when it did, or when there is nothing
-    to compare): its last frame's presentation time plus one frame against the stream's start time plus its stated duration, with two frames
-    (0.1 second where the rate is unknown) of slack. A container with no frame count (Matroska, WebM, an elementary stream) is held to it."""
+    """Why a whole-stream survey that ended cleanly did not reach the end the container states, and about how many frames that is ((None, 0)
+    when it did, or when there is nothing to compare): its last frame's presentation time plus one frame against the stream's start time
+    plus its stated duration, with two frames (0.1 second where the rate is unknown) of slack. A container with no frame count (Matroska,
+    WebM, an elementary stream) is held to it."""
     if info["duration_said"] is None or last_time is None or info["duration_said"] <= 0:
-        return None
+        return None, 0
     step = 1.0 / info["rate"] if info["rate"] else 0.05
     end = (info["start_said"] or 0.0) + info["duration_said"]
     reached = last_time + step
     if end - reached <= 2 * step + 0.001:
-        return None
+        return None, 0
     return ("the container states a duration of %.3f s (to %.3f s) and the last frame decoded is at %.3f s: %.3f s, about %d frames, were not decoded "
             "(a cut stream the decoder did not report, or a video stream that ends before the file's other streams)" % (
-                info["duration_said"], end, last_time, end - reached, int(round((end - reached) / step))))
+                info["duration_said"], end, last_time, end - reached, int(round((end - reached) / step)))), max(1, int(round((end - reached) / step)))
 
 
 def stamp(seconds):
@@ -2158,7 +2242,7 @@ class Sheets:
         self.width, self.height = self.cell_w * columns, self.cell_h * rows
         self.names, self.count, self.first = [], 0, None
         self.canvas = None
-        self.error = None
+        self.error, self.failed = None, 0
 
     def add(self, frame, number, seconds):
         if self.canvas is None:
@@ -2185,9 +2269,11 @@ class Sheets:
             shown = self.place.write(name, png_bytes(self.width, self.height, self.canvas, 3))
             self.names.append({"sheet": shown, "first_frame": self.first, "last_frame": self.last})
         except OSError as exc:
-            self.error = "a contact sheet could not be written (%s)" % describe(exc)
+            self.failed += 1
+            self.error = self.error or "a contact sheet could not be written (%s)" % describe(exc)
         except Clock:
-            self.error = "%s was not written: the clock and the %d seconds an encoder is given past it ran out while it was encoded" % (name, FINISH_SECONDS)
+            self.failed += 1
+            self.error = self.error or "%s was not written: the clock and the %d seconds an encoder is given past it ran out while it was encoded" % (name, FINISH_SECONDS)
         self.canvas = None
 
 
@@ -2213,8 +2299,8 @@ def survey(args, video, info, ffmpeg, common, started):
     common["decoder"]["version"] = decoder_version
     # -reinit_filter 0: a frame of another size or format goes through the same filters (scale takes it as it comes), so that the select
     # filter's count, which picks the frames, is never started again by a rebuild of the filters; a rebuild that happens anyway is counted.
-    argv = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "info", *([] if info["autorotate"] else ["-noautorotate"]), "-reinit_filter", "0",
-            "-i", "file:" + target_of(video),
+    argv = [ffmpeg, "-nostdin", "-hide_banner", "-nostats", "-loglevel", "info", *([] if info["autorotate"] else ["-noautorotate"]), "-reinit_filter", "0",
+            *input_options(info), "-i", "file:" + target_of(video),
             "-map", "0:v:0", "-an", "-sn", "-vf", "%s,showinfo,scale=%d:%d:flags=area,setsar=1" % (select, tile_width, tile_height), *keep_every_frame,
             "-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1"]
     sheets = Sheets(place, tile_width, tile_height, box_width, columns, rows)
@@ -2263,45 +2349,57 @@ def survey(args, video, info, ffmpeg, common, started):
         raise Refused("the decoder could not be started (%s)" % describe(exc))
     drain()
     sheets.flush()
-    log_times.read()
+    log_times.read(final=True)
     errors = log_times.said
     temp_drop(stderr_path)
     decoded = kept_frames[0]
     timed = sum(1 for i in range(decoded) if i in times)
-    reasons, skipped = [], []
+    unread = Unread("frames_before_start_frame", "frames_between_samples", "stream_after_max_frames", "stream_after_the_clock",
+                    "pipe_held_after_the_decoder", "decoder_exit_not_zero", "decoder_error_lines", "decoder_log_bytes_not_read",
+                    "frames_without_their_log_line", "bytes_after_the_last_whole_frame", "sheets_not_written", "frames_of_another_size",
+                    "frames_numbered_after_a_rebuild", "frames_the_container_lists_not_decoded", "frames_short_of_the_stated_duration",
+                    "local_changes_not_paired", "score_tables_not_written")
+    skipped = []
     if every > 1:
         skipped.append("%d of every %d frames between the samples (every: %d): a run shorter than %d frames can fall between two samples" % (every - 1, every, every, every))
+        unread.add("frames_between_samples", max(1, (decoded - 1) * (every - 1)), "not decoded: " + skipped[-1])
     if start:
         skipped.append("the %d frames before start_frame" % start)
+        unread.add("frames_before_start_frame", start, "not decoded: " + skipped[-1])
     if state["stopped"] == "enough":
         skipped.append("every frame after frame %d (max_frames %d was reached): go on with start_frame %d" % (start + (decoded - 1) * every, most, start + decoded * every))
+        unread.add("stream_after_max_frames", 1, "not decoded: " + skipped[-1])
     if state["stopped"] == "clock":
         skipped.append("every frame after frame %d (the tool's clock ran out): go on with start_frame %d" % (start + (decoded - 1) * every if decoded else start, start + decoded * every))
+        unread.add("stream_after_the_clock", 1, "not decoded: " + skipped[-1])
     if state["stopped"] == "pipe held":
-        reasons.append("the decoder ended but something it started kept its output pipe open: the end of the stream was not seen%s" % held_after(state))
+        unread.add("pipe_held_after_the_decoder", 1, "the decoder ended but something it started kept its output pipe open: the end of the stream was not seen%s" % held_after(state))
     if state["stopped"] is None and state["exit"] != 0:
-        reasons.append("the decoder ended with exit code %s after %d frames: the stream is damaged or cut there, and what follows was not decoded" % (state["exit"], decoded))
-    if log_times.trouble:
-        reasons.append("the decoder wrote %d line(s) about errors while it decoded (decoder_said has the first): frames near them may be damaged, concealed or missing" % log_times.trouble)
-    if state["left"] and state["stopped"] is None:
-        reasons.append("the decoder's output ended inside a frame (%d bytes over)" % state["left"])
-    if sheets.error:
-        reasons.append(sheets.error)
-    if log_times.other_size:
-        reasons.append("%d frame(s) were decoded at another size than the stream's %d x %d (frames_of_another_size): their tiles are scaled to the same "
-                       "tile, and a region in native pixels over them is of the stream's size, not theirs" % (log_times.other_size, info["width"], info["height"]))
+        unread.add("decoder_exit_not_zero", 1, "the decoder ended with exit code %s after %d frames: the stream is damaged or cut there, and what follows was not decoded" % (state["exit"], decoded))
+    unread.add("decoder_error_lines", log_times.trouble, "the decoder wrote %d line(s) about errors while it decoded (decoder_said has the first): frames near them may be damaged, concealed or missing" % log_times.trouble)
+    unread.add("decoder_log_bytes_not_read", log_times.bytes_not_read, "%d bytes of the decoder's log were not read (the clock ran out): a line about an error, a frame's time or its size may be among them" % log_times.bytes_not_read)
+    if log_times.lines < decoded:
+        unread.add("frames_without_their_log_line", decoded - log_times.lines,
+                   "the decoder's own line (showinfo) was read for %d of the %d frames: the time, the size and the order of the other %d were not confirmed, "
+                   "and a line about an error may be among what was not read" % (log_times.lines, decoded, decoded - log_times.lines))
+    if state["stopped"] is None:
+        unread.add("bytes_after_the_last_whole_frame", state["left"], "the decoder's output ended inside a frame (%d bytes over)" % state["left"])
+    unread.add("sheets_not_written", sheets.failed, sheets.error)
+    unread.add("frames_of_another_size", log_times.other_size,
+               "%d frame(s) were decoded at another size than the stream's %d x %d (frames_of_another_size): their tiles are scaled to the same "
+               "tile, and a region in native pixels over them is of the stream's size, not theirs" % (log_times.other_size, info["width"], info["height"]))
     if log_times.restarts and (start or every > 1) and log_times.restart_at < decoded:
-        reasons.append("the decoder rebuilt its filters %d time(s), the first after %d frame(s) given here, and its select filter's count started again "
-                       "there: the frame numbers from frame %d on (numbers_unconfirmed_from) are not confirmed to be decoded frames' numbers; survey from "
-                       "start_frame 0 with every 1, where every frame is counted here" % (log_times.restarts, log_times.restart_at, start + log_times.restart_at * every))
+        unread.add("frames_numbered_after_a_rebuild", decoded - log_times.restart_at,
+                   "the decoder rebuilt its filters %d time(s), the first after %d frame(s) given here, and its select filter's count started again "
+                   "there: the frame numbers from frame %d on (numbers_unconfirmed_from) are not confirmed to be decoded frames' numbers; survey from "
+                   "start_frame 0 with every 1, where every frame is counted here" % (log_times.restarts, log_times.restart_at, start + log_times.restart_at * every))
     whole_call = start == 0 and every == 1 and state["stopped"] is None and state["exit"] == 0
     if whole_call and info["frames_said"] and decoded < info["frames_said"]:
-        reasons.append("the container lists %d frames and the decoder gave %d with no error: %d were not decoded (dropped by the decoder, or outside an "
-                       "edit list), so the frames here are not every frame the file holds" % (info["frames_said"], decoded, info["frames_said"] - decoded))
-    short = shortfall(info, log_times.last_time) if whole_call and decoded else None
-    if short:
-        reasons.append(short)
-    reasons += ["not decoded: " + s for s in skipped]
+        unread.add("frames_the_container_lists_not_decoded", info["frames_said"] - decoded,
+                   "the container lists %d frames and the decoder gave %d with no error: %d were not decoded (dropped by the decoder, or outside an "
+                   "edit list), so the frames here are not every frame the file holds" % (info["frames_said"], decoded, info["frames_said"] - decoded))
+    short, short_frames = shortfall(info, log_times.last_time) if whole_call and decoded else (None, 0)
+    unread.add("frames_short_of_the_stated_duration", short_frames, short)
     # The change scores. A frame's score is the share of blocks that changed from the frame before it. A cut changes most of the picture;
     # a local change (a caption, an overlay) changes a few blocks and, when it ends, changes the same blocks again.
     scores = [c[1] / float(blocks) for c in changes]
@@ -2322,7 +2420,7 @@ def survey(args, video, info, ffmpeg, common, started):
         if a in used:
             continue
         if time.monotonic() > pairing_until:
-            reasons.append("the local changes after frame %d were not paired into runs (the pairing's own 10 seconds ran out): they are in frames.tsv" % changes[a][0])
+            unread.add("local_changes_not_paired", len(local) - a_pos, "the local changes after frame %d were not paired into runs (the pairing's own 10 seconds ran out): they are in frames.tsv" % changes[a][0])
             break
         box_a = changes[a][2]
         for b in local[a_pos + 1:a_pos + 1 + 400]:
@@ -2366,13 +2464,16 @@ def survey(args, video, info, ffmpeg, common, started):
                                                                                "the frame's presentation time" if i in times else "frame / rate" if rate else "", scores[i])).encode("ascii") for i in range(len(changes)))))
     except OSError as exc:
         files["write_error"] = "a score table could not be written (%s)" % describe(exc)
-        reasons.append("a score table could not be written")
+        unread.add("score_tables_not_written", 1, "a score table could not be written")
     stand_out = sorted((w for w in windows if w[2] >= floor and w[2] > window_median), key=lambda w: -w[2])[:20]
-    status = "failed" if decoded == 0 else "partial" if reasons else "complete"
-    answer = {**common, "mode": "survey", "status": status, "complete": status == "complete",
+    reasons = unread.reasons()
+    status = "failed" if decoded == 0 else "partial" if unread else "complete"
+    answer = {**common, "mode": "survey", "status": status, "complete": status == "complete", "not_read_or_judged": dict(unread.counts),
               "frames_decoded": decoded, "frames_the_container_says": info["frames_said"], "first_frame": start, "last_frame": start + (decoded - 1) * every if decoded else None,
               "every": every, "tile": "%d x %d" % (tile_width, tile_height), "tile_keeps_shape": keeps_shape, "sheets": len(sheets.names), "sheet_files": sheets.names[:40], "tiles_a_sheet": columns * rows,
               "times": {"from_the_frames_own_presentation_time": timed, "from_frame_over_rate": decoded - timed, "rate": rate},
+              "decoder_log": {"frame_lines_read": log_times.lines, "lines_over_%d_bytes" % LOG_LINE_MOST: log_times.long_lines,
+                              "what": "the decoder's own line a frame (showinfo) gives its time and size; a line longer than %d bytes is judged in pieces, all of it" % LOG_LINE_MOST},
               "scores": {"what": "a frame's score is the share of %d x %d blocks whose mean moved by more than %d of 255 from the frame decoded before it" % (GRID_COLUMNS, GRID_ROWS, BLOCK_STEP),
                          "median": round(median, 4), "stands_out_from": round(floor, 4), "window_frames": window, "windows": len(windows)},
               "scene_cuts": {"count": len(cuts), "frames": cuts[:50], "what": "half of the blocks or more changed at once"},
@@ -2423,8 +2524,8 @@ def extract(args, video, info, ffmpeg, common):
     # frames are cut at, never misaligned, and is named. setsar only sets the aspect the raw output does not carry, so that the encoder
     # writes no line about it.
     # -reinit_filter 0 keeps one set of filters for the whole stream (see survey): select's count is the decoded frame's number.
-    argv = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "info", *([] if info["autorotate"] else ["-noautorotate"]), "-reinit_filter", "0",
-            "-i", "file:" + target_of(video),
+    argv = [ffmpeg, "-nostdin", "-hide_banner", "-nostats", "-loglevel", "info", *([] if info["autorotate"] else ["-noautorotate"]), "-reinit_filter", "0",
+            *input_options(info), "-i", "file:" + target_of(video),
             "-map", "0:v:0", "-an", "-sn", "-vf", "select='between(n\\,%d\\,%d)',showinfo,scale=%d:%d,setsar=1" % (first, last, width, height), *keep_every_frame,
             "-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1"]
     written, total, problem = [], [0], [None]
@@ -2454,7 +2555,7 @@ def extract(args, video, info, ffmpeg, common):
         temp_drop(stderr_path)
         raise Refused("the decoder could not be started (%s)" % describe(exc))
     log_times = LogTimes(stderr_path, (width, height), quiet_names(video), MAX_EXTRACT)
-    times = log_times.read()
+    times = log_times.read(final=True)
     temp_drop(stderr_path)
     dropped, rebuilt = 0, None
     if log_times.restarts and log_times.restart_at < len(written):
@@ -2478,26 +2579,33 @@ def extract(args, video, info, ffmpeg, common):
         elif index not in log_times.seen:
             unconfirmed.append(row["frame"])
     wanted = last - first + 1
-    reasons = [rebuilt] if rebuilt else []
+    unread = Unread("frames_dropped_after_a_rebuild", "frames_not_written", "frames_after_the_clock", "pipe_held_after_the_decoder",
+                    "decoder_exit_not_zero", "decoder_error_lines", "decoder_log_bytes_not_read", "frames_of_another_size",
+                    "frames_size_not_confirmed", "bytes_after_the_last_whole_frame", "frames_the_stream_did_not_give")
+    if rebuilt:
+        unread.add("frames_dropped_after_a_rebuild", max(1, len(doubtful)), rebuilt)
     if problem[0]:
-        reasons.append(problem[0])
+        unread.add("frames_not_written", max(1, wanted - len(written)), problem[0])
     if state["stopped"] == "clock":
-        reasons.append("the tool's clock ran out after %d of %d frames" % (len(written), wanted))
+        unread.add("frames_after_the_clock", max(1, wanted - len(written)), "the tool's clock ran out after %d of %d frames" % (len(written), wanted))
     if state["stopped"] == "pipe held":
-        reasons.append("the decoder ended but something it started kept its output pipe open%s" % held_after(state))
-    if log_times.trouble:
-        reasons.append("the decoder wrote %d line(s) about errors while it decoded: a frame written here may be damaged or concealed" % log_times.trouble)
-    if log_times.other_size:
-        reasons.append("%d frame(s) were decoded at another size than the stream's %d x %d and were scaled to it, so they are not at native size (native: false, "
-                       "decoded_size on each)" % (log_times.other_size, width, height))
+        unread.add("pipe_held_after_the_decoder", 1, "the decoder ended but something it started kept its output pipe open%s" % held_after(state))
+    if state["stopped"] is None and state["exit"] != 0:
+        unread.add("decoder_exit_not_zero", 1, "the decoder ended with exit code %s after %d of the frames asked for: the stream is damaged or cut there" % (state["exit"], len(written)))
+    unread.add("decoder_error_lines", log_times.trouble, "the decoder wrote %d line(s) about errors while it decoded: a frame written here may be damaged or concealed" % log_times.trouble)
+    unread.add("decoder_log_bytes_not_read", log_times.bytes_not_read, "%d bytes of the decoder's log were not read (the clock ran out): a line about an error or a frame's size may be among them" % log_times.bytes_not_read)
+    unread.add("frames_of_another_size", log_times.other_size,
+               "%d frame(s) were decoded at another size than the stream's %d x %d and were scaled to it, so they are not at native size (native: false, "
+               "decoded_size on each)" % (log_times.other_size, width, height))
     if unconfirmed:
-        reasons.append("the decoder's own line for %d frame(s) (the first %d) was not read: their size was not confirmed" % (len(unconfirmed), unconfirmed[0]))
-    if state["left"] and state["stopped"] is None:
-        reasons.append("the decoder's output ended inside a frame (%d bytes over)" % state["left"])
-    if len(written) < wanted and not reasons:
-        reasons.append("the stream gave %d of the %d frames asked for: it ends at frame %d, or is damaged there" % (len(written), wanted, first + len(written) - 1))
-    status = "failed" if not written else "partial" if reasons else "complete"
-    answer = {**common, "mode": "extract", "status": status, "complete": status == "complete", "first": first, "last": last, "frames_written": len(written),
+        unread.add("frames_size_not_confirmed", len(unconfirmed), "the decoder's own line for %d frame(s) (the first %d) was not read: their size was not confirmed" % (len(unconfirmed), unconfirmed[0]))
+    if state["stopped"] is None:
+        unread.add("bytes_after_the_last_whole_frame", state["left"], "the decoder's output ended inside a frame (%d bytes over)" % state["left"])
+    if len(written) < wanted and not unread:
+        unread.add("frames_the_stream_did_not_give", wanted - len(written), "the stream gave %d of the %d frames asked for: it ends at frame %d, or is damaged there" % (len(written), wanted, first + len(written) - 1))
+    reasons = unread.reasons()
+    status = "failed" if not written else "partial" if unread else "complete"
+    answer = {**common, "mode": "extract", "status": status, "complete": status == "complete", "not_read_or_judged": dict(unread.counts), "first": first, "last": last, "frames_written": len(written),
               "size": "%d x %d (native)" % (width, height), "frames": written[:MAX_EXTRACT], "output_directory": place.shown, **turned(info),
               "status_basis": ("every frame asked for (%d to %d) was decoded and written at native size as a PNG, each frame's size confirmed by the decoder's own line"
                                % (first, last)) if status == "complete" else
@@ -2530,6 +2638,8 @@ def mp4_boxes(fd, size):
         offset += length
     if problem is None and offset < size and len(boxes) < 10000:
         problem = "%d bytes after the last box are no box" % (size - offset)
+    if problem is None and offset < size:
+        problem = "the walk stopped at its bound of 10000 top-level boxes, at offset %d: the %d bytes after it were not walked" % (offset, size - offset)
     return boxes, problem
 
 
@@ -2569,6 +2679,8 @@ def diagnose(fd, size):
             if kind == b"idx1":
                 index = chunks[-1]
             offset += 8 + length + (length & 1)
+        if offset + 8 <= size:
+            findings.append({"finding": "chunk walk stopped", "what": "the walk stopped at its bound of 10000 top-level chunks, at offset %d: the %d bytes after it were not walked" % (offset, size - offset)})
         if movi is None:
             findings.append({"finding": "movi missing", "what": "no movi list (the frames) was found among the top-level chunks"})
         elif movi["size_in_file"] < movi["size_said"]:
@@ -2581,23 +2693,36 @@ def diagnose(fd, size):
     return {"container": None, "findings": [{"finding": "not an MP4 or an AVI", "what": "the first bytes are neither an ISO media box nor a RIFF AVI header: this mode repairs those two containers only"}]}
 
 
+def first_lines(data, keep=3):
+    """The first `keep` lines of a program's output that hold anything, cleaned, and how many lines follow them: the output is not split
+    whole (a decoder can write a line a frame)."""
+    kept, at = [], 0
+    while at < len(data) and len(kept) < keep:
+        end = data.find(b"\n", at)
+        end = len(data) if end < 0 else end
+        if data[at:end].strip():
+            kept.append(clean(data[at:min(end, at + 4096)]))
+        at = end + 1
+    return kept, (data.count(b"\n", at) + (1 if at < len(data) and not data.endswith(b"\n") else 0)) if at < len(data) else 0
+
+
 def count_decoded(ffmpeg, path):
-    """How many frames of the first video stream decode, and how the decoder ended: (frames, exit, error lines). The frames are decoded
-    to nothing; the count is read from the decoder's own progress report."""
-    code, out, err, timed_out = preflight([ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-i", "file:" + target_of(path), "-map", "0:v:0", "-an", "-sn",
-                                           "-f", "null", "-progress", "pipe:1", "-"], seconds_left(MAX_SECONDS))
+    """How many frames of the first video stream decode, and how the decoder ended: (frames, exit, first error lines, error lines in all).
+    The frames are decoded to nothing; the count is read from the decoder's own progress report (its last frame= line)."""
+    code, out, err, timed_out = preflight([ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-max_pixels", str(MAX_PIXELS), "-i", "file:" + target_of(path),
+                                           "-map", "0:v:0", "-an", "-sn", "-f", "null", "-progress", "pipe:1", "-"], seconds_left(MAX_SECONDS))
     frames = None
-    for line in out.split(b"\n"):
-        if line.startswith(b"frame="):
-            try:
-                frames = int(line[6:].strip())
-            except ValueError:
-                pass
-    lines = [clean(line) for line in err.split(b"\n") if line.strip()]
-    return frames, (None if timed_out else code), lines
+    found = re.findall(rb"(?:^|\n)frame=([^\n]*)", out[-65536:])
+    if found:
+        try:
+            frames = int(found[-1].strip())
+        except ValueError:
+            frames = None
+    lines, more = first_lines(err)
+    return frames, (None if timed_out else code), lines, len(lines) + more
 
 
-def repair(video, ffmpeg, common, size):
+def repair(video, ffmpeg, ffprobe, common, size):
     fd = os.open(video, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
     try:
         found = diagnose(fd, size)
@@ -2612,8 +2737,21 @@ def repair(video, ffmpeg, common, size):
         answer.update({"status": "failed", "error": common.get("decoder_missing"),
                        "status_basis": "the container was read (diagnosis) but nothing was repaired or verified: " + (common.get("decoder_missing") or "no decoder")})
         return answer, None
-    before_frames, before_exit, before_errors = count_decoded(ffmpeg, video)
-    answer["original"] = {"frames_that_decode": before_frames, "decoder_exit": before_exit, "decoder_said": before_errors[:3]}
+    # A name ffmpeg's picture-sequence demuxer takes (a printf pattern and a picture extension) would be read as other files, or as a
+    # picture: the repair reads the file it names or nothing.
+    _code, form_out, _err, _timed_out = preflight([ffprobe, "-v", "error", "-pattern_type", "none", "-show_entries", "format=format_name", "-of", "json",
+                                                   "-i", "file:" + target_of(video)], seconds_left(PROBE_SECONDS))
+    try:
+        form = (json.loads(form_out.decode("utf-8", "replace")).get("format") or {}).get("format_name")
+    except (ValueError, AttributeError, RecursionError):
+        form = None
+    if picture_reader(form):
+        answer.update({"status": "failed", "error": "ffmpeg reads this file as a picture by its name (a printf pattern such as %d with a picture extension)",
+                       "status_basis": "the container was read (diagnosis) but nothing was repaired: ffmpeg takes the file's name as a picture or a numbered "
+                                       "sequence of pictures, not as the %s it holds; copy it under a name without %% and a picture extension" % found["container"]})
+        return answer, None
+    before_frames, before_exit, before_errors, before_lines = count_decoded(ffmpeg, video)
+    answer["original"] = {"frames_that_decode": before_frames, "decoder_exit": before_exit, "decoder_said": before_errors[:3], "decoder_lines": before_lines}
     if "moov missing" in names:
         answer.update({"status": "failed", "rebuilt": [], "could_not": ["the moov box: its sample tables and codec configuration are not in the file, and this tool does not rebuild them from the media data. "
                                                                            "A second, whole file from the same recorder and settings supplies them to a repair program that takes a reference file; none is run here"],
@@ -2627,7 +2765,7 @@ def repair(video, ffmpeg, common, size):
     argv = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-n", "-err_detect", "ignore_err", "-fflags", "+genpts", "-i", "file:" + target_of(video),
             "-map", "0", "-c", "copy"] + (["-movflags", "+faststart"] if suffix == ".mp4" else []) + ["file:" + target_of(out_path)]
     code, _out, err, timed_out = preflight(argv, seconds_left(MAX_SECONDS))
-    said = [clean(line) for line in err.split(b"\n") if line.strip()][:3]
+    said, _more = first_lines(err)
     if timed_out or not os.path.isfile(out_path) or os.path.islink(out_path) or os.path.getsize(out_path) == 0:
         temp_drop(out_path)
         answer.update({"status": "failed", "rebuilt": [], "could_not": ["a remuxed copy: the decoder's remux %s" % ("was ended at the clock" if timed_out else "wrote nothing (exit %s)" % code)],
@@ -2635,7 +2773,7 @@ def repair(video, ffmpeg, common, size):
                        "status_basis": "no repaired copy was written: the remux %s" % ("did not finish in time" if timed_out else "failed")})
         return answer, place
     temp_done(out_path)
-    after_frames, after_exit, after_errors = count_decoded(ffmpeg, out_path)
+    after_frames, after_exit, after_errors, after_lines = count_decoded(ffmpeg, out_path)
     with open(out_path, "rb") as fh:
         digest = hashlib.sha256()
         for block in iter(lambda: fh.read(1 << 20), b""):
@@ -2651,16 +2789,21 @@ def repair(video, ffmpeg, common, size):
         if "movi cut" in names or "RIFF cut" in names:
             could_not.append("the chunks that lay past the end of the file")
     verified = after_frames is not None and after_frames > 0
-    whole = verified and after_exit == 0 and not after_errors
-    status = "failed" if not verified else "complete" if whole and code == 0 else "partial"
-    reasons = []
-    if verified and not whole:
-        reasons.append("the repaired copy decodes %d frames and the decoder then reported errors or a non-zero exit" % after_frames)
+    unread = Unread("copy_decoder_exit_not_zero", "copy_decoder_error_lines", "remux_exit_not_zero", "container_not_walked")
+    if verified and after_exit != 0:
+        unread.add("copy_decoder_exit_not_zero", 1, "the repaired copy decodes %d frames and the decoder then %s" % (
+            after_frames, "did not finish in the time it was given" if after_exit is None else "ended with exit code %s" % after_exit))
+    if verified:
+        unread.add("copy_decoder_error_lines", after_lines, "the decoder wrote %d line(s) about errors while it decoded the repaired copy (repaired.decoder_said has the first)" % after_lines)
     if code != 0:
-        reasons.append("the remux ended with exit code %s" % code)
-    answer.update({"status": status, "complete": status == "complete", "rebuilt": rebuilt, "could_not": could_not,
+        unread.add("remux_exit_not_zero", 1, "the remux ended with exit code %s" % code)
+    unread.add("container_not_walked", sum(1 for f in found["findings"] if "its bound of 10000" in f["what"]),
+               "the container's own walk (diagnosis) stopped before its end: what lies after it was not diagnosed")
+    reasons = unread.reasons()
+    status = "failed" if not verified else "partial" if unread else "complete"
+    answer.update({"status": status, "complete": status == "complete", "not_read_or_judged": dict(unread.counts), "rebuilt": rebuilt, "could_not": could_not,
                    "repaired": {"file": "%s/%s" % (place.shown, out_name), "bytes": os.path.getsize(out_path), "sha256": digest.hexdigest(),
-                                "frames_that_decode": after_frames, "decoder_exit": after_exit, "decoder_said": after_errors[:3]},
+                                "frames_that_decode": after_frames, "decoder_exit": after_exit, "decoder_said": after_errors[:3], "decoder_lines": after_lines},
                    "verified_by": "decoding the repaired copy's first video stream to nothing and counting the frames",
                    "decoder_said": said, "output_directory": place.shown,
                    "claim": "the repaired copy decodes %s frames; the original decodes %s as it is. That count is all that was verified: not that the frames are the scene's, in order, or all there were" % (
@@ -2697,7 +2840,7 @@ def main():
         if mode == "repair":
             if missing:
                 common["decoder_missing"] = missing
-            answer, place = repair(video, ffmpeg if not missing else None, common, st.st_size)
+            answer, place = repair(video, ffmpeg if not missing else None, ffprobe, common, st.st_size)
             answer.pop("decoder_missing", None)
         elif missing:
             answer = {**common, "status": "failed", "error": missing, "status_basis": "%s: no frame was decoded, and that says nothing about the video" % missing}

@@ -437,6 +437,137 @@ test("a link to a directory outside the tree is not entered, and whole_list_read
   });
 });
 
+/** Loads the recipe as a module (its ENDS block holds nothing then) and runs `body` with it as `m`; the last line printed is JSON. */
+const HARNESS = String.raw`
+import importlib.util, json, os, sys, time, tracemalloc
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("first_stage", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+target, out = sys.argv[2], sys.argv[3]
+`;
+
+const lastJson = (text: string): Doc => JSON.parse(text.trim().split("\n").pop()!) as Doc;
+
+test("no registry hive or antivirus file is opened past the clock: the ones not reached are counted, and the run is partial (P1-4)", async () => {
+  await withRun(async (run) => {
+    py(String.raw`
+import os, sys
+root = sys.argv[1]
+for i in range(300):
+    d = root + "/Users/u%03d" % i
+    os.makedirs(d)
+    open(d + "/NTUSER.DAT", "wb").write(b"regf" + b"\x00" * 64)
+os.makedirs(root + "/Users/bob/Downloads")
+open(root + "/Users/bob/Downloads/parcel.docm", "wb").write(b"PK\x03\x04")
+`, [join(run, "inputs/hives")], run);
+    // The clock is 2 s (its 90 %, 1.8 s, is the deadline), and the one VBA check sleeps past it: every hive comes after the deadline.
+    const r = py(HARNESS + String.raw`
+m.limits = lambda: (2, 5000000)
+real_vba, real_names, late = m.vba_in_file, m.names_in_file, []
+began = time.monotonic()
+def slow(*a):
+    time.sleep(2.2)
+    return real_vba(*a)
+def names(*a):
+    if time.monotonic() > began + 2.0:
+        late.append(a[0])
+    return real_names(*a)
+m.vba_in_file, m.names_in_file = slow, names
+m.run(target, out)
+print(json.dumps({"late": len(late)}))
+`, [RECIPE, "inputs/hives", "store/jobs/j000001/out/hives"], run);
+    assert.equal(lastJson(r).late, 0, "a hive was opened after the deadline");
+    const c = await cov(run, "store/jobs/j000001/out/hives");
+    assert.equal(c.status, "partial");
+    assert.equal(c.not_read_or_judged.files_not_searched_past_the_clock, 300);
+    assert.match(c.limits_hit.join(" "), /seconds: the clock ran out before 300 registry hive\(s\) or antivirus file\(s\) were searched/);
+  });
+});
+
+test("a member list keeps no hive's path, and a directory of many entries is held a batch at a time: memory stays small (P1-5)", async () => {
+  await withRun(async (run) => {
+    py(String.raw`
+import os, sys
+top = sys.argv[1]
+os.makedirs(top + "/list")
+prefix = "C:\\" + "\\".join(["p" * 50] * 8)
+with open(top + "/list/members.tsv", "w") as f:
+    f.write("type\tpath\n")
+    for i in range(100000):
+        f.write("file\t%s\\Users\\u%06d\\NTUSER.DAT\n" % (prefix, i))
+open(top + "/list/coverage.json", "w").write('{"recipe": "a-lister", "status": "complete"}')
+d = top + "/tree/" + "d" * 100
+os.makedirs(d)
+for i in range(20000):
+    open("%s/%s%05d.txt" % (d, "f" * 190, i), "wb").close()
+`, [join(run, "inputs/big")], run);
+    const peak = (target: string, out: string): Doc => lastJson(py(HARNESS + String.raw`
+m.DIRECTORY_BATCH = 1000
+tracemalloc.start()
+m.run(target, out)
+print(json.dumps({"peak": tracemalloc.get_traced_memory()[1]}))
+`, [RECIPE, target, out], run));
+    const list = peak("inputs/big/list/members.tsv", "store/jobs/j000001/out/list");
+    assert.ok(list.peak < 16 << 20, `a list of 100,000 hive rows held ${list.peak} bytes at its peak`);
+    const lc = await cov(run, "store/jobs/j000001/out/list");
+    assert.deepEqual([lc.status, lc.members, lc.sources.registry_hives], ["complete", 100000, 100000]);
+    const tree = peak("inputs/big/tree", "store/jobs/j000001/out/tree");
+    assert.ok(tree.peak < 6 << 20, `a directory of 20,000 long names held ${tree.peak} bytes at its peak`);
+    const tc = await cov(run, "store/jobs/j000001/out/tree");
+    assert.deepEqual([tc.status, tc.members, tc.directories_read_in_batches], ["complete", 20000, 1], "every name was read, a batch at a time");
+  });
+});
+
+test("a row with no cell in the path column is a name not read: the run is partial and whole_list_read false (P1-6)", async () => {
+  await withRun(async (run) => {
+    const dir = join(run, "inputs/short rows");
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "members.tsv"), "n\ttype\tsize\tpath\n1\tfile\t1\n2\tfile\t1\tC:\\Users\\bob\\AppData\\Local\\Temp\\invoice.docm\n");
+    await writeFile(join(dir, "coverage.json"), '{"recipe": "a-lister", "status": "complete"}');
+    const r = recipe(run, "run", { paths: ["inputs/short rows/members.tsv"] }, "store/jobs/j000001/out/short");
+    assert.deepEqual([r.doc.status, r.doc.whole_list_read, r.doc.candidates], ["partial", false, 1]);
+    const c = await cov(run, "store/jobs/j000001/out/short");
+    assert.equal(c.not_read_or_judged.list_rows_without_a_path, 1);
+    assert.match(c.status_basis, /has no cell in its path column/);
+  });
+});
+
+test("a list of exactly the members limit is whole; a list outside the declared forms is partial; a name that is not text is counted", async () => {
+  await withRun(async (run) => {
+    const doc = "C:\\Users\\bob\\AppData\\Local\\Temp\\invoice.docm";
+    const write = async (name: string, body: Buffer | string): Promise<string> => {
+      const dir = join(run, "inputs", name);
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, "members.tsv"), body);
+      await writeFile(join(dir, "coverage.json"), '{"recipe": "a-lister", "status": "complete"}');
+      return `inputs/${name}/members.tsv`;
+    };
+    const exact = recipe(run, "run", { paths: [await write("exact", `path\n${doc}\nC:\\Users\\bob\\a.txt\n`)] }, "store/jobs/j000001/out/exact", { RECIPE_MEMBERS: "2" });
+    assert.deepEqual([exact.doc.status, exact.doc.members, exact.doc.whole_list_read], ["complete", 2, true], "two rows under a limit of two are not more than two");
+    const over = recipe(run, "run", { paths: [await write("over", `path\n${doc}\nC:\\Users\\bob\\a.txt\nC:\\Users\\bob\\b.txt\n`)] }, "store/jobs/j000001/out/over", { RECIPE_MEMBERS: "2" });
+    assert.deepEqual([over.doc.status, over.doc.whole_list_read], ["partial", false]);
+    const capital = recipe(run, "run", { paths: [await write("capital", `n\tPath\n1\t${doc}\n`)] }, "store/jobs/j000001/out/capital");
+    assert.deepEqual([capital.doc.status, capital.doc.candidates], ["complete", 1], "a Path header is the path column");
+    for (const [name, body, form] of [
+      ["cr only", `path\r${doc}\r`, /carriage return alone/],
+      ["utf16", Buffer.from(`\ufeffpath\n${doc}\n`, "utf16le"), /NUL bytes/],
+      ["tab", `${doc}\t12\n`, /a path a line/],
+    ] as const) {
+      const out = `store/jobs/j000001/out/${name}`;
+      const r = recipe(run, "run", { paths: [await write(name, body)] }, out);
+      assert.deepEqual([r.doc.status, r.doc.whole_list_read], ["partial", false], name);
+      const c = await cov(run, out);
+      assert.ok(c.not_read_or_judged.list_lines_of_another_form >= 1, name);
+      assert.match(c.list_form, form, name);
+    }
+    const index = lastJson(py(HARNESS + String.raw`
+print(json.dumps({"unencodable": m.name_index(["plain.docm", "bad\udcff.docm"])[2]}))
+`, [RECIPE, ".", "."], run));
+    assert.equal(index.unencodable, 1, "a name that is not text cannot be searched for in bytes, and is counted");
+  });
+});
+
 test("the recipe is run on demand, ad1-items declares its listing phase, and the note carries the rule on its card", async () => {
   const spec = JSON.parse(await readFile(join(CFB, "recipes", "first-stage-candidates", "recipe.json"), "utf8")) as Doc;
   assert.deepEqual([spec.id, spec.auto, spec.outputs, spec.purpose], ["first-stage-candidates", [], ["candidates.tsv", "coverage.json", "index.tsv"], "inventory"]);

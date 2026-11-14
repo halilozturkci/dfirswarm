@@ -801,3 +801,107 @@ for name, keys, kind in (("abc.gif", "abc", "GIF"), ("abab.gif", "abab", "GIF"),
     assert.doesNotMatch(JSON.stringify(row.looked_for), /three of them at the corners|two finder patterns/, "the readings that take no box are not claimed");
   });
 });
+
+// ---- the third verification of 1.17.2: a JPEG cut and given its end back, and every symbol of a frame -------------------------------------
+
+test("a JPEG cut short and given its end marker back is damaged and partial (baseline, progressive, with restart markers); the whole files are complete", { skip: pillowHere(ROOT) ? false : "Pillow does not import here: the tool reads no JPEG without it" }, async () => {
+  await withRun(async (run, out) => {
+    // The symbol is in the top third; the rest of the picture is light grey, so that the cut part is not where the symbol is.
+    encode(String.raw`
+d = sys.argv[1]
+rows = draw(symbol(b"fixture jpeg top 0042", 2, "M", 3), 4, 4)
+w = len(rows[0])
+open(d + "/top.raw", "wb").write(b"".join(rows) + b"\xe0" * (w * len(rows) * 2))
+open(d + "/size", "w").write("%d %d" % (w, len(rows) * 3))
+`, [join(run, "work/s1")], run);
+    withPillow(String.raw`
+import io, sys
+from PIL import Image
+d = sys.argv[1]; w, h = map(int, open(d + "/size").read().split())
+im = Image.frombytes("L", (w, h), open(d + "/top.raw", "rb").read())
+for name, kw in (("base", {}), ("prog", {"progressive": True}), ("rst", {"restart_marker_rows": 1})):
+    b = io.BytesIO(); im.save(b, "JPEG", quality=95, **kw); data = b.getvalue()
+    assert data[-2:] == b"\xff\xd9"
+    open(d + "/" + name + ".jpg", "wb").write(data)
+    open(d + "/" + name + " cut.jpg", "wb").write(data[:int(len(data) * 0.6)] + b"\xff\xd9")
+    Image.open(d + "/" + name + " cut.jpg").load()     # libjpeg takes the cut file without an error: that is the case
+`, [join(run, "work/s1")], run);
+    const whole = await call("qr_read", run, { images: ["work/s1/base.jpg", "work/s1/prog.jpg", "work/s1/rst.jpg"] }, { out });
+    assert.equal(whole.doc.status, "complete", whole.stdout.slice(0, 900));
+    assert.deepEqual((whole.doc.rows as Doc[]).map((r) => [r.result, r.picture_damaged ?? null]), [["decoded", null], ["decoded", null], ["decoded", null]]);
+    assert.equal(whole.doc.not_read_or_judged.pictures_damaged, 0);
+    for (const name of ["base", "prog", "rst"]) {
+      const r = await call("qr_read", run, { image: `work/s1/${name} cut.jpg` }, { out });
+      assert.equal(r.doc.status, "partial", `${name}: ${r.stdout.slice(0, 900)}`);
+      const row = r.doc.rows[0] as Doc;
+      assert.match(row.picture_damaged, /the tool's own walk of the JPEG's coded data found it cut or corrupt \(scan \d+: the coded data ends/, name);
+      assert.equal(r.doc.not_read_or_judged.pictures_damaged, 1, name);
+      assert.doesNotMatch(r.doc.status_basis, /read whole/, name);
+      assert.ok((r.doc.partial_reasons as string[]).some((s) => /damaged picture/.test(s)), name);
+    }
+  });
+});
+
+test("every symbol of a frame is read: two side by side, one of them light on dark; a ninth past the bound and finder patterns no reading explains are partial", async () => {
+  await withRun(async (run, out) => {
+    encode(String.raw`
+d = sys.argv[1]
+def side_by_side(a, b):
+    h = max(len(a), len(b))
+    pad = lambda rows, w: rows + [b"\xff" * w] * (h - len(rows))
+    return [x + y for x, y in zip(pad(a, len(a[0])), pad(b, len(b[0])))]
+A = draw(symbol(b"fixture first symbol 0042", 2, "M", 3), 4, 4)
+B = draw(symbol(b"fixture second symbol 0042", 3, "L", 5), 4, 4)
+open(d + "/first.expect", "wb").write(b"fixture first symbol 0042"); open(d + "/second.expect", "wb").write(b"fixture second symbol 0042")
+png(side_by_side(A, B), d + "/two.png")
+inverse = bytes(255 - v for v in range(256))
+png(side_by_side(A, [r.translate(inverse) for r in B]), d + "/two inverted.png")
+# A symbol whose data is overwritten past correction: its three finder patterns are there, and no reading makes a symbol of it.
+M = symbol(b"fixture spoiled 0042", 2, "M", 3)
+rnd = random.Random(7)
+for r in range(9, 25):
+    for c in range(9, 25):
+        if not (16 <= r <= 20 and 16 <= c <= 20):
+            M[r][c] = rnd.randrange(2)
+for r in range(0, 9):
+    for c in range(9, 17):
+        M[r][c] = rnd.randrange(2)
+png(side_by_side(A, draw(M, 4, 4)), d + "/one and a spoiled one.png")
+# Nine symbols in one frame, three by three.
+grid = [draw(symbol(("grid %d 0042" % k).encode(), 1, "L", k % 8), 3, 4) for k in range(9)]
+rows = []
+for i in range(3):
+    line = grid[3 * i]
+    for j in (1, 2):
+        line = side_by_side(line, grid[3 * i + j])
+    rows += line
+png(rows, d + "/nine.png")
+`, [join(run, "work/s1")], run);
+    const file = (cited: string): string => join(out, cited.replace("store/jobs/j000001/out/", ""));
+    for (const name of ["two.png", "two inverted.png"]) {
+      const r = await call("qr_read", run, { image: `work/s1/${name}` }, { out });
+      assert.equal(r.doc.status, "complete", `${name}: ${JSON.stringify(r.doc.partial_reasons)} ${JSON.stringify(r.doc.rows[0]).slice(0, 1500)}`);
+      const row = r.doc.rows[0] as Doc;
+      assert.equal(row.symbols_decoded, 2, name);
+      assert.deepEqual(await readFile(file(row.payload_file)), await readFile(join(run, "work/s1/first.expect")));
+      const second = (row.other_symbols_decoded as Doc[])[0]!;
+      assert.deepEqual([second.frame, second.symbol, second.polarity], [1, 2, name === "two.png" ? "dark on light" : "light on dark"], name);
+      assert.deepEqual(await readFile(file(second.payload_file)), await readFile(join(run, "work/s1/second.expect")), name);
+      assert.ok(second.region_pixels[0] >= row.region_pixels[2] - 4, `the second symbol lies right of the first: ${second.region_pixels} ${row.region_pixels}`);
+      assert.doesNotMatch(r.stdout, /fixture (first|second)/, "no payload in the answer");
+    }
+    const spoiled = await call("qr_read", run, { image: "work/s1/one and a spoiled one.png" }, { out });
+    assert.equal(spoiled.doc.status, "partial", spoiled.stdout.slice(0, 900));
+    const srow = spoiled.doc.rows[0] as Doc;
+    assert.deepEqual([srow.result, srow.symbols_decoded], ["decoded", 1]);
+    assert.ok(srow.finder_patterns_not_read.count >= 2, JSON.stringify(srow.finder_patterns_not_read));
+    assert.equal(spoiled.doc.not_read_or_judged.finder_patterns_not_read, srow.finder_patterns_not_read.count);
+    const nine = await call("qr_read", run, { image: "work/s1/nine.png" }, { out, limitMs: 90_000 });
+    assert.equal(nine.doc.status, "partial", nine.stdout.slice(0, 900));
+    const nrow = nine.doc.rows[0] as Doc;
+    assert.equal(nrow.symbols_decoded, 8);
+    assert.deepEqual(nrow.symbols_past_the_bound.frames, [1]);
+    assert.equal(nine.doc.not_read_or_judged.frames_past_the_symbol_bound, 1);
+    assert.equal(new Set([nrow.payload_file, ...(nrow.other_symbols_decoded as Doc[]).map((o) => o.payload_file)]).size, 8, "eight payloads, each in its own file");
+  });
+});
