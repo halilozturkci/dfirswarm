@@ -197,6 +197,7 @@ KINDS = ("censuses", "extents", "recovery_checks", "timelines", "coverage")
 DEFAULT_SECONDS, MAX_SECONDS = 780, 840    # the manifest allows 900
 MAX_INPUTS = 100000
 MAX_HOSTS = 100000
+MAX_HOST_NAME = 255             # the longest host name taken from a row of a timeline (as for a spec's host and expected_hosts)
 MAX_LINE = 1 << 20
 MAX_KIND = 100
 SAT = 1 << 50                # a byte or run sum is held at most this high (1 PiB); a sum that reaches it is shown as the cap and the answer is partial
@@ -1959,7 +1960,9 @@ def stream_rows(path, kind, host, input_no, ctx):
                 rec = row.get("record")
                 if kind == "timelines":
                     h, t, k = row.get("host", host), normal_time(row.get("time")), row.get("kind")
-                    if not isinstance(h, str) or not h or t is None or not isinstance(k, str) or not k or len(k) > MAX_KIND:
+                    # A host named in a row is held to the 255 characters the host of a spec and expected_hosts are: a longer name is a row skipped
+                    # (counted, and the answer is partial), never judged and written for every host the page loop reaches.
+                    if not isinstance(h, str) or not h or len(h) > MAX_HOST_NAME or t is None or not isinstance(k, str) or not k or len(k) > MAX_KIND:
                         facts["skipped"] += 1
                         continue
                     hid_row = host_id(ctx, h)
@@ -2156,7 +2159,12 @@ def main():
     total = {"hosts": 0, "hosts_with_census": 0, "hosts_unknown": 0, "hosts_conflict": 0, "hosts_census_partial": 0, "census_files": 0, "census_bytes": 0,
              "candidate_files": 0, "candidate_bytes": 0, "extent_bytes_inspected": 0, "recovery_files_checked": 0}
     db = index.db
-    for e in entries:
+    for written, e in enumerate(entries):
+        # The page loop reads the clock too: it judges and writes a row for every host, which on thousands of long names outlasted the
+        # manifest's timeout. At the clock (and the order's grace) it stops, and the hosts not written are counted and make the answer partial.
+        if late():
+            stopped["hosts_not_written"] = len(entries) - written
+            break
         hid = ctx["hosts"][e.name]
         total["hosts"] += 1
         row = {"host_id": "H%d" % hid, "host": shown(e.name, count=False)}
@@ -2262,6 +2270,9 @@ def main():
     if stopped.get("hosts_ordered_unjudged"):
         reasons.append("the time limit (max_seconds %d, and %d seconds more for the order of the hosts) was reached while the hosts were put in order: "
                        "%d host names were not judged for it and come last, in an order drawn by a keyed hash of this run" % (max_seconds, ORDER_GRACE, stopped["hosts_ordered_unjudged"]))
+    if stopped.get("hosts_not_written"):
+        reasons.append("the time limit (max_seconds %d, and %d seconds more) was reached while the host pages were written: %d hosts have no row in the "
+                       "pages and are not in the totals" % (max_seconds, ORDER_GRACE, stopped["hosts_not_written"]))
     if not total["hosts"]:
         reasons.append("no host was found in the inputs")
     capped = db.execute("SELECT COUNT(*) FROM agg WHERE b >= ? OR c >= ? OR d >= ?", (SAT, SAT, SAT)).fetchone()[0]

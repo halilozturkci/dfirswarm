@@ -32,7 +32,7 @@
     },
     "max_seconds": {
       "type": "integer",
-      "description": "The tool's own time limit in seconds (default 780, at most 840; the manifest's timeout is 900). When it runs out no further row is read, what was counted is reported, and the answer is partial The hosts are put in order under the clock too (at most 20 seconds past it): a host name not judged in time comes last, in an order drawn by a keyed hash of the run, and the answer is partial (time_limit.hosts_ordered_unjudged)"
+      "description": "The tool's own time limit in seconds (default 780, at most 840; the manifest's timeout is 900). When it runs out no further row is read, what was counted is reported, and the answer is partial The hosts are put in order under the clock too (at most 20 seconds past it): a host name not judged in time comes last, in an order drawn by a keyed hash of the run, and the answer is partial (time_limit.hosts_ordered_unjudged); the host pages are written under the same limit, and the hosts not written by then are counted in time_limit.hosts_not_written and make it partial too; a host named in a row of a timeline with more than 255 characters is a row skipped"
     }
   },
   "runtime": "python3",
@@ -41,6 +41,6 @@
   "example": "{\"censuses\": [{\"host\": \"fileserver1\", \"file\": \"work/s1/tool-output/encrypted_survey-census.jsonl\"}], \"expected_hosts\": [\"fileserver1\", \"workstation7\"]}",
   "by": "maintainer",
   "at": "2026-11-01T12:00:00.000Z",
-  "version": 7,
-  "sha256": "b7047aeb2bb87494d9f5b79beaa7e37dbb72e0d88cf6ae41a0c344bf7234e742"
+  "version": 8,
+  "sha256": "e8f62ac299cfad6eced559eca379b4842d00a5ef45abdb1612db965c6b68b7d1"
 }
