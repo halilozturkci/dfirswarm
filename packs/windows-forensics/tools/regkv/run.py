@@ -609,6 +609,7 @@ def withhold_library_output():
 
 
 INLINE_DATA = 0x80000000                  # a value record whose data size has this bit set holds its data (four bytes at most) in the offset field
+FIXED_VALUE_BYTES = {"REG_DWORD": 4, "REG_QWORD": 8, "REG_FILETIME": 8}   # a value of these types is this many bytes: one that declares more or fewer is not its type's value
 HBIN_START = 0x1000                       # a cell offset counts from the end of the hive's 4096-byte base block
 SEGMENT_DATA = 0x3FD8                     # the data one big-data segment holds: a value with more is kept in segments that a "db" record lists
 
@@ -1024,6 +1025,13 @@ class HiveBounds:
                     data = struct.pack("<I", offset & 0xFFFFFFFF)[:size - INLINE_DATA]
                 else:
                     data = b"".join(bytes(buf[s:s + n]) for s, n in segments) if big else bytes(buf[start:start + size])
+                fixed = FIXED_VALUE_BYTES.get(data_type)
+                if fixed is not None and len(data) != fixed:
+                    # the first bytes of a longer value, or bytes the record does not declare, are not its value: neither is printed as it
+                    problems.append({"where": where, "what": "values",
+                                     "error": "%s is not read: a %s is %d bytes and this one declares %d; its data is not given as the value" % (
+                                         where_value, data_type, fixed, len(data))})
+                    continue
                 if data_type in ("REG_SZ", "REG_EXPAND", "REG_EXPAND_SZ"):
                     value = reg.try_decode_binary(data, as_json=as_json, trim_values=trim_values)
                 elif data_type in ("REG_BINARY", "REG_NONE"):
@@ -1032,9 +1040,9 @@ class HiveBounds:
                     else:
                         value = binascii.b2a_hex(data).decode()[:max_len] if trim_values else data
                 elif data_type == "REG_DWORD":
-                    value = offset if inline else reg.Int32ul.parse(data)
+                    value = reg.Int32ul.parse(data)
                 elif data_type == "REG_QWORD":
-                    value = offset if inline else reg.Int64ul.parse(data)
+                    value = reg.Int64ul.parse(data)
                 elif data_type == "REG_MULTI_SZ":
                     value, dropped, undecodable = multi_strings(data)
                     if dropped:

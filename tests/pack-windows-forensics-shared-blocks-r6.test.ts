@@ -50,7 +50,7 @@ async function regkv(cwd: string, file: string, data: Buffer, key = "K"): Promis
 
 // ---- read_values: data not wholly inside the file -----------------------------------------------------------------------------------
 
-test("a value whose data runs past the end of the hive file, starts past it, or is more than its record holds is a problem line, never a cut or empty value", { skip: REGIPY }, async () => {
+test("a value whose data runs past the end of the hive file, starts past it, is more than its record holds, or is not the size of its fixed-size type is a problem line, never a cut or empty value", { skip: REGIPY }, async () => {
   await withCwd(async (cwd) => {
     const base = (): Buffer =>
       hive({ name: "ROOT", children: [{ name: "K", values: [
@@ -67,6 +67,10 @@ test("a value whose data runs past the end of the hive file, starts past it, or 
       ["runs past the end", (b) => b.writeUInt32LE(MiB, vkOf(b, "Bin") + 4), "Bin", /declares 1048576 bytes of data at offset \d+ of a hive file of \d+ bytes, and \d+ of them are past its end/],
       ["starts past the end", (b) => b.writeUInt32LE(0x7fff0000, vkOf(b, "Path") + 8), "Path", /declares \d+ bytes of data at offset \d+ of a hive file of \d+ bytes, which starts past its end/],
       ["more than its record holds", (b) => b.writeUInt32LE(0x80000010, vkOf(b, "Num") + 4), "Num", /declares 16 bytes of data held in its record, which holds 4 at most/],
+      ["a DWORD that declares 2 bytes in its record", (b) => b.writeUInt32LE(0x80000002, vkOf(b, "Num") + 4), "Num", /a REG_DWORD is 4 bytes and this one declares 2; its data is not given as the value/],
+      ["a DWORD that declares 64 bytes", (b) => b.writeUInt32LE(4, vkOf(b, "Bin") + 12), "Bin", /a REG_DWORD is 4 bytes and this one declares 64; its data is not given as the value/],
+      ["a QWORD that declares 64 bytes", (b) => b.writeUInt32LE(11, vkOf(b, "Bin") + 12), "Bin", /a REG_QWORD is 8 bytes and this one declares 64/],
+      ["a FILETIME that declares 64 bytes", (b) => b.writeUInt32LE(16, vkOf(b, "Bin") + 12), "Bin", /a REG_FILETIME is 8 bytes and this one declares 64/],
     ];
     for (const [label, patch, name, said] of cases) {
       const data = base();

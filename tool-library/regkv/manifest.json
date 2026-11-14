@@ -41,8 +41,8 @@
   "timeout_seconds": 30,
   "by": "s9f2005",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 21,
-  "sha256": "2de94b9f9a9d24f8df7df256c791b1c5519cac14d22b37a0e561eef382149afd",
+  "version": 22,
+  "sha256": "81742982d768bf08b3acb543ce8e84e3cd205681095f89111e803b9b84584c39",
   "use": {
     "extensions": [
       ".hve"
