@@ -296,7 +296,7 @@ test("a key name or a value name longer than its cell does not read the next cel
   }
 });
 
-test("a value data size longer than its cell is cut at the cell: the bytes of the next cell are not in the value", { skip }, async () => {
+test("a value data size longer than its cell is not read: the bytes of the next cell are not in the value, and the value is not given cut", { skip }, async () => {
   const base = overrunHive();
   const canaryAt = base.indexOf(CANARY, BASE_BLOCK);
   await withCwd(async (cwd) => {
@@ -309,7 +309,7 @@ test("a value data size longer than its cell is cut at the cell: the bytes of th
     assert.equal(seenIn(JSON.stringify(out)), false);
     assert.equal(seenIn(await everything(cwd)), false);
     assert.equal(out.status, "partial");
-    assert.match(JSON.stringify(out.records.problems), /only the cell's bytes are read/);
+    assert.match(JSON.stringify(out.records.problems), /\(REG_BINARY\) is not read: it declares \d+ bytes of data and its data cell \(offset \d+\) holds \d+: the bytes past the cell are not its data/);
   });
 });
 

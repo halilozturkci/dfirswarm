@@ -219,7 +219,7 @@ import tempfile
 import time
 from pathlib import Path
 
-PARSER = "registry_recover/5"
+PARSER = "registry_recover/6"
 BASE_BLOCK = 4096
 LOG_HEADER = 512
 MARVIN_SEED = 0x82EF4D887A4E55C5
@@ -1667,10 +1667,11 @@ def install_signal_handlers():
 # past one is said, never followed. The bounds are also of memory: a list keeps only the distinct keys it names, counted by what each takes (its
 # record and its name, as stored and as decoded: a name can be 65,535 bytes), and the names of the keys a walk keeps add up to at most twice the
 # hive's bytes (key cells that overlap, an element pointing into another key's name, are each read as a key of their own); a value's data is read
-# up to VALUE_DATA_BYTES, data that is not wholly inside the file is said and not read, and a key's values are handed out one at a time, at most
-# LIST_DATA_BYTES of their names and data. A hive is opened through open_hive, which checks the base block and the root cell before regipy reads
-# the file.
-import binascii
+# up to VALUE_DATA_BYTES, data that is not wholly inside the file or inside the cell that holds it is said and not read, every value's bytes are
+# found the same way whatever its type and then taken by its type as the table at VALUE_TYPES says, and a key's values are handed out one at a
+# time, at most LIST_DATA_BYTES of their names and data. A hive is opened through open_hive, which checks the base block and the root cell before
+# regipy reads the file.
+import datetime
 import hashlib
 import itertools
 import logging
@@ -1727,9 +1728,83 @@ def withhold_library_output():
 
 
 INLINE_DATA = 0x80000000                  # a value record whose data size has this bit set holds its data (four bytes at most) in the offset field
-FIXED_VALUE_BYTES = {"REG_DWORD": 4, "REG_QWORD": 8, "REG_FILETIME": 8}   # a value of these types is this many bytes: one that declares more or fewer is not its type's value
 HBIN_START = 0x1000                       # a cell offset counts from the end of the hive's 4096-byte base block
 SEGMENT_DATA = 0x3FD8                     # the data one big-data segment holds: a value with more is kept in segments that a "db" record lists
+
+# The bytes of a value are found first, the same way for every type: held in its record (a size with the top bit set: four bytes at most), in
+# the data cell its record names (the size it declares must fit inside that cell, whose size is in the cell's header, and inside the file), or,
+# when it declares more than one segment holds and that cell starts "db", put together from the segments a big data record lists (each
+# segment inside a cell that holds it, the record and its list too). Windows keeps every value of more than 16,344 bytes so, whatever its type.
+# Only then is the value taken by its type, here and nowhere else:
+#
+#   type (number)                         bytes it requires                given as                                  otherwise
+#   REG_NONE (0), REG_BINARY (3)          any                              the bytes (hex where printed)             -
+#   REG_SZ (1), REG_EXPAND_SZ (2),        valid UTF-16LE (a last odd       text; the NULs that end it are not in     the bytes, and a problem line naming the
+#     REG_LINK (6)                        NUL byte is padding)             it, a NUL inside it is                    first byte that does not decode
+#   REG_DWORD (4)                         exactly 4                        a number, little-endian                   not given: a problem line
+#   REG_DWORD_BIG_ENDIAN (5)              exactly 4                        a number, big-endian                      not given: a problem line
+#   REG_QWORD (11)                        exactly 8                        a number, little-endian                   not given: a problem line
+#   REG_FILETIME (16)                     exactly 8, a time up to the end  ISO 8601 UTC with seven fractional        wrong size: not given; a time past 9999:
+#                                         of the year 9999                 digits, exact (the number in .filetime)   the bytes, and a problem line
+#   REG_MULTI_SZ (7)                      UTF-16LE strings between NULs    the strings, empty ones left out          bytes no NUL ends, or a string that is not
+#                                                                                                                    UTF-16 and all after it: not given, counted
+#                                                                                                                    in a problem line; strings after the empty
+#                                                                                                                    one that ends the list: given, and said
+#   REG_RESOURCE_LIST (8), REG_FULL_RESOURCE_DESCRIPTOR (9), REG_RESOURCE_REQUIREMENTS_LIST (10): the bytes, whole
+#   every other type (one Windows does not define, a device property 0xFFFF0000 + n, 0x00200000): the bytes, whole, the type named by its
+#   number in decimal (regipy's own name for it maps a device property onto a registry type it is not)
+#
+# "The bytes" is a bytes object, which each tool prints as hex through its boundary; nothing is decoded through regipy's try_decode_binary,
+# which falls back to UTF-8 and strips NULs from binary data, and nothing is cut to a length (a value is given whole or not at all).
+VALUE_TYPES = {0: "REG_NONE", 1: "REG_SZ", 2: "REG_EXPAND_SZ", 3: "REG_BINARY", 4: "REG_DWORD", 5: "REG_DWORD_BIG_ENDIAN", 6: "REG_LINK",
+               7: "REG_MULTI_SZ", 8: "REG_RESOURCE_LIST", 9: "REG_FULL_RESOURCE_DESCRIPTOR", 10: "REG_RESOURCE_REQUIREMENTS_LIST", 11: "REG_QWORD",
+               16: "REG_FILETIME"}
+FIXED_VALUE_BYTES = {"REG_DWORD": 4, "REG_DWORD_BIG_ENDIAN": 4, "REG_QWORD": 8, "REG_FILETIME": 8}   # one that declares another size is not its type's value
+TEXT_TYPES = ("REG_SZ", "REG_EXPAND_SZ", "REG_LINK")
+FILETIME_LAST = 265046774400 * 10 ** 7 - 1        # 9999-12-31T23:59:59.9999999Z: a later FILETIME has no ISO 8601 form (regipy gave 1601-01-01)
+
+
+def filetime_text(n):
+    """A FILETIME as ISO 8601 UTC with seven fractional digits, by integer arithmetic (exact), or None past FILETIME_LAST."""
+    if not 0 <= n <= FILETIME_LAST:
+        return None
+    seconds, ticks = divmod(n, 10 ** 7)
+    when = datetime.datetime(1601, 1, 1) + datetime.timedelta(seconds=seconds)
+    return "%04d-%02d-%02dT%02d:%02d:%02d.%07dZ" % (when.year, when.month, when.day, when.hour, when.minute, when.second, ticks)
+
+
+def typed_value(data_type, data):
+    """(the value, its FILETIME number or None, a problem sentence or None) for `data`, the whole bytes of a value of `data_type` (a name of
+    VALUE_TYPES or a number in decimal), by the table above. The sizes of the fixed-size types are checked by the caller before this."""
+    if data_type in TEXT_TYPES:
+        body = data[:-1] if len(data) % 2 and data[-1:] == b"\x00" else data
+        try:
+            return body.decode("utf-16-le").rstrip("\x00"), None, None
+        except UnicodeDecodeError as exc:
+            return data, None, ("is not valid UTF-16 text from byte %d of its %d: its bytes are given, not text" % (exc.start, len(data)))
+    if data_type == "REG_DWORD":
+        return struct.unpack("<I", data)[0], None, None
+    if data_type == "REG_DWORD_BIG_ENDIAN":
+        return struct.unpack(">I", data)[0], None, None
+    if data_type == "REG_QWORD":
+        return struct.unpack("<Q", data)[0], None, None
+    if data_type == "REG_FILETIME":
+        n = struct.unpack("<Q", data)[0]
+        text = filetime_text(n)
+        if text is None:
+            return data, None, "holds a FILETIME past the end of the year 9999, which has no date: its 8 bytes are given, not a time"
+        return text, n, None
+    if data_type == "REG_MULTI_SZ":
+        strings, dropped, undecodable, after = multi_strings(data)
+        said = []
+        if dropped:
+            said.append(("holds a string that is not valid UTF-16: it and the rest of the data, %d byte(s), are not in the answer (regipy drops them "
+                         "too), the strings before it are" if undecodable else
+                         "ends in %d byte(s) that no NUL ends: they are not in the answer (regipy drops them too), the strings before them are") % dropped)
+        if after:
+            said.append("holds %d string(s) after the empty string that ends its list: they are given, after the others, as the hive holds them" % after)
+        return strings, None, "; and ".join(said) or None
+    return data, None, None
 
 
 def bound_value_reads():
@@ -1767,8 +1842,9 @@ def multi_strings(data):
     out, up to the bytes after the last NUL (dropped) or up to a string that is not valid UTF-16 (dropped, and every string after it). regipy
     parses it with construct's GreedyRange(CString), which grows each string a code unit at a time: a string with no NUL after it took 4.3 s for
     1 MiB and 50 s for 2 MiB, and no clock of the tool could stop it. Returns (strings, the bytes dropped that are not NUL padding, whether a
-    string that is not valid UTF-16 began them), so that what is dropped is said."""
-    strings, at = [], 0
+    string that is not valid UTF-16 began them, how many of the strings come after an empty one, the end of a REG_MULTI_SZ's list), so that
+    what is dropped, and what lies past the end of the list, is said."""
+    strings, at, ended, after = [], 0, False, 0
     while True:
         end = data.find(b"\x00\x00", at)
         while end != -1 and (end - at) % 2:
@@ -1779,10 +1855,13 @@ def multi_strings(data):
             try:
                 strings.append(data[at:end].decode("utf-16-le"))
             except UnicodeDecodeError:
-                return strings, len(data) - at, True
+                return strings, len(data) - at, True, after
+            after += ended
+        else:
+            ended = True
         at = end + 2
     tail = data[at:]
-    return strings, (len(tail) if tail.strip(b"\x00") else 0), False
+    return strings, (len(tail) if tail.strip(b"\x00") else 0), False, after
 
 
 class HiveRefused(Exception):
@@ -2043,20 +2122,22 @@ class HiveBounds:
                 problems.append(_lost_names_problem(where, "values", lost))
 
     def read_values(self, node, reg, where, problems, tally, as_json=False, max_len=None, trim_values=True):
-        """regipy 6.3's NKRecord.iter_values, read from the library's copy of the hive with the same records, names, types and decoding, except
-        where its own reading costs without bound: a big data value (a "db" record and its list of segments) is checked before its data is put
-        together, and refused when it declares more data than the file holds past its base block, when its list holds fewer segments than its
-        size needs, runs past the file or names a segment twice, or when a segment lies outside the file (regipy put together whatever the list
-        named: one 16 KB segment named 160 times was a 2.5 MiB value, and a 548 KB hive declared a value of 2 GiB); every value's data and name are
-        counted against the walk's budget and the key's (`tally`, which also counts the values regipy itself leaves out) before its data is read,
-        and a value that declares more than VALUE_DATA_BYTES is said with its length and not read (a value list naming one 250 MB string four times
-        held a gigabyte of text at once); a value whose data is not wholly inside the file (it runs past the end or starts past it), or that
-        declares more than the four bytes a record holds, is not read (regipy printed the part inside, or nothing, as the whole value);
-        REG_MULTI_SZ is split by multi_strings. A refused value is a problem line and is not in the list."""
+        """regipy 6.3's NKRecord.iter_values, read from the library's copy of the hive with the same records and names, except where its own
+        reading costs without bound or gives what the hive does not hold. A big data value (a "db" record and its list of segments) is checked
+        before its data is put together, for every type, and refused when it declares more data than the file holds past its base block, when
+        its list holds fewer segments than its size needs, runs past the file or names a segment twice, or when a segment lies outside the file or
+        its cell (regipy put together whatever the list named: one 16 KB segment named 160 times was a 2.5 MiB value, and a 548 KB hive declared a
+        value of 2 GiB; and it put together only six types, giving the "db" record and the bytes after it as the value of every other). Every
+        value's data and name are counted against the walk's budget and the key's (`tally`, which also counts values not read) before its data is
+        read, and a value that declares more than VALUE_DATA_BYTES is said with its length and not read (a value list naming one 250 MB string
+        four times held a gigabyte of text at once); a value whose data is not wholly inside the file (it runs past the end or starts past it) or
+        inside the cell that holds it (the bytes past the cell are the next cells', another value's among them), or that declares more than the
+        four bytes a record holds, is not read. The bytes found are taken by typed_value, by the table at VALUE_TYPES. A refused value is a
+        problem line and is not in the list; a value given as its bytes because its type's decoding does not hold for them is in the list, and a
+        problem line says so. as_json, max_len and trim_values are taken for the library's signature and not applied: a value is given whole."""
         count = node.values_count
         if not count:
             return
-        max_len = reg.MAX_LEN if max_len is None else max_len
         library_log = logging.getLogger("regipy.registry")
         stream = node._stream
         with stream.getbuffer() as buf:
@@ -2079,15 +2160,9 @@ class HiveBounds:
                     return
                 finally:
                     stream.seek(here)
-                where_value = "its value %d of the %d its list holds (%s)" % (i + 1, count, vk.data_type)
-                kind = int(vk.data_type)
-                if kind > 0xFFFF0000:
-                    data_type = reg.VALUE_TYPE_ENUM.parse(reg.Int32ul.build(kind & 0xFFFF))
-                elif kind == 0x200000:
-                    tally["skipped"] += 1        # regipy skips this type without a word
-                    continue
-                else:
-                    data_type = str(vk.data_type)
+                kind = int(vk.data_type) & 0xFFFFFFFF
+                data_type = VALUE_TYPES.get(kind, str(kind))
+                where_value = "its value %d of the %d its list holds (%s)" % (i + 1, count, data_type)
                 if vk.name_size == 0:
                     name = "(default)"
                 elif vk.flags.VALUE_COMP_NAME:
@@ -2106,19 +2181,17 @@ class HiveBounds:
                     cost = 0
                 else:
                     start = HBIN_START + 4 + offset
-                    big = (size > SEGMENT_DATA and bytes(buf[start:start + 2]) == b"db"
-                           and data_type in ("REG_SZ", "REG_EXPAND", "REG_EXPAND_SZ", "REG_BINARY", "REG_NONE", "REG_MULTI_SZ"))
+                    big = size > SEGMENT_DATA and bytes(buf[start:start + 2]) == b"db"
                     if big:
                         segments, why = big_data_segments(buf, start, size, room)
-                        if why:
-                            problems.append({"where": where, "what": "values", "error": "%s is not read: %s" % (where_value, why)})
-                            continue
                     elif size and start + size > end:
                         # data that runs past the end of the file, or starts past it, is not the value: the part inside (or nothing) is not printed as it
-                        problems.append({"where": where, "what": "values",
-                                         "error": "%s is not read: it declares %d bytes of data at offset %d of a hive file of %d bytes, %s" % (
-                                             where_value, size, start, end, "which starts past its end" if start >= end else
-                                             "and %d of them are past its end" % (start + size - end))})
+                        why = "it declares %d bytes of data at offset %d of a hive file of %d bytes, %s" % (
+                            size, start, end, "which starts past its end" if start >= end else "and %d of them are past its end" % (start + size - end))
+                    else:
+                        why = cell_short(buf, start, size, "its data cell") if size else None
+                    if why:
+                        problems.append({"where": where, "what": "values", "error": "%s is not read: %s" % (where_value, why)})
                         continue
                     cost = size
                     if cost > VALUE_DATA_BYTES:
@@ -2150,32 +2223,12 @@ class HiveBounds:
                                      "error": "%s is not read: a %s is %d bytes and this one declares %d; its data is not given as the value" % (
                                          where_value, data_type, fixed, len(data))})
                     continue
-                if data_type in ("REG_SZ", "REG_EXPAND", "REG_EXPAND_SZ"):
-                    value = reg.try_decode_binary(data, as_json=as_json, trim_values=trim_values)
-                elif data_type in ("REG_BINARY", "REG_NONE"):
-                    if big:
-                        value = reg.try_decode_binary(data, as_json=True, trim_values=trim_values) if as_json else data
-                    else:
-                        value = binascii.b2a_hex(data).decode()[:max_len] if trim_values else data
-                elif data_type == "REG_DWORD":
-                    value = reg.Int32ul.parse(data)
-                elif data_type == "REG_QWORD":
-                    value = reg.Int64ul.parse(data)
-                elif data_type == "REG_MULTI_SZ":
-                    value, dropped, undecodable = multi_strings(data)
-                    if dropped:
-                        problems.append({"where": where, "what": "values",
-                                         "error": ("%s holds a string that is not valid UTF-16: it and the rest of the data, %d byte(s), are not in the answer "
-                                                   "(regipy drops them too), the strings before it are" if undecodable else
-                                                   "%s ends in %d byte(s) that no NUL ends: they are not in the answer (regipy drops them too), the strings "
-                                                   "before them are") % (where_value, dropped)})
-                elif data_type in ("REG_RESOURCE_REQUIREMENTS_LIST", "REG_RESOURCE_LIST"):
-                    value = binascii.b2a_hex(data).decode()[:max_len] if trim_values else data
-                elif data_type == "REG_FILETIME":
-                    value = reg.convert_wintime(reg.Int64ul.parse(data), as_json=as_json)
-                else:
-                    value = reg.try_decode_binary(data, as_json=as_json, trim_values=trim_values)
-                yield reg.Value(name=name, value_type=data_type, value=value, is_corrupted=False)
+                value, filetime, said = typed_value(data_type, data)
+                if said:
+                    problems.append({"where": where, "what": "values", "error": "%s %s" % (where_value, said)})
+                item = reg.Value(name=name, value_type=data_type, value=value, is_corrupted=False)
+                item.filetime = filetime
+                yield item
 
 
 def _library_for(node):
@@ -2184,22 +2237,37 @@ def _library_for(node):
         return None
     try:
         import regipy.registry as reg
-        for name in ("VALUE_KEY", "VALUE_TYPE_ENUM", "Int32ul", "Int64ul", "Value", "MAX_LEN", "try_decode_binary", "convert_wintime", "RegistryParsingException",
-                     "ConstError", "StreamError"):
+        for name in ("VALUE_KEY", "Value", "RegistryParsingException", "ConstError", "StreamError"):
             getattr(reg, name)
     except Exception:  # noqa: BLE001 - another library under the name: its own iter_values is read
         return None
     return reg if isinstance(node, reg.NKRecord) else None
 
 
+def cell_short(buf, start, length, what):
+    """None when the cell whose data starts at `start` holds `length` bytes (its size, in the 4-byte header before it, counts the header), else
+    why not. A value's bytes are read only from inside their own cell: what is past it is the next cells' (another value's data, a name)."""
+    if start - 4 < HBIN_START or start > len(buf):
+        return "%s at offset %d is not inside the hive bins" % (what, start)
+    held = abs(struct.unpack_from("<i", buf, start - 4)[0]) - 4
+    if length > held:
+        return ("it declares %d bytes of data and %s (offset %d) holds %d: the bytes past the cell are not its data"
+                % (length, what, start - 4, max(held, 0)))
+    return None
+
+
 def big_data_segments(buf, start, size, room):
     """The (place, length) of each segment of the big data value whose "db" record starts at `start`, or a reason to refuse it. Nothing is read
-    but the record and its list: the value is put together by the caller only when every segment is a distinct place inside the file."""
+    but the record and its list: the value is put together by the caller only when every segment is a distinct place inside the file and
+    inside a cell that holds it, and the record and its list are inside theirs."""
     if size > room:
         return None, "it declares %d bytes of data, more than the %d bytes the hive file holds past its base block" % (size, room)
     end = len(buf)
     if start + 8 > end:
         return None, "its big data record runs past the end of the hive file"
+    why = cell_short(buf, start, 8, "the cell of its big data record")
+    if why:
+        return None, why
     listed, list_offset = struct.unpack_from("<HI", buf, start + 2)
     needed = -(-size // SEGMENT_DATA)
     if listed < needed:
@@ -2207,6 +2275,9 @@ def big_data_segments(buf, start, size, room):
     at = HBIN_START + 4 + list_offset
     if at + 4 * needed > end:
         return None, "its list of segments runs past the end of the hive file"
+    why = cell_short(buf, at, 4 * needed, "the cell of its list of segments")
+    if why:
+        return None, why
     offsets = struct.unpack_from("<%dI" % needed, buf, at)
     if len(set(offsets)) < needed:
         return None, ("its list of segments names one segment more than once (%d distinct of %d): a list made to read one segment again and again"
@@ -2216,6 +2287,9 @@ def big_data_segments(buf, start, size, room):
         place, length = HBIN_START + 4 + offset, min(SEGMENT_DATA, size - n * SEGMENT_DATA)
         if place + length > end:
             return None, "its segment %d of %d lies past the end of the hive file" % (n + 1, needed)
+        why = cell_short(buf, place, length, "the cell of its segment %d of %d" % (n + 1, needed))
+        if why:
+            return None, why
         segments.append((place, length))
     return segments, None
 # END SHARED HIVE BOUNDS
@@ -3013,8 +3087,8 @@ class CellGuard:
     """Stands in for one of regipy's record layouts (the key node `nk` and the value key `vk`) and checks what the record declares against the cell it was read
     from. regipy reads a name as long as the record says, whether or not the cell is that long, so a damaged length reads the next cell: the bytes of
     whatever is stored there, a withheld value's data among them, ended up in key paths and names. A name longer than its cell is not believed: the record is
-    given a name that says where it is (`[name withheld: ...]`, hive offset and the numbers, none of the bytes), and a value data size longer than its data
-    cell is cut at the cell. Each is listed in CELL_DAMAGE for the walk to name."""
+    given a name that says where it is (`[name withheld: ...]`, hive offset and the numbers, none of the bytes), and is listed in CELL_DAMAGE for the walk to
+    name."""
 
     MARK = "[name withheld: "
 
@@ -3056,15 +3130,8 @@ class CellGuard:
                 rec["name"], rec["name_size"] = mark, len(mark)
                 rec.flags.VALUE_COMP_NAME = True
             CELL_DAMAGE.append("a %s record at hive offset 0x%x declares a name of %d bytes in a cell of %d bytes: its name is withheld, none of the bytes past the cell are read" % (self.kind, cell_at, declared, size))
-        if self.kind == "vk" and 0 < rec.data_size < 0x80000000:          # 0x80000000 and up: the data is inside the record itself
-            data_cell = 4096 + rec.data_offset
-            dsize = self.cell_size(stream, data_cell)
-            big = rec.data_size > 0x3FD8 and stream.read(2) == b"db"       # a big-data record: its segments are named by the record, not read from this cell
-            if dsize is not None and not big and rec.data_size > max(dsize - 4, 0):
-                CELL_DAMAGE.append("the value record at hive offset 0x%x declares %d bytes of data in a cell of %d bytes at hive offset 0x%x: only the cell's bytes are read"
-                                   % (cell_at, rec.data_size, dsize, data_cell))
-                rec["data_size"] = max(dsize - 4, 0)
-
+        # A value's data size is not cut here to its cell: the HIVE BOUNDS block reads a value only when what it declares fits inside the cell that
+        # holds it (its data cell, or each cell of a big data value), and says the one that does not instead of giving the part inside as the value.
 
 CELL_DAMAGE = []
 
@@ -3163,6 +3230,9 @@ def shown_path(path):
 
 
 def value_record(v, names, shown_path_, withheld_kind, bounds):
+    """The row of one value and its data. The HIVE BOUNDS block gives a value as bytes, text, a list of strings or a number (VALUE_TYPES there);
+    a REG_FILETIME it could date is its ISO 8601 time with the FILETIME number beside it, one it could not is its 8 bytes. Anything else (a
+    stand-in library's own object) is written as its text with its kind named, never as nothing."""
     vtype = str(v.value_type)
     val = v.value
     rec = {"row": "value", "key": shown_path_, "name": v.name, "type": vtype}
@@ -3172,6 +3242,10 @@ def value_record(v, names, shown_path_, withheld_kind, bounds):
     elif isinstance(val, str):
         rec["length"], rec["unit"] = len(val), "characters"
         payload = {"data": val}
+        filetime = getattr(v, "filetime", None)
+        if isinstance(filetime, int) and not isinstance(filetime, bool):
+            rec["length"], rec["unit"] = 8, "bytes"
+            payload["filetime"] = str(filetime)
     elif isinstance(val, list):
         rec["length"], rec["unit"] = len(val), "strings"
         payload = {"data": [x if isinstance(x, str) else str(x) for x in val]}
@@ -3180,7 +3254,7 @@ def value_record(v, names, shown_path_, withheld_kind, bounds):
         payload = {"data": val}
     else:
         rec["length"], rec["unit"] = None, None
-        payload = {"data": None}
+        payload = {"data": str(val), "data_kind": type(val).__name__}
     if getattr(v, "is_corrupted", False):
         rec["corrupted"] = True
     return rec, payload
@@ -3272,13 +3346,13 @@ class Walk:
             if declared is not None:
                 self.values_declared += declared
                 if yielded + left < declared:
-                    # regipy gives no sign of a value it leaves out: it skips a value of registry type 0x00200000 by design, and ends a key's list
-                    # without an error at a value record it cannot parse. The count the key declares is the only trace, so it is said per key.
+                    # regipy gives no sign of a value it leaves out: it ends a key's list without an error at a value record it cannot parse (the
+                    # HIVE BOUNDS block does the same). The count the key declares is the only trace, so it is said per key.
                     self.values_not_yielded += declared - yielded - left
                     self.keys_short_of_values += 1
                     if self.problems_count == before:
-                        self.problem(shown, "values", "the key declares %d value(s) and regipy gave %d: the %d it left out are not in keys.jsonl (the library skips a value of "
-                                                      "registry type 0x00200000 and ends a key's list at a value record it cannot parse, in both cases without an error)"
+                        self.problem(shown, "values", "the key declares %d value(s) and regipy gave %d: the %d it left out are not in keys.jsonl (the library ends a key's list "
+                                                      "at a value record it cannot parse, without an error)"
                                      % (declared, yielded, declared - yielded - left))
             self.drain(shown)
             if not descend:
@@ -3960,8 +4034,8 @@ def main():
                              "records.problems)" % not_read) if not_read else ""
             reasons.append("regfexport counted %d keys and %d values where regipy counted %d and %d%s" % (
                 reader_said["keys"], reader_said["values"], reader_said["regipy"]["keys"], reader_said["regipy"]["values"],
-                (": the difference is the %d value(s) the keys declare and regipy did not give (%d key(s), each named under records.problems; the library skips a value of "
-                 "registry type 0x00200000 and ends a list at a value record it cannot parse)%s, and those values are not in keys.jsonl"
+                (": the difference is the %d value(s) the keys declare and regipy did not give (%d key(s), each named under records.problems; the library ends a list at a value "
+                 "record it cannot parse)%s, and those values are not in keys.jsonl"
                  % (reader_said["regipy"]["values_not_yielded"], export_receipt.get("keys_short_of_values", 0), not_read_said)) if reader_said.get("difference_explained") else
                 (" (the keys walked declare %d values, and regipy did not give %d of them%s)" % (reader_said["regipy"]["values_declared_by_keys"], reader_said["regipy"]["values_not_yielded"],
                                                                                                 not_read_said))))

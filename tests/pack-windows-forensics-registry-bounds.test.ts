@@ -149,13 +149,23 @@ test("regkv reads a value list that names one big record again and again for the
   });
 });
 
-dual("regkv says a big-endian DWORD is not in the answer, instead of returning an empty value as complete", async (v) => {
+dual("regkv reads a big-endian DWORD of four bytes as its number, and one of another size is not read", async (v) => {
+  // regipy returned no data for the type (an empty value, complete); the HIVE BOUNDS block reads four bytes big-endian. A stand-in library is
+  // read through its own iter_values, so only the real one is held to the number.
   await withCwd(async (cwd) => {
     const env = await v.write(cwd, "work/h.dat", { name: "ROOT", children: [{ name: "K", values: [{ name: "Be", type: 5, value: Buffer.from([0x11, 0x22, 0x33, 0x44]) }] }] });
     const out = body<Answer>(await tool("regkv", cwd, { hive: "work/h.dat", key: "K" }, env));
     assert.equal(out.value_types.Be, "REG_DWORD_BIG_ENDIAN");
-    assert.equal(out.status, "partial");
-    assert.ok(out.problems.some((p: Answer) => /REG_DWORD_BIG_ENDIAN, for which regipy returns no data/.test(p.error)), JSON.stringify(out.problems));
+    if (!v.real) return;
+    assert.equal(out.status, "complete", JSON.stringify(out.problems));
+    assert.equal(out.values.Be, 0x11223344);
+    const env2 = await v.write(cwd, "work/h2.dat", { name: "ROOT", children: [{ name: "K", values: [{ name: "Be", type: 5, value: Buffer.from("hunter2-Secret-Value", "utf16le") }] }] });
+    const long = await tool("regkv", cwd, { hive: "work/h2.dat", key: "K" }, env2);
+    const out2 = body<Answer>(long);
+    assert.equal(out2.status, "partial");
+    assert.ok(!("Be" in out2.values), JSON.stringify(out2.values));
+    assert.equal(long.stdout.includes("hunter2"), false, "the bytes of a big-endian DWORD of the wrong size are not printed as text");
+    assert.ok(out2.problems.some((p: Answer) => /a REG_DWORD_BIG_ENDIAN is 4 bytes and this one declares 40/.test(p.error)), JSON.stringify(out2.problems));
   });
 });
 
@@ -171,8 +181,12 @@ dual("regkv and amcache_apps print no byte of a value the library could not deco
     assert.equal(run.stderr, "", "nothing on stderr");
     for (const piece of ["0xd1", "can't decode", "position", "formating", bad.toString("hex"), "d1ffc328"]) assert.equal(run.stdout.includes(piece), false, piece);
     const out = JSON.parse(run.stdout) as Answer;
-    assert.ok(out.library_messages_withheld >= 1, "the message is counted");
-    assert.ok(out.problems.some((p: Answer) => /regipy logged \d+ message/.test(p.error)));
+    // The real library's text decoding (and its log line) is no longer called: the HIVE BOUNDS block gives such a value as its bytes and says so.
+    if (v.real) assert.ok(out.problems.some((p: Answer) => /is not valid UTF-16 text from byte \d+ of its 15: its bytes are given, not text/.test(p.error)), JSON.stringify(out.problems));
+    else {
+      assert.ok(out.library_messages_withheld >= 1, "the message is counted");
+      assert.ok(out.problems.some((p: Answer) => /regipy logged \d+ message/.test(p.error)));
+    }
     assert.match(String(out.values["(default)"] ?? out.values[""] ?? Object.values(out.values)[0]), /^\[withheld/);
     // the same value in an Amcache layout
     const amcacheEnv = await v.write(cwd, "work/Amcache.hve", { name: "ROOT", children: [{ name: "Root", children: [{ name: "InventoryApplicationFile", children: [{ name: "K1", values: [{ name: "Path", type: 1, value: bad }] }] }] }] });
@@ -180,7 +194,7 @@ dual("regkv and amcache_apps print no byte of a value the library could not deco
     assert.equal(am.stderr, "");
     assert.equal(am.stdout.includes("0xd1"), false);
     assert.equal(am.stdout.includes("can't decode"), false);
-    assert.ok(JSON.parse(am.stdout).library_messages_withheld >= 1);
+    if (!v.real) assert.ok(JSON.parse(am.stdout).library_messages_withheld >= 1);
   });
 });
 
