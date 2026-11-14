@@ -50,7 +50,13 @@
   "example": "{\"root\": \"work/extracted/config\"}",
   "by": "maintainer",
   "at": "2026-10-15T09:00:00.000Z",
-  "version": 11,
+  "not_for": [
+    {
+      "what": "whether a disk's snapshot or backing chain is whole",
+      "use": "snapshot_chain_check"
+    }
+  ],
+  "version": 12,
   "use": {
     "extensions": [
       ".vmx",

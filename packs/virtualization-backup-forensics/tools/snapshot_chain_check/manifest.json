@@ -62,7 +62,13 @@
   "example": "{\"root\": \"work/extracted/vm\"}",
   "by": "maintainer",
   "at": "2026-10-15T09:00:00.000Z",
-  "version": 18,
+  "not_for": [
+    {
+      "what": "the VMs, disks and snapshots a configuration or inventory file names",
+      "use": "virtualization_inventory"
+    }
+  ],
+  "version": 19,
   "use": {
     "extensions": [
       ".vmdk",

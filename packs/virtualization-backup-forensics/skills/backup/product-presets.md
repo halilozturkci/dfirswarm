@@ -3,6 +3,7 @@ id: backup/product-presets
 title: Backup formats and presets the tool reads
 when: Say which backup export backup_audit_normalise can read, and how far to trust it.
 needs: [backup/catalogues-and-retention]
+card: backup_audit_normalise: format auto does not find a Backup Server task log; name it ({"format": "pbs_task_log"}). No reader is validated against a real export: read provenance and preset. An unparsed line, a log with no closing TASK line, a compressed or encrypted blob or a CRC mismatch makes the answer partial. A preset and a mapping are not mixed. Does not show: that the reader matches a real product's file, or that a listed point restores.
 tools: [backup_audit_normalise]
 requires_host: []
 ---

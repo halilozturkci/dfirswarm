@@ -1,7 +1,7 @@
 {
   "id": "mobile-forensics",
   "name": "Mobile Forensics Pack",
-  "version": "1.10.9",
+  "version": "1.10.10",
   "description": "Method and tooling for a phone: what kind of extraction you were handed and what it cannot contain, iOS backups and their manifest, Android package and user data, the app databases that carry messages and location, protobuf blobs, and what deleted means inside SQLite.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -62,15 +62,15 @@
       "tools/ab_layout/run.py": "be03bb6c6512b95ef8563a1049fdcfd679aaa656abab265ecbd3b0385878b61d",
       "tools/backup_decrypt/manifest.json": "6c2bd58da567e8665ac9f30df0d451f3cdb14242179141926b739c477dae3e0e",
       "tools/backup_decrypt/run.py": "e9c7b04421146d30c7fa4e48c3db67514bd96eba63174e7ddeb303dfde8f3527",
-      "tools/backup_materialise/manifest.json": "c413c59975843f24aabfb09246b849a44a8145daa94452800474f79cf3d2f302",
+      "tools/backup_materialise/manifest.json": "5f15410ff5ab1227a7874af3909cc071a12afe68dbb4ddde2d925bcd80daaaea",
       "tools/backup_materialise/run.py": "b01e6b5b8a9c3f3cb21c7a5bc7047a0f59fe9391cea9f0619bdc90c6c92e7a40",
       "tools/heic_inspect/manifest.json": "e989c487951266fb4d6a9d1d0b4b1f9a99701f3ce5457f7d3b027dcecaf86f86",
       "tools/heic_inspect/run.py": "ddb3830a0e3c0590043917a3088e2f8af4a38ff67429a47f60dbb7a84f06b8fd",
-      "tools/manifest_db/manifest.json": "830c2948a710780ed5967bd20309e78c68d92996e2df855958a432e9b69ad0dd",
+      "tools/manifest_db/manifest.json": "47366c33c24f0b84df49095510db6bd4bd7752666246d26420a39e5f6d2bc219",
       "tools/manifest_db/run.py": "257dc05e9668ecd148a4d096c27a3084abce2ff5be5615e47df513f78a8c46cb",
       "tools/protobuf_peek/manifest.json": "8e29ecb65eb20ca9efd7b7be1794e8af0eb6f69f0807056a735692053c1d2be5",
       "tools/protobuf_peek/run.py": "69a60bc659fb45e491fb5d4a0214bbc4ed29c74e2007cb310d82a21fcb7ef857",
-      "tools/sqlite_freespace/manifest.json": "3846f472abaaf26fa6b41d6f610b4b959d9b11f9ad2769b9eef660f71cc0b074",
+      "tools/sqlite_freespace/manifest.json": "8134f8523ea1920e4f7cba4c25042aea50e0ac8daa32a8a352e0cdfb91dc1ef7",
       "tools/sqlite_freespace/run.py": "ab40e260cfb15ff78ccb0e5bc07e5aff3aef851a99b7bafc35899036724d940a"
     }
   },

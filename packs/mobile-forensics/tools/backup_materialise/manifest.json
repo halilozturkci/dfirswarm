@@ -46,6 +46,12 @@
   "example": "{\"path\": \"inputs/backup\", \"domains\": [\"HomeDomain\"]}",
   "by": "maintainer",
   "at": "2026-11-03T06:00:00.000Z",
+  "not_for": [
+    {
+      "what": "an encrypted backup, which it refuses",
+      "use": "backup_decrypt"
+    }
+  ],
   "version": 4,
   "use": {
     "names": [

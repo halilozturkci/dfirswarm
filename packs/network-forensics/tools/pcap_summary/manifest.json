@@ -45,6 +45,24 @@
   "example": "{\"path\": \"inputs/capture.pcap\", \"top\": 20, \"out_dir\": \"work/<your id>/pcap-summary\", \"group\": \"endpoint\", \"with_syn_times\": true}",
   "by": "maintainer",
   "at": "2026-10-07T18:00:00.000Z",
+  "not_for": [
+    {
+      "what": "exporting the objects a capture carries (files sent over HTTP, SMB and other protocols)",
+      "use": "pcap_extract"
+    },
+    {
+      "what": "connection and protocol logs of a capture",
+      "use": "zeek_run"
+    },
+    {
+      "what": "matching a capture against detection rules",
+      "use": "suricata_run"
+    },
+    {
+      "what": "splitting, merging, filtering or deduplicating a capture",
+      "use": "capture_transform"
+    }
+  ],
   "version": 13,
   "sha256": "f07c9289a83100ebc9ff6edd0544caf1dcea0179fee5abe34b107d6a41ce0e5b",
   "use": {

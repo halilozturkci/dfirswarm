@@ -24,7 +24,13 @@
   "example": "{\"path\": \"inputs/backup.rar\"}",
   "by": "maintainer",
   "at": "2026-11-01T12:00:00.000Z",
-  "version": 9,
+  "not_for": [
+    {
+      "what": "an authorised password attempt against a protected archive",
+      "use": "password_recover"
+    }
+  ],
+  "version": 10,
   "sha256": "ccc3f87e6bccaa2d166ed97f6e8e5df95a531e151bc6e78055d8a14e8e7bafa3",
   "use": {
     "extensions": [

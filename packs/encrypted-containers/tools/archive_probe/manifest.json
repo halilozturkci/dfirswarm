@@ -29,7 +29,17 @@
   "example": "{\"path\": \"work/extracted/archive.zip\"}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 21,
+  "not_for": [
+    {
+      "what": "extracting the members of an archive",
+      "use": "archive_extract"
+    },
+    {
+      "what": "a RAR archive's protection, or a 7-Zip archive's encryption member by member",
+      "use": "archive_metadata"
+    }
+  ],
+  "version": 22,
   "sha256": "e5b7abc5b50a92370d2467fc745885ace3ddfd8b8b16f6bb6963e94dc9a8f34f",
   "requires": [
     "7z"

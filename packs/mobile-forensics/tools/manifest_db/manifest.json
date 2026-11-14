@@ -34,6 +34,16 @@
   "example": "{\"path\": \"inputs/backup\", \"contains\": \"sms\\\\.db$\"}",
   "by": "maintainer",
   "at": "2026-09-22T20:00:00.000Z",
+  "not_for": [
+    {
+      "what": "copying selected files of an unencrypted backup out as a derivative",
+      "use": "backup_materialise"
+    },
+    {
+      "what": "the files of an encrypted backup",
+      "use": "backup_decrypt"
+    }
+  ],
   "version": 7,
   "sha256": "257dc05e9668ecd148a4d096c27a3084abce2ff5be5615e47df513f78a8c46cb",
   "use": {

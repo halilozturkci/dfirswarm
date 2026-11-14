@@ -1,7 +1,7 @@
 {
   "id": "reverse-engineering",
   "name": "Reverse Engineering Pack",
-  "version": "1.16.16",
+  "version": "1.16.17",
   "description": "Static triage of a binary or a document under quarantine: what the file actually is, PE and ELF structure, entropy and packing, obfuscated strings, capability mapping, macros and embedded objects, and rules. Nothing from the evidence is ever executed.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -73,7 +73,7 @@
       "tools/authenticode_verify/run.py": "f065c9f1cbbf35647fdddb9a7c76da5bd3736d5485d97e0fdd429cffcb777819",
       "tools/clr_inspect/manifest.json": "685e063a91610e5825f4c97cfaa26315c2d95b62735abc8647befa7ececbb488",
       "tools/clr_inspect/run.py": "0587351fce0d26e03adaa01b91ba2d97b0cc023563ae1468a346eae713959457",
-      "tools/doc_probe/manifest.json": "c9ffec8a1222ed01bcb9b15ab20657075e46a616b399932daf9fc932c79489a1",
+      "tools/doc_probe/manifest.json": "2fbc2dc170548ad57bb65a16a5a3fc04748486bbcbe10a98bb2a7e1629354ddc",
       "tools/doc_probe/run.py": "c9d526746f406a0eec1ffe2bc0a6f3c74b486024d45a121cbb7e953e15232cf3",
       "tools/doc_structure/manifest.json": "6551e2c43edc1e29cc698a88f635bad44aeedd326f141b8ef6615ee08eea0bff",
       "tools/doc_structure/run.py": "5a55f203f743d0fcb39923296789a47877436b13fcfb14b08815f430c6e174c5",
@@ -91,7 +91,7 @@
       "tools/marshal_inspect/run.py": "4ccef6b5dcb237fb6f7b1b92ae392162494cca3699bff6ac42bf9b0b9443b08e",
       "tools/pe_directories/manifest.json": "f2cc682026263a8886ff9ff80e4af0c854d515113a52a9f76c153d6d5c50e24d",
       "tools/pe_directories/run.py": "0961d84c935e8d2bed8c57bf01268a950d82796b7a4feb69087533e86ecdb5bd",
-      "tools/pe_info/manifest.json": "47fdba0c2ef8ea3164ffa21c399c92c432d86bf5334083415f0839556e590c2f",
+      "tools/pe_info/manifest.json": "1a96651405ccfa736fc8e521fdafbfe4f43fc139ff3023a588d1a4a0f0e6f4b0",
       "tools/pe_info/run.py": "89a9435fd7b0cd213bb128d25237ca1f18a5623ccb8171078515bb6324f8dcfe",
       "tools/unpack_safe/manifest.json": "4bd570d5fb083b103ad3d96ebe67274ee1ef95a69e05e16167eb76ff403d8b49",
       "tools/unpack_safe/run.py": "dd7e8ddd8026106defa86a2cd189b64c312963f58df265f5f2ff4c2e1fe07473"
